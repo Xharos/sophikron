@@ -13,11 +13,11 @@
 		"lint": "prettier --check . --ignore-path .prettierignore && eslint .",
 		"format": "prettier --write ."
 	},
-  "dependencies": {
-    "@sveltejs/kit": "^3.0.0",
-    "svelte": "^5.57.1",
-    "vite": "^8.3.0"
-  },
+	"dependencies": {
+		"@sveltejs/kit": "^3.0.0",
+		"svelte": "^5.57.1",
+		"vite": "^8.3.0"
+	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
 		"@sveltejs/adapter-auto": "^8.0.0",
