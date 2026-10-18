@@ -1,0 +1,29 @@
+# Git and IDE
+.git/
+.idea/
+.vscode/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Node.js / SvelteKit
+node_modules/
+.svelte-kit/
+dist/
+build/
+coverage/
+.npm/
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Operating system
+.DS_Store
+Thumbs.db

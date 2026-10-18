@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+secrets/
+credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+
+# Node.js / SvelteKit
+node_modules/
+.svelte-kit/
+dist/
+build/
+coverage/
+.npm/
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Operating systems
+.DS_Store
+Thumbs.db
+
+# Logs and local databases
+*.log
+*.sqlite3
+*.db
