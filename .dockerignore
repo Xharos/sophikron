@@ -10,6 +10,11 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .ruff_cache/
+**/__pycache__/
+**/*.py[cod]
+**/*.egg-info/
+**/.pytest_cache/
+**/.ruff_cache/
 
 # Node.js / SvelteKit
 node_modules/
@@ -18,11 +23,28 @@ dist/
 build/
 coverage/
 .npm/
+**/node_modules/
+**/.svelte-kit/
+**/build/
+**/dist/
 
 # Secrets
 .env
 .env.*
-!.env.example
+**/.env
+**/.env.*
+secrets/
+credentials/
+**/secrets/
+**/credentials/
+*.pem
+*.key
+*.p12
+*.pfx
+**/*.pem
+**/*.key
+**/*.p12
+**/*.pfx
 
 # Operating system
 .DS_Store

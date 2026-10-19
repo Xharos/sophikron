@@ -33,7 +33,50 @@ jobs:
         run: ruff check .
 
       - name: Run tests
-        run: pytest
+        run: python -m pytest -q -m "not integration"
+
+      - name: Prepare isolated PostgreSQL test secrets
+        shell: bash
+        run: |
+          umask 077
+          secret_dir="$RUNNER_TEMP/sophikron-db-secrets"
+          mkdir -p "$secret_dir"
+          for role in admin app migration; do
+            openssl rand -hex 32 > "$secret_dir/$role"
+            chmod 0444 "$secret_dir/$role"
+          done
+          echo "DB_ADMIN_SECRET_PATH=$secret_dir/admin" >> "$GITHUB_ENV"
+          echo "DB_APP_SECRET_PATH=$secret_dir/app" >> "$GITHUB_ENV"
+          echo "DB_MIGRATION_SECRET_PATH=$secret_dir/migration" >> "$GITHUB_ENV"
+          echo "DB_NAME=sophikron_test" >> "$GITHUB_ENV"
+          echo "DB_HOST=127.0.0.1" >> "$GITHUB_ENV"
+          echo "DB_PORT=5432" >> "$GITHUB_ENV"
+          echo "DB_USER=sophikron_app" >> "$GITHUB_ENV"
+          echo "DB_PASSWORD_FILE=$secret_dir/app" >> "$GITHUB_ENV"
+          echo "DB_TEST_MIGRATION_PASSWORD_FILE=$secret_dir/migration" >> "$GITHUB_ENV"
+          echo "DB_TEST_API_URL=http://127.0.0.1:8000" >> "$GITHUB_ENV"
+
+      - name: Validate Compose configuration
+        working-directory: .
+        run: docker compose config --quiet
+
+      - name: Start full PostgreSQL and API services
+        working-directory: .
+        timeout-minutes: 15
+        run: |
+          docker compose -p sophikron-ci up -d --build --wait db backend
+          docker compose -p sophikron-ci run --build --rm migrate
+
+      - name: PostgreSQL integration tests
+        env:
+          DB_INTEGRATION: "1"
+        run: python -m pytest -q -m integration
+
+      - name: Stop verification services
+        if: always()
+        working-directory: .
+        run: >-
+          docker compose -p sophikron-ci down
 
   frontend:
     name: Frontend checks

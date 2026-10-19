@@ -1,17 +1,114 @@
 services:
-  frontend:
+  db:
     build:
       context: .
-      dockerfile: frontend/Dockerfile
+      dockerfile: infra/postgres/Dockerfile
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-sophikron}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_admin_password
+      POSTGRES_HOST_AUTH_METHOD: scram-sha-256
+    secrets:
+      - db_admin_password
+      - db_app_password
+      - db_migration_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
     ports:
-      - "3000:3000"
-    depends_on:
-      backend:
-        condition: service_healthy
+      - "127.0.0.1:${DB_PUBLISHED_PORT:-5432}:5432"
+    networks:
+      - sophikron_network
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\"",
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
 
   backend:
     build:
       context: .
       dockerfile: backend/Dockerfile
+    restart: unless-stopped
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-sophikron}
+      DB_USER: sophikron_app
+      DB_PASSWORD_FILE: /run/secrets/db_app_password
+      DB_SSLMODE: disable
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-10000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-2000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-30000}
+      DB_HEALTH_TIMEOUT: ${DB_HEALTH_TIMEOUT:-2}
+    secrets:
+      - db_app_password
     ports:
-      - "8000:8000"
+      - "${BACKEND_PORT:-8000}:8000"
+    networks:
+      - sophikron_network
+    depends_on:
+      db:
+        condition: service_started
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    profiles: [tools]
+    command: [alembic, upgrade, head]
+    healthcheck:
+      disable: true
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${DB_NAME:-sophikron}
+      DB_USER: sophikron_migrator
+      DB_PASSWORD_FILE: /run/secrets/db_migration_password
+      DB_SSLMODE: disable
+      DB_STATEMENT_TIMEOUT_MS: "60000"
+    secrets:
+      - db_migration_password
+    networks:
+      - sophikron_network
+    depends_on:
+      db:
+        condition: service_healthy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    networks:
+      - sophikron_network
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+
+secrets:
+  db_admin_password:
+    file: ${DB_ADMIN_SECRET_PATH:-./secrets/db_admin_password}
+  db_app_password:
+    file: ${DB_APP_SECRET_PATH:-./secrets/db_app_password}
+  db_migration_password:
+    file: ${DB_MIGRATION_SECRET_PATH:-./secrets/db_migration_password}
+
+networks:
+  sophikron_network:
+    driver: bridge
