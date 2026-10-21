@@ -1,0 +1,31 @@
+
+version: 2
+
+updates:
+  # Backend — Python
+  - package-ecosystem: "pip"
+    directory: "/backend"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "Europe/Paris"
+    target-branch: "develop"
+    open-pull-requests-limit: 1
+    groups:
+      backend-dependencies:
+        patterns:
+          - "*"
+
+  # Frontend — npm
+  - package-ecosystem: "npm"
+    directory: "/frontend"
+    schedule:
+      interval: "monthly"
+      time: "09:00"
+      timezone: "Europe/Paris"
+    target-branch: "develop"
+    open-pull-requests-limit: 1
+    groups:
+      frontend-dependencies:
+        patterns:
+          - "*"
