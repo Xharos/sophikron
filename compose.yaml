@@ -1,3 +1,9 @@
+x-database-environment: &database-environment
+  DB_HOST: db
+  DB_PORT: "5432"
+  DB_NAME: ${DB_NAME:-sophikron}
+  DB_SSLMODE: disable
+
 services:
   db:
     build:
@@ -31,51 +37,74 @@ services:
       start_period: 10s
 
   backend:
-    build:
+    build: &backend-build
       context: .
       dockerfile: backend/Dockerfile
-    restart: unless-stopped
+    restart: "on-failure:3"
     environment:
-      DB_HOST: db
-      DB_PORT: "5432"
-      DB_NAME: ${DB_NAME:-sophikron}
+      <<: *database-environment
       DB_USER: sophikron_app
       DB_PASSWORD_FILE: /run/secrets/db_app_password
-      DB_SSLMODE: disable
-      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
-      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
-      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
-      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
-      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
-      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-10000}
-      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-2000}
-      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-30000}
-      DB_HEALTH_TIMEOUT: ${DB_HEALTH_TIMEOUT:-2}
+      AUTH_KEYS_FILE: /run/secrets/identity_keys
+      AUTH_SMTP_PASSWORD_FILE: ${AUTH_SMTP_USERNAME:+/run/secrets/smtp_password}
+      AUTH_BOOTSTRAP_PASSWORD_FILE: /run/secrets/bootstrap_password
+      # Allowlisted settings from .env; shell variables take precedence.
+      # Empty YAML values inherit configuration instead of injecting the entire file.
+      DB_POOL_SIZE:
+      DB_MAX_OVERFLOW:
+      DB_POOL_TIMEOUT:
+      DB_POOL_RECYCLE:
+      DB_CONNECT_TIMEOUT:
+      DB_STATEMENT_TIMEOUT_MS:
+      DB_LOCK_TIMEOUT_MS:
+      DB_IDLE_TRANSACTION_TIMEOUT_MS:
+      DB_HEALTH_TIMEOUT:
+      AUTH_ENVIRONMENT:
+      AUTH_ALLOWED_ORIGINS:
+      AUTH_COOKIE_SECURE:
+      AUTH_SESSION_SECONDS:
+      AUTH_IDLE_SECONDS:
+      AUTH_LOGIN_IP_LIMIT:
+      AUTH_LOGIN_IDENTITY_LIMIT:
+      AUTH_RATE_WINDOW_SECONDS:
+      AUTH_LOGIN_RESERVATION_SECONDS:
+      AUTH_PASSWORD_QUEUE_SIZE:
+      AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS:
+      AUTH_REQUEST_MAX_BYTES:
+      AUTH_REQUEST_BODY_TIMEOUT_SECONDS:
+      AUTH_MAIL_TRANSPORT:
+      AUTH_SMTP_HOST:
+      AUTH_SMTP_PORT:
+      AUTH_SMTP_SECURITY:
+      AUTH_SMTP_USERNAME:
+      AUTH_SMTP_SENDER:
+      AUTH_ACTIVATION_URL:
+      AUTH_BOOTSTRAP_USERNAME:
     secrets:
       - db_app_password
+      - identity_keys
+      - bootstrap_password
+      - smtp_password
     ports:
       - "${BACKEND_PORT:-8000}:8000"
     networks:
       - sophikron_network
     depends_on:
       db:
-        condition: service_started
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
 
   migrate:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    profiles: [tools]
+    build: *backend-build
+    restart: "no"
     command: [alembic, upgrade, head]
     healthcheck:
       disable: true
     environment:
-      DB_HOST: db
-      DB_PORT: "5432"
-      DB_NAME: ${DB_NAME:-sophikron}
+      <<: *database-environment
       DB_USER: sophikron_migrator
       DB_PASSWORD_FILE: /run/secrets/db_migration_password
-      DB_SSLMODE: disable
       DB_STATEMENT_TIMEOUT_MS: "60000"
     secrets:
       - db_migration_password
@@ -103,11 +132,17 @@ volumes:
 
 secrets:
   db_admin_password:
-    file: ${DB_ADMIN_SECRET_PATH:-./secrets/db_admin_password}
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/db_admin_password
   db_app_password:
-    file: ${DB_APP_SECRET_PATH:-./secrets/db_app_password}
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/db_app_password
   db_migration_password:
-    file: ${DB_MIGRATION_SECRET_PATH:-./secrets/db_migration_password}
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/db_migration_password
+  identity_keys:
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/identity_keys.json
+  bootstrap_password:
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/bootstrap_password
+  smtp_password:
+    file: ${SOPHIKRON_SECRETS_DIRECTORY:?Set SOPHIKRON_SECRETS_DIRECTORY}/smtp_password
 
 networks:
   sophikron_network:

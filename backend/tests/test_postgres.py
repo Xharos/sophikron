@@ -3,12 +3,9 @@
 import asyncio
 import json
 import os
-import subprocess
-import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from pathlib import Path
-from urllib.parse import quote
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -19,67 +16,31 @@ from sqlalchemy import Column, Identity, Integer, MetaData, String, Table, func,
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
+from app.cli import adopt_empty_baseline
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
+from tests.postgres import run_alembic
 
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.usefixtures("migrated_database"),
     pytest.mark.skipif(
         os.environ.get("DB_INTEGRATION") != "1", reason="Configure the dedicated test database"
     ),
 ]
 
 
-def run_alembic(*arguments: str) -> None:
-    """Run migration commands against the isolated test database without logging secrets."""
-    environment = os.environ.copy()
-    environment["DB_USER"] = "sophikron_migrator"
-    environment["DB_PASSWORD_FILE"] = environment["DB_TEST_MIGRATION_PASSWORD_FILE"]
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", *arguments],
-        cwd=Path(__file__).resolve().parents[1], env=environment,
-        capture_output=True, text=True, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        diagnostics = "\n".join((result.stdout, result.stderr)).strip()
-        for secret_path in {os.environ.get("DB_PASSWORD_FILE"), environment["DB_PASSWORD_FILE"]}:
-            if secret_path is None:
-                continue
-            try:
-                secret = Path(secret_path).read_text(encoding="utf-8").rstrip("\r\n")
-            except (OSError, UnicodeError):
-                continue
-            if secret:
-                diagnostics = diagnostics.replace(secret, "[REDACTED]")
-                diagnostics = diagnostics.replace(quote(secret, safe=""), "[REDACTED]")
-        pytest.fail(
-            f"Alembic {' '.join(arguments)} failed (exit {result.returncode}):\n{diagnostics}",
-            pytrace=False,
-        )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def migrated_database() -> None:
-    """Refuse other databases and migrate the explicitly designated test database."""
-    if os.environ.get("DB_NAME") != "sophikron_test" or (
-        os.environ.get("DB_USER") != "sophikron_app"
-    ):
-        pytest.fail(
-            "Integration tests require DB_NAME=sophikron_test and DB_USER=sophikron_app",
-            pytrace=False,
-        )
-    run_alembic("upgrade", "head")
-
-
 @pytest_asyncio.fixture
 async def databases(migrated_database: None) -> AsyncIterator[tuple[Database, Database]]:
     """Own application and migration engines for one test and release both pools."""
     application = Database(DatabaseSettings())
-    migration = Database(DatabaseSettings(
-        user="sophikron_migrator",
-        password_file=Path(os.environ["DB_TEST_MIGRATION_PASSWORD_FILE"]),
-    ))
+    migration = Database(
+        DatabaseSettings(
+            user="sophikron_migrator",
+            password_file=Path(os.environ["DB_TEST_MIGRATION_PASSWORD_FILE"]),
+        )
+    )
     try:
         yield application, migration
     finally:
@@ -95,7 +56,8 @@ async def records(databases: tuple[Database, Database]) -> AsyncIterator[Table]:
     _, migration = databases
     metadata = MetaData(schema="sophikron")
     table = Table(
-        f"test_{uuid4().hex}", metadata,
+        f"test_{uuid4().hex}",
+        metadata,
         Column("id", Integer, Identity(), primary_key=True),
         Column("value", String, unique=True, nullable=False),
     )
@@ -123,11 +85,33 @@ def test_migration_roundtrip(migrated_database: None) -> None:
     run_alembic("check")
 
 
+@pytest.mark.asyncio
+async def test_old_baseline_adoption(
+    databases: tuple[Database, Database],
+    records: Table,
+) -> None:
+    """Adopt the old empty stamped revision without dropping unrelated stored data."""
+    application, migration = databases
+    async with application.sessions.begin() as session:
+        await session.execute(records.insert().values(value="preserved"))
+    run_alembic("downgrade", "base")
+    run_alembic("stamp", "0001_database_baseline")
+    async with migration.engine.begin() as connection:
+        await connection.run_sync(adopt_empty_baseline)
+    async with application.sessions() as session:
+        assert await session.scalar(select(records.c.value)) == "preserved"
+    run_alembic("upgrade", "head")
+    # Refuse re-adoption of a populated schema instead of silently changing existing tables.
+    with pytest.raises(ValueError, match="already exist"):
+        async with migration.engine.begin() as connection:
+            await connection.run_sync(adopt_empty_baseline)
+
+
 def test_running_api() -> None:
     """Verify the root and readiness JSON responses of the running API."""
     base_url = os.environ["DB_TEST_API_URL"]
     for path, expected in (
-        ("/", {"message": "Welcome to Sophikron API"}),
+        ("/api/v1", {"message": "Welcome to Sophikron API"}),
         ("/health", {"status": "ok", "database": "connected"}),
     ):
         with urlopen(base_url + path, timeout=5) as response:
@@ -175,7 +159,9 @@ async def test_transaction_rollback(databases: tuple[Database, Database], record
 
 @pytest.mark.asyncio
 async def test_request_session_isolation_and_rollback(
-    databases: tuple[Database, Database], records: Table, database_request: Request,
+    databases: tuple[Database, Database],
+    records: Table,
+    database_request: Request,
 ) -> None:
     """Isolate uncommitted writes and roll them back when the real request dependency closes."""
     application, _ = databases
@@ -191,7 +177,9 @@ async def test_request_session_isolation_and_rollback(
 
 @pytest.mark.asyncio
 async def test_cancelled_transaction(
-    databases: tuple[Database, Database], records: Table, database_request: Request,
+    databases: tuple[Database, Database],
+    records: Table,
+    database_request: Request,
 ) -> None:
     """Release the connection and roll back writes when a request task is cancelled."""
     application, _ = databases
@@ -219,17 +207,21 @@ async def test_cancelled_transaction(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("statement", [
-    "CREATE TABLE sophikron.forbidden (id integer)",
-    "CREATE TABLE public.forbidden (id integer)",
-    "CREATE SCHEMA forbidden",
-    "CREATE ROLE forbidden_role",
-    "SET ROLE sophikron_migrator",
-    "SELECT * FROM sophikron.alembic_version",
-    "DELETE FROM sophikron.alembic_version",
-])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE sophikron.forbidden (id integer)",
+        "CREATE TABLE public.forbidden (id integer)",
+        "CREATE SCHEMA forbidden",
+        "CREATE ROLE forbidden_role",
+        "SET ROLE sophikron_migrator",
+        "SELECT * FROM sophikron.alembic_version",
+        "DELETE FROM sophikron.alembic_version",
+    ],
+)
 async def test_application_permissions(
-    databases: tuple[Database, Database], statement: str,
+    databases: tuple[Database, Database],
+    statement: str,
 ) -> None:
     """Deny runtime DDL, privilege escalation and access to migration tracking."""
     application, _ = databases
@@ -249,10 +241,14 @@ async def test_roles_are_not_administrators(databases: tuple[Database, Database]
     application, migration = databases
     for database in (application, migration):
         async with database.sessions() as session:
-            row = (await session.execute(text(
-                "SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls "
-                "FROM pg_catalog.pg_roles WHERE rolname = current_user"
-            ))).one()
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls "
+                        "FROM pg_catalog.pg_roles WHERE rolname = current_user"
+                    )
+                )
+            ).one()
             assert not any(row)
 
 

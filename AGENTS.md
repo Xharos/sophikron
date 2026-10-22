@@ -143,3 +143,7 @@ necessary migrations and documentation are updated, and security implications ha
 verification results and remaining limitations.
 
 Completing one increment does not authorize starting the next major phase when review or approval is required.
+
+- Reuse existing configuration and infrastructure files; do not create duplicate Compose files, environment templates or scripts without justification and approval.
+- Before adding files, inspect existing equivalents, including local `.env` files, without exposing or modifying their secrets.
+- Before finishing, clean up temporary files, unused code and artifacts created by the task; preserve pre-existing files and user changes.

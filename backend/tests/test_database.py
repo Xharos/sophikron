@@ -11,12 +11,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
+from tests.postgres import run_alembic
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("failure", [None, RuntimeError("failure")], ids=["success", "error"])
 async def test_session_cleanup(
-    settings_factory: Callable[..., DatabaseSettings], failure: BaseException | None,
+    settings_factory: Callable[..., DatabaseSettings],
+    failure: BaseException | None,
 ) -> None:
     """Close real request sessions on success and error without an implicit commit."""
     database = Database(settings_factory())
@@ -70,3 +72,28 @@ async def test_health_deadline(settings_factory: Callable[..., DatabaseSettings]
         assert cancelled.is_set()
     finally:
         await real_engine.dispose()
+
+
+@pytest.mark.parametrize(
+    ("integration", "name", "user"),
+    [
+        ("0", "sophikron_test", "sophikron_app"),
+        ("1", "sophikron", "sophikron_app"),
+        ("1", "sophikron_test", "postgres"),
+    ],
+    ids=["not-enabled", "valuable-database", "wrong-role"],
+)
+def test_migration_helper_refuses_unsafe_targets(
+    monkeypatch: pytest.MonkeyPatch,
+    integration: str,
+    name: str,
+    user: str,
+) -> None:
+    """Never start a migration command outside the explicitly configured test database."""
+    monkeypatch.setenv("DB_INTEGRATION", integration)
+    monkeypatch.setenv("DB_NAME", name)
+    monkeypatch.setenv("DB_USER", user)
+    with patch("tests.postgres.subprocess.run") as execute:
+        with pytest.raises(pytest.fail.Exception, match="Integration tests require"):
+            run_alembic("downgrade", "base")
+        execute.assert_not_called()

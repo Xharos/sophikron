@@ -48,20 +48,30 @@ jobs:
           umask 077
           secret_dir="$RUNNER_TEMP/sophikron-db-secrets"
           mkdir -p "$secret_dir"
+          openssl rand -hex 32 > "$secret_dir/bootstrap_password"
+          touch "$secret_dir/smtp_password"
+          chmod 0444 "$secret_dir/bootstrap_password" "$secret_dir/smtp_password"
+          echo "SOPHIKRON_SECRETS_DIRECTORY=$secret_dir" >> "$GITHUB_ENV"
+          echo "AUTH_BOOTSTRAP_USERNAME=ci_setup" >> "$GITHUB_ENV"
           for role in admin app migration; do
-            openssl rand -hex 32 > "$secret_dir/$role"
-            chmod 0444 "$secret_dir/$role"
+            openssl rand -hex 32 > "$secret_dir/db_${role}_password"
+            chmod 0444 "$secret_dir/db_${role}_password"
           done
-          echo "DB_ADMIN_SECRET_PATH=$secret_dir/admin" >> "$GITHUB_ENV"
-          echo "DB_APP_SECRET_PATH=$secret_dir/app" >> "$GITHUB_ENV"
-          echo "DB_MIGRATION_SECRET_PATH=$secret_dir/migration" >> "$GITHUB_ENV"
+          encryption_key=$(openssl rand -base64 32)
+          lookup_key=$(openssl rand -base64 32)
+          printf '{"active_key":"ci","encryption_keys":{"ci":"%s"},"lookup_key":"%s"}\n' \
+            "$encryption_key" "$lookup_key" > "$secret_dir/identity_keys.json"
+          chmod 0444 "$secret_dir/identity_keys.json"
           echo "DB_NAME=sophikron_test" >> "$GITHUB_ENV"
           echo "DB_HOST=127.0.0.1" >> "$GITHUB_ENV"
           echo "DB_PORT=5432" >> "$GITHUB_ENV"
           echo "DB_USER=sophikron_app" >> "$GITHUB_ENV"
-          echo "DB_PASSWORD_FILE=$secret_dir/app" >> "$GITHUB_ENV"
-          echo "DB_TEST_MIGRATION_PASSWORD_FILE=$secret_dir/migration" >> "$GITHUB_ENV"
+          echo "DB_PASSWORD_FILE=$secret_dir/db_app_password" >> "$GITHUB_ENV"
+          echo "DB_TEST_MIGRATION_PASSWORD_FILE=$secret_dir/db_migration_password" >> "$GITHUB_ENV"
           echo "DB_TEST_API_URL=http://127.0.0.1:8000" >> "$GITHUB_ENV"
+          echo "AUTH_ENVIRONMENT=development" >> "$GITHUB_ENV"
+          echo 'AUTH_ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:8000"]' >> "$GITHUB_ENV"
+          echo "AUTH_COOKIE_SECURE=false" >> "$GITHUB_ENV"
 
       - name: Validate Compose configuration
         working-directory: .
@@ -72,7 +82,6 @@ jobs:
         timeout-minutes: 15
         run: |
           docker compose -p sophikron-ci up -d --build --wait db backend
-          docker compose -p sophikron-ci run --build --rm migrate
 
       - name: PostgreSQL integration tests
         env:

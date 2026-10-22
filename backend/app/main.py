@@ -5,16 +5,31 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
+from starlette.middleware.base import RequestResponseEndpoint
 
+from app.api.router import router
+from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_database
+from app.core.http import AuthRequestMiddleware, ConfiguredCORSMiddleware
+from app.core.security import IdentityCipher, PasswordCapacityError, PasswordSecurity
+from app.services.auth import AuthService
+from app.services.errors import INVALID_REQUEST, AuthError
+from app.services.mail import DisabledMailer, InvitationMailer, SmtpMailer
 
 logger = logging.getLogger(__name__)
 
 
-def create_app(settings: DatabaseSettings | None = None) -> FastAPI:
+def create_app(
+    settings: DatabaseSettings | None = None,
+    *,
+    auth_settings: AuthSettings | None = None,
+    mailer: InvitationMailer | None = None,
+) -> FastAPI:
     """Create an application with independently owned database resources.
 
     Parameters
@@ -31,9 +46,29 @@ def create_app(settings: DatabaseSettings | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         """Allocate database resources at startup and dispose them at shutdown."""
+        authentication = auth_settings if auth_settings is not None else AuthSettings()
+        cipher = IdentityCipher.from_file(authentication.keys_file)
+        passwords = PasswordSecurity(authentication)
+        await passwords.initialize()
+        delivery = (
+            mailer
+            if mailer is not None
+            else (
+                SmtpMailer(authentication)
+                if authentication.mail_transport == "smtp"
+                else DisabledMailer()
+            )
+        )
         database = Database(settings if settings is not None else DatabaseSettings())
         application.state.database = database
+        application.state.auth_settings = authentication
+        application.state.identity_cipher = cipher
+        application.state.passwords = passwords
+        application.state.mailer = delivery
         try:
+            async with database.sessions() as session:
+                service = AuthService(session, authentication, cipher, passwords, delivery)
+                await service.initialize_installation()
             yield
         finally:
             await database.close()
@@ -45,14 +80,67 @@ def create_app(settings: DatabaseSettings | None = None) -> FastAPI:
         version="0.1.0",
         lifespan=lifespan,
     )
-    application.get("/")(read_root)
+    application.include_router(router)
     application.get("/health")(health_check)
+
+    @application.middleware("http")
+    async def security_headers(
+        request: Request,
+        call_next: RequestResponseEndpoint,
+    ) -> Response:
+        """Prevent caching of identity responses and apply configured credentialed CORS."""
+        response = await call_next(request)
+        if request.url.path.startswith("/api/"):
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
+
+    application.add_middleware(AuthRequestMiddleware)
+    application.add_middleware(ConfiguredCORSMiddleware)
+
+    @application.exception_handler(PasswordCapacityError)
+    async def password_capacity_error(
+        request: Request, error: PasswordCapacityError
+    ) -> JSONResponse:
+        """Reject excess password work promptly without revealing account existence."""
+        return JSONResponse(
+            {"detail": "Service occupé. Réessayez plus tard."},
+            status_code=503,
+            headers={"Retry-After": "1"},
+        )
+
+    @application.exception_handler(AuthError)
+    async def auth_error(request: Request, error: AuthError) -> JSONResponse:
+        """Expose only nontechnical domain messages and optional rate-limit retry time."""
+        headers = {"Retry-After": str(error.retry_after)} if error.retry_after else None
+        response = JSONResponse(
+            {"detail": error.message}, status_code=error.status, headers=headers
+        )
+        if error.status == 401:
+            configuration = request.app.state.auth_settings
+            response.delete_cookie(
+                configuration.cookie_name,
+                path="/",
+                secure=configuration.cookie_secure,
+                httponly=True,
+                samesite="lax",
+            )
+        return response
+
+    @application.exception_handler(RequestValidationError)
+    async def validation_error(request: Request, error: RequestValidationError) -> JSONResponse:
+        """Never echo request inputs, passwords, tokens or validator exception contexts."""
+        return JSONResponse({"detail": INVALID_REQUEST}, status_code=422)
+
+    @application.exception_handler(SQLAlchemyError)
+    async def database_error(request: Request, error: SQLAlchemyError) -> JSONResponse:
+        """Hide SQL, bound data and connection details on persistence failure."""
+        logger.warning("Application database operation failed")
+        return JSONResponse(
+            {"detail": "Service indisponible. Réessayez plus tard."}, status_code=503
+        )
+
     return application
-
-
-async def read_root() -> dict[str, str]:
-    """Return basic API information without requiring database availability."""
-    return {"message": "Welcome to Sophikron API"}
 
 
 async def health_check(database: Annotated[Database, Depends(get_database)]) -> dict[str, str]:

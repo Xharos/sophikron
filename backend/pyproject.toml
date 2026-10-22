@@ -14,6 +14,10 @@ dependencies = [
     "psycopg[binary]>=3.2,<4.0",
     "alembic>=1.14,<2.0",
     "pydantic-settings>=2.7,<3.0",
+    "argon2-cffi>=25.1,<26",
+    "cryptography>=46,<51",
+    "email-validator>=2.3,<3",
+    "anyio>=4,<5",
 ]
 
 [project.optional-dependencies]

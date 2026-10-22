@@ -6,15 +6,18 @@ application schema migrations. PostgreSQL 17 is the local reference database.
 ## Local Docker Compose setup
 
 Docker Desktop must use Linux containers. No local Python installation is needed to run the stack.
-Compose reads the local `.env` file. It is excluded from Git and Docker build contexts. The default
-connection settings are also defined in `compose.yaml`, so a fresh checkout works without an `.env`.
-Use `DB_NAME` to select the database and `DB_ADMIN_SECRET_PATH`, `DB_APP_SECRET_PATH` and
-`DB_MIGRATION_SECRET_PATH` to select the three secret files (defaults: `./secrets/db_admin_password`,
-`./secrets/db_app_password`, `./secrets/db_migration_password`). The old local `POSTGRES_DB`,
+Compose reads the single private `.env` file. It is excluded from Git and Docker build contexts.
+`compose.yaml` is the only Compose configuration, shared by development and isolated verification.
+Backend pool, timeout and authentication values are configured in `.env`; Compose lists the allowed
+variables and keeps container wiring and secret mounts explicit. Examples for `.env` are in
+[authentication configuration](authentication.md#keys-and-configuration).
+Use `DB_NAME` to select the database and `SOPHIKRON_SECRETS_DIRECTORY` to select the directory
+containing all six secret files. PostgreSQL uses `db_admin_password`, `db_app_password` and
+`db_migration_password` directly in that directory. The old local `POSTGRES_DB`,
 `POSTGRES_USER` and `POSTGRES_PASSWORD` settings are unused; Compose defines the container's
 PostgreSQL settings explicitly. Passwords belong in secret files, not `.env`.
 
-Provide three independent password files at the paths selected in `.env`. The local setup may keep
+Provide three independent password files in the directory selected in `.env`. The local setup may keep
 them outside the project on a drive accessible to Docker Desktop. These files are local configuration,
 not generated build artifacts, and must be preserved between starts. Restrict access using Windows
 filesystem permissions; never commit them. Secret values must be UTF-8, nonempty and single-line;
@@ -22,12 +25,10 @@ the application accepts an optional trailing line ending. Changing a file does n
 PostgreSQL role's password; coordinate password changes with PostgreSQL and restart the backend.
 
 If Docker Desktop cannot mount files on the project drive, place the files in an accessible local
-directory and set these paths in `.env`, for example:
+directory and set its path in `.env`, for example:
 
 ```dotenv
-DB_ADMIN_SECRET_PATH=C:/secure/sophikron/db_admin_password
-DB_APP_SECRET_PATH=C:/secure/sophikron/db_app_password
-DB_MIGRATION_SECRET_PATH=C:/secure/sophikron/db_migration_password
+SOPHIKRON_SECRETS_DIRECTORY=C:/Users/burga/AppData/Local/Sophikron
 ```
 
 Choose a directory you own and protect it with appropriate ACLs. The settings above contain
@@ -36,21 +37,22 @@ individual secret files readable by the container's runtime UID `10001`. File-ba
 preserve host permission constraints; their `uid`, `gid` and `mode` settings are not a portable way to
 fix source-file permissions. A readable file inside a restricted parent directory is one option.
 
-Start a new, uninitialized database, explicitly migrate it, then start the application:
+Generate the identity keyring as described in [authentication](authentication.md), provide its
+`identity_keys.json` file in the same directory, then start the application:
 
 ```sh
-docker compose up -d --build --wait db
-docker compose run --build --rm migrate
-docker compose up -d --build backend frontend
+docker compose up -d --build
 ```
 
 The API is available at `http://localhost:8000`, the frontend at `http://localhost:3000`. PostgreSQL
 is published only on `127.0.0.1:5432` for local Python tests and database tools. `DB_PUBLISHED_PORT`
 changes that host port; `BACKEND_PORT` changes the API's host port. Inside Docker, PostgreSQL still
-uses port 5432. `GET /` is independent of PostgreSQL. `GET /health` checks connectivity
+uses port 5432. `GET /api/v1` is independent of PostgreSQL. `GET /health` checks connectivity
 within `DB_HEALTH_TIMEOUT`, returns 503 without connection details on failure, and can recover without
-an API restart. Startup validates configuration and secret access but does not require a connection.
-The health check tests connectivity, not migration currency; deployments must run Alembic explicitly.
+an API restart. Startup validates secrets and reads the migrated installation-state row from PostgreSQL.
+The health check tests connectivity; Compose runs Alembic automatically before API startup.
+Direct non-Compose deployments must apply migrations explicitly. API startup now requires the
+migrated installation-state row and database access.
 
 **Existing volumes:** initialization scripts only run when PostgreSQL's data directory is empty.
 An old volume retains its database name, administrator and passwords. Even a volume with no business
@@ -84,8 +86,8 @@ secrets. Restrict Docker access and protect the host.
 ## Configuration
 
 `DatabaseSettings` reads environment variables only; it does not automatically load `.env`. These
-settings apply to processes inside containers. `DB_*_SECRET_PATH` in `.env` are host paths
-used by Compose, not application settings.
+settings apply to processes inside containers. `SOPHIKRON_SECRETS_DIRECTORY` is a host directory
+used by Compose, not an application setting. Individual host secret-path overrides are not used.
 
 | Variable | Default / requirement |
 | --- | --- |
@@ -148,7 +150,9 @@ Add future model imports in `app/models/__init__.py` so Alembic sees them throug
 Metadata uses the explicit `sophikron` schema and stable constraint names. Name check constraints.
 Connections use `search_path=pg_catalog`; qualify application tables explicitly in handwritten SQL.
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
-Its baseline records revision tracking without introducing business tables.
+Its consolidated initial revision creates authentication tables and the application role catalogue.
+See [authentication migration compatibility](authentication.md#initial-consolidated-alembic-revision)
+before using a database stamped with the previously empty baseline.
 
 The migration service defaults to `alembic upgrade head`. Supply a full command to override it:
 
@@ -166,6 +170,15 @@ remains readable even when rendering offline SQL; no URL with credentials is wri
 
 ## Verification
 
+For a complete automatic local run, use **run_tests** in PyCharm or run `python run_tests.py` from
+`backend/` using the configured interpreter. Docker Desktop must already be running. The launcher
+creates a unique disposable Compose project, synthetic credentials and dynamically assigned local
+ports, then runs the whole suite in the local interpreter. Its cleanup removes test volumes after
+success, failure or normal interruption. It never loads the development `.env` or its secrets.
+See [PyCharm Run / Debug](../backend/README.md#pycharm-run--debug) for the launch configuration.
+
+The commands below remain available for running subsets or managing test services manually.
+
 From `backend/`, after installing development dependencies in the configured Python environment:
 
 ```sh
@@ -182,6 +195,9 @@ Compose contains only `db`, `backend`, `frontend` and `migrate`. There is no tes
 Pytest runs in the configured local Python environment against the full PostgreSQL and API services.
 Install the backend's development dependencies locally; they are not included in the runtime image.
 
+The session fixture removes the disposable live API bootstrap before isolated account scenarios.
+Never use that database for manual accounts you want to preserve.
+
 Integration tests are skipped without `DB_INTEGRATION=1`. Use a dedicated database named
 `sophikron_test`, not the development database: the migration tests downgrade and reapply revisions.
 The following PowerShell example uses the normal services in a separate Compose project, with
@@ -192,14 +208,15 @@ at the project root so these process-local environment overrides do not affect n
 $env:DB_NAME = 'sophikron_test'
 $env:DB_PUBLISHED_PORT = '55432'
 $env:BACKEND_PORT = '18000'
+$env:AUTH_BOOTSTRAP_USERNAME = 'verification_setup'
 docker compose -p sophikron-tests up -d --build --wait db backend
-docker compose -p sophikron-tests run --build --rm migrate
 
 $env:DB_HOST = '127.0.0.1'
 $env:DB_PORT = '55432'
 $env:DB_USER = 'sophikron_app'
-$env:DB_PASSWORD_FILE = (Resolve-Path ./secrets/db_app_password).Path
-$env:DB_TEST_MIGRATION_PASSWORD_FILE = (Resolve-Path ./secrets/db_migration_password).Path
+$secretsDirectory = 'C:/Users/burga/AppData/Local/Sophikron'
+$env:DB_PASSWORD_FILE = Join-Path $secretsDirectory 'db_app_password'
+$env:DB_TEST_MIGRATION_PASSWORD_FILE = Join-Path $secretsDirectory 'db_migration_password'
 $env:DB_TEST_API_URL = 'http://127.0.0.1:18000'
 $env:DB_INTEGRATION = '1'
 Set-Location backend
@@ -208,8 +225,8 @@ Set-Location ..
 docker compose -p sophikron-tests down
 ```
 
-Adapt the two local password paths if you placed secrets outside the project. Compose reads its host
-secret paths from `.env` or `DB_*_SECRET_PATH` environment overrides; pytest reads the same files via
+Adapt `$secretsDirectory` to the directory configured in `.env`. Compose reads the host directory
+from `.env` or a `SOPHIKRON_SECRETS_DIRECTORY` environment override; pytest reads the same files via
 `DB_PASSWORD_FILE` and `DB_TEST_MIGRATION_PASSWORD_FILE`. Use dedicated test secrets when possible.
 The separate project uses its own named database volume; `down` preserves it for subsequent runs.
 Do not delete volumes without explicit authorization. Closing this terminal discards the environment
@@ -223,8 +240,8 @@ tests. Never point it at a valuable database. CI starts the same full services a
 its Python environment against its dedicated test database.
 
 The live HTTP checks validate status codes and JSON responses; they do not audit container users or
-secret mount permissions. The migration round trip currently smoke-tests the baseline and Alembic
-wiring; future business migrations need their own data-preservation checks. On migration command
+secret mount permissions. The migration round trip checks the authentication schema and Alembic
+wiring; old-baseline adoption checks preservation of unrelated stored data. On migration command
 failure, captured diagnostics are reported with the known database passwords redacted.
 
 Validate configuration without displaying any resolved values:
@@ -241,9 +258,9 @@ Multi-host connection selection can support a future primary endpoint, but does 
 replication or failover orchestration. A future PgBouncer deployment needs its own pooling and
 prepared-statement compatibility review.
 
-User and associated personal data are intended to be encrypted in the application before storage;
-pedagogical resources are outside that future encryption scope. This change does not implement
-encryption of business data. Choose protected fields, searchable representations, key storage,
-rotation and restoration before introducing real personal data. Keep encryption keys separate from
-PostgreSQL and its backups. Passwords for user accounts must use password hashing, not reversible
-encryption. Storage encryption and encrypted backups remain separate deployment responsibilities.
+Usernames and emails in `users` are encrypted in the application before storage. Keyed lookup
+indexes support exact search and uniqueness. Pedagogical resources, UUID relationships, roles and
+security/statistics timestamps remain outside this field-encryption scope. See
+[authentication](authentication.md) for keys, rotation, restoration, sessions and bootstrap. Keep
+encryption keys separate from PostgreSQL and its backups. Account passwords use Argon2id hashing,
+not reversible encryption. Storage encryption and encrypted backups remain deployment responsibilities.

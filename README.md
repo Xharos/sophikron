@@ -43,6 +43,15 @@ See [PostgreSQL setup and development](docs/database.md) for Docker Compose star
 database roles, migrations and isolated integration tests. Existing PostgreSQL volumes are never
 automatically reset or reprovisioned.
 
+See [backend authentication](docs/authentication.md) for identity encryption keys, initial
+administrator setup, invitations, cookie sessions and the versioned API. Generate the identity
+keyring before starting the backend. The authentication UI is not implemented yet.
+
+Use the single `compose.yaml` with a private `.env` for configuration. Local development, initial
+administrator setup and isolated PostgreSQL verification use the same services.
+After configuring secrets, `docker compose up -d --build` runs migrations and starts the application.
+Complete the first administrator through `/api/v1/auth/setup`; SMTP is not required for this step.
+
 ## Contributing
 
 Contributions are welcome. Please read the [contribution guidelines](docs/CONTRIBUTING.md) before submitting a pull
