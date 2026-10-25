@@ -1,26 +1,32 @@
 # Backend authentication
 
 Sophikron authenticates local accounts using Argon2id passwords and opaque server sessions. There is
-no public registration, bearer JWT, password-reset endpoint, MFA or frontend implementation in this
-increment. Backend authorization is mandatory regardless of what a client displays.
+no public registration, bearer JWT, public password recovery or MFA. Administrators can issue
+password-reset invitations. The SvelteKit frontend uses
+a server-side BFF; see [frontend and BFF](frontend-bff.md) for deployment and trust boundaries.
+Backend authorization is mandatory regardless of what a client displays.
 
 ## Data and encryption
 
-Only identity fields in `sophikron.users` are reversibly encrypted: `username_encrypted` and
-`email_encrypted`. AES-256-GCM uses a new random 96-bit nonce per encryption, a versioned keyring, and
-associated data binding the ciphertext to the account UUID, field and key version. Ciphertext moved
+Identity fields and optional private school-profile fields in `sophikron.users` are reversibly
+encrypted: username, email, first/family names, birth date, location, prior school, baccalaureate,
+orientation, phone and the reference adult. See [school profiles](administration.md#complete-school-profiles)
+for columns and permissions. AES-256-GCM uses a new random 96-bit nonce per encryption, a versioned keyring, and
+associated data binding the ciphertext to the integer account ID, field and key version. Ciphertext moved
 between accounts or fields cannot be authenticated. The application decrypts only authorized response
 fields and the recipient address needed for SMTP delivery. Encryption is not end-to-end: the backend
 has the keys. It protects identity contents in a database-only disclosure, not a compromised backend.
 
-Usernames are trimmed, lowercased ASCII identifiers of 3–64 characters: letters, digits, `_`, `-`, `.`;
+Generated usernames follow [the account creation rule](administration.md#account-identities).
+For login normalization, usernames are trimmed, lowercased ASCII identifiers of 3–64 characters: letters, digits, `_`, `-`, `.`;
 the first character must be a letter or digit. `@` is reserved for email login. Emails are validated
 without DNS queries and normalized; treating the entire address as case-insensitive is an intentional
 product policy. No provider-specific removal of dots or `+` suffixes is performed.
 
 Separate, domain-separated HMAC-SHA-256 lookup values enforce database uniqueness and exact identity
-search without storing plaintext. They leak equality, and remain pseudonymous data. Substring search
-and alphabetical SQL sorting are unavailable. The lookup key is distinct from encryption keys.
+search without storing plaintext. They leak equality, and remain pseudonymous data. Substring SQL search
+and alphabetical SQL sorting are unavailable. Authorized partial/fuzzy name search is implemented
+in transient backend memory; see [administration](administration.md#interactive-search). The lookup key is distinct from encryption keys.
 
 Passwords use salted Argon2id PHC strings, never reversible encryption. Defaults are 64 MiB, three
 iterations and four lanes, with two concurrent password workers per API process. New permanent
@@ -35,9 +41,9 @@ The bootstrap secret is separate: it may be empty or simple in any environment, 
 the configured file (maximum 128 characters and 512 UTF-8 bytes, without embedded newline or NUL).
 An empty login password is therefore accepted by the request schema; it does not bypass verification.
 
-Sessions and invitations contain only full SHA-256 verifiers of random 256-bit tokens. UUIDs are not
-authentication credentials. Roles, account status, timestamps, counters and UUID relationships are
-readable database metadata. `login_events` does not collect IPs, user-agents or navigation history.
+Sessions and invitations contain only full SHA-256 verifiers of random 256-bit tokens. Integer row IDs are not
+authentication credentials. Roles, account status, timestamps, counters and integer relationships are
+readable database metadata. `activity_events` does not collect IPs, user-agents or navigation history.
 The current session table also omits these optional device metadata fields.
 
 ## Keys and configuration
@@ -56,8 +62,9 @@ The application refuses to start without a valid keyring. Keys are never generat
 Store `identity_keys.json` directly inside `SOPHIKRON_SECRETS_DIRECTORY` for Compose, which mounts it
 at `/run/secrets/identity_keys`. Direct Python processes use `AUTH_KEYS_FILE`. Like `DatabaseSettings`,
 `AuthSettings` reads process environment variables, not dotenv files. Compose reads `.env` and passes
-only the variables explicitly configured in its service. The repository uses one `compose.yaml` and
-one private `.env`; no additional Compose override or environment template is needed.
+only the variables explicitly configured in its service. The repository uses the production base
+`compose.yaml`, the explicit local overlay `compose.local.yaml`, and one private `.env`. No extra
+environment template is needed. See [BFF deployment](frontend-bff.md#production-topology).
 Settings such as pool limits, session durations, browser origins and SMTP options live in `.env`.
 An empty YAML value such as `AUTH_SESSION_SECONDS:` is an allowlisted pass-through: Compose resolves
 it from the shell first, then `.env`. If absent from both, it is omitted and the application default
@@ -93,6 +100,8 @@ After setup, its file may be emptied; the Compose mount still requires a file to
 | --- | --- |
 | `AUTH_KEYS_FILE` | Required versioned JSON keyring file |
 | `AUTH_ALLOWED_ORIGINS` | Required JSON array of exact origins, without trailing slash |
+| `AUTH_CORS_ENABLED` | `true` by default; production Compose disables browser CORS independently of CSRF |
+| `AUTH_MANUAL_INVITATIONS_ENABLED` | Controls the legacy manual-only endpoint; automatic access invitations use manual delivery when SMTP is disabled |
 | `AUTH_ENVIRONMENT` | `production`; local `.env` sets `development` |
 | `AUTH_COOKIE_SECURE` | `true`; local HTTP `.env` sets `false` |
 | `AUTH_SESSION_SECONDS` | `28800`, absolute eight-hour lifetime |
@@ -149,7 +158,7 @@ decryption and exact-login lookup.
 
 Disk/storage encryption protects stored blocks when its key is unavailable. It does not hide fields
 from an authenticated SQL reader or ordinarily encrypt a logical SQL dump. Application encryption
-adds protection for usernames/emails in a database-only disclosure; account metadata stays readable.
+adds protection for all four identity fields in a database-only disclosure; account metadata stays readable.
 The current Compose volume does not configure disk encryption: that depends on the host or database
 provider and must be verified for deployment. HTTPS and database TLS protect network traffic and
 are separate requirements. An attacker controlling the backend or host may obtain both data and keys.
@@ -184,14 +193,15 @@ Configure `.env`, the three PostgreSQL passwords, the identity keyring and the t
 above, then start the normal stack from the repository root:
 
 ```sh
-docker compose up -d --build
+docker compose -f compose.yaml -f compose.local.yaml up -d --build
 ```
 
-For a published/prebuilt image, `docker compose up -d` is sufficient. With source builds, rebuild
+These are local instructions; production uses only `compose.yaml` behind an HTTPS host proxy.
+For prebuilt images, omit `--build`. With source builds, rebuild
 images after code changes. PostgreSQL becomes healthy first, then the one-shot migration service
 runs `alembic upgrade head` using only the migration-role password. The API starts only after that
 service exits successfully; the frontend waits for API health. A migration failure prevents API
-startup. No `--wait`, manual migration command, data reset or extra Compose file is needed.
+startup. No `--wait`, manual migration command or data reset is needed.
 The detached command returns before readiness; inspect `docker compose ps` and logs for progress.
 The API retries failures at most three times rather than looping forever on invalid setup settings.
 
@@ -210,7 +220,7 @@ The temporary account can log in, inspect `/auth/me`, log out, and call `POST /a
 It cannot create/invite ordinary accounts or change passwords. Complete setup with:
 
 ```json
-{"username":"permanent_admin","email":"operator@example.org","password":"ExampleAdminPassword2026!"}
+{"first_name":"Valentin","last_name":"Burgaud","email":"operator@example.org","password":"ExampleAdminPassword2026!"}
 ```
 
 Roles cannot be supplied. The service creates an active permanent administrator, sets
@@ -218,7 +228,7 @@ Roles cannot be supplied. The service creates an active permanent administrator,
 and outstanding invitations in one transaction. Failure, including duplicate identities, rolls back
 all changes so setup remains retryable. The permanent email is not marked verified without mailbox
 proof. No SMTP delivery is required to finish setup. The response is `201` and clears the bootstrap
-cookie; explicitly log in with the permanent credentials afterwards.
+cookie; explicitly log in with the generated username returned in the profile, or email, afterwards.
 
 After completion, remove `AUTH_BOOTSTRAP_USERNAME` from `.env` if desired; leaving it is harmless.
 Restarts do not recreate the bootstrap even if its disabled record is removed. Changes to the secret
@@ -248,7 +258,8 @@ No JavaScript console workaround or pasted cookie is required. ReDoc is referenc
 3. `GET /api/v1/auth/me` returns the temporary profile, including `is_bootstrap=true`, `email=null`.
 4. `POST /api/v1/auth/setup` with permanent credentials returns `201` and ends temporary access.
 5. Bootstrap login and its old sessions return `401`; permanent login returns `200`.
-6. The permanent administrator can create pending accounts and, once SMTP is configured, invite them.
+6. The permanent administrator can create pending accounts and generate manual invitations when
+   enabled, or send invitations once SMTP is configured.
 7. `POST /auth/change-password` revokes all sessions; `POST /auth/logout` revokes the current session.
    An expired/revoked session or inactive account always produces `401` on protected routes.
 
@@ -258,33 +269,42 @@ No JavaScript console workaround or pasted cookie is required. ReDoc is referenc
 | --- | --- | --- |
 | `POST /api/v1/auth/login` | Public, browser request protection | `200` profile and session cookie |
 | `POST /api/v1/auth/activate` | Public, invitation token and browser protection | `204` |
-| `GET /api/v1/auth/me` | Active authenticated account | `200` profile and current roles |
+| `GET /api/v1/auth/me` | Active authenticated account | `200` own profile, roles and account activity |
+| `GET /api/v1/auth/me/promotions` | Active permanent account | `200` own promotion badges |
 | `POST /api/v1/auth/logout` | Active authenticated account | `204`, revoke current session |
 | `POST /api/v1/auth/setup` | Temporary administrator only | `201`, permanent profile; bootstrap cookie removed |
 | `POST /api/v1/auth/change-password` | Active permanent account, current password | `204`, revoke all sessions |
 | `POST /api/v1/admin/users` | Administrator | `201`, pending profile |
 | `POST /api/v1/admin/users/{user_id}/invite` | Administrator | `204`, message accepted by transport |
+| `POST /api/v1/admin/users/{user_id}/manual-invitation` | Permanent administrator, explicit setting | `200`, new token and expiry |
+| `POST /api/v1/admin/users/{user_id}/access-invitation` | Permanent administrator | `200`, automatic SMTP or manual delivery; activation or reset |
 
 Login JSON is `{"identifier":"username-or-email","password":"..."}`. Activation JSON is
 `{"token":"...","password":"..."}`. Password change uses `current_password` and `new_password`.
-Setup accepts `username`, `email` and `password`. Normal account creation accepts `username`, `email`
-and an explicit nonempty `roles` array. Passwords,
+Setup accepts `first_name`, `last_name`, `email` and `password`. Normal account creation accepts
+`first_name`, `last_name`, `email`, an explicit nonempty `roles` array and optional `promotion_ids`.
+Usernames are generated once from French names and a random suffix 100–999, never supplied or
+modified by the caller. See [administration](administration.md) for validation and dashboard routes. Passwords,
 status and privileged flags cannot be supplied during creation. Responses never contain password
 hashes, token verifiers, lookup values or session secrets. There are no public registration,
-statistics, role-management, session-list or logout-all routes in this increment.
+role-management, session-list or logout-all routes in this increment. The admin activity journal
+is available under `/api/v1/admin/events`.
+
+The own-account `/me` response additionally includes `updated_at`, `last_login_at`,
+`password_changed_at`, `email_verified_at` and `login_count`, read from the existing account row.
+These fields are not added to login or administrator account-creation responses. No account ID
+supplied by a client selects another profile: `/me` always uses the authenticated session's account.
 
 `AuthenticatedUser` is `Annotated[UserContext, Depends(get_current_user)]`. `AdminUser`, `TeacherUser`
-and `StudentUser` add `RequireRole`. For alternatives use:
+and `UserAccount` require explicit `users.manage`, `teacher.access` and `user.access` permissions.
+Use `Annotated[UserContext, Depends(RequirePermission("promotions.manage"))]` for capability policies.
+Role-only checks remain available for exceptional policies through `RequireRole`.
 
-```python
-Annotated[UserContext, Depends(RequireRole("admin", "teacher"))]
-```
-
-Every check requires an active account and valid session. Roles are loaded on each request; admin
-does not implicitly inherit teacher/student. Sensitive services recheck the actor inside their write
-transaction so a dependency's earlier result is not blindly trusted. Future cookie-protected routes
-using these dependencies inherit the browser write protection. Public write routes must explicitly
-include `Depends(require_csrf)`.
+Every check requires an active account and valid session. Roles and permissions are loaded on each
+request; an administrator does not implicitly inherit teacher/user capabilities. Allowed roles are
+`user`, `teacher`, `admin`, or `teacher + admin`; `user` is incompatible with the other two.
+Sensitive services recheck actor capabilities inside their transaction. Protected routes inherit
+browser write protection; public write routes explicitly include `Depends(require_csrf)`.
 
 Status `401` means a missing/invalid session or inactive account; `403` means insufficient permission
 or rejected browser request; `429` includes `Retry-After`. Login failures use the same status and
@@ -308,7 +328,9 @@ Content-Type: application/json
 ```
 
 The content type is required when there is a body. The custom header relies on browser preflight,
-exact credentialed CORS origins and server-side origin validation. `Referer` supplies the origin only
+exact credentialed CORS origins for direct browser API access, and server-side origin validation.
+CORS is disabled for the private production API; origin validation remains active. The BFF validates
+the public origin before supplying these backend headers. `Referer` supplies the origin only
 when `Origin` is absent; absent/null/untrusted origins are rejected. CLI clients must supply these
 headers too. Unauthenticated protected operations still return `401` before browser checks.
 
@@ -326,7 +348,7 @@ failures. Another IP has independent budgets; no account-global lock exists. Mul
 one public IP also share its twenty-failure budget.
 
 The IP budget is checked before querying users. Pair keys use the normalized supplied identifier,
-not a resolved account UUID, so username and email aliases cannot reveal their relationship via a
+not a resolved integer account ID, so username and email aliases cannot reveal their relationship via a
 shared account counter. Unknown identifiers follow the same path. Keys are HMAC-protected; plaintext
 IPs and identifiers are not stored in these tables. Temporary `login_attempts` leases reserve capacity
 under PostgreSQL row locks to prevent concurrent guesses overrunning the limits. Completion releases
@@ -375,7 +397,17 @@ Do not put credential values in `.env`.
 Only one outstanding invitation exists per account. Explicit resend revokes all previous unused
 links, including expired ones. No automatic resend or extension occurs. Expiration is checked at
 use, so a cleanup job is not required to reject an expired link. Activation checks again under locks
-after password hashing and atomically consumes the token. Active/disabled accounts cannot activate.
+after password hashing and atomically consumes the token. Invitations carry a validated purpose:
+`activation` for pending accounts, `reset` for active accounts. Both use `/auth/activate`; disabled
+accounts cannot consume either. Reset changes the password, revokes every session and outstanding
+invitation, and records `auth.password_reset`. Issuing a reset leaves the existing password usable
+until the link is consumed. Archiving revokes links and sessions immediately.
+
+The dashboard calls `/admin/users/{id}/access-invitation`: SMTP is chosen when configured; otherwise
+it returns the new token and expiry for manual sharing, independently of the legacy manual-only
+setting. SMTP responses contain no token. Transport errors return 503 and revoke the failed link;
+they do not silently downgrade to manual delivery. Pending and active accounts share the same flow,
+with UI labels for first activation, resend/expiry and password reset.
 
 The invitation is committed before SMTP; no SQL transaction is held during network IO. A known or
 uncertain transport failure revokes that link and returns a generic error. A crash can leave an
@@ -384,51 +416,34 @@ transactional email delivery or add an outbox storing plaintext invitation secre
 
 SMTP links place the token in a URL **fragment**, not a query string, to keep it out of ordinary
 access logs. The eventual client activation page must read the fragment and POST it in JSON. That
-page is not implemented in this backend-only change. Until a client exists, an operator may submit
-the token using an HTTP tool without saving it in shell history or logs.
+page is implemented at `/activate` by SvelteKit. Manual delivery never marks email as verified.
+See [invitations and password resets](frontend-bff.md#invitations-and-password-resets).
 
-## Login statistics
+## Activity and login statistics
 
-Each successful authentication increments `users.login_count`, updates `last_login_at`, inserts one
-`login_events` row and creates its session in a single transaction. Failed attempts and ordinary
-authenticated navigation do not increment counts. Session deletion does not remove login events.
+Each successful authentication increments `users.login_count`, updates `last_login_at`, inserts an
+`activity_events` fact of type `auth.login_succeeded` and creates its session in one transaction.
+The event actor and subject are the authenticated account. Failed attempts and ordinary navigation
+do not increment counts. Session deletion does not remove the journal.
 
-Use half-open timestamp bounds (`>= start`, `< end`) for weekly/monthly reports; store UTC and compute
-calendar boundaries in the desired reporting timezone before querying. Count events per user for
-login totals; `COUNT(DISTINCT user_id)` gives unique accounts that authenticated in that period.
-This differs from unique active users who might reuse existing sessions. Events contain UUIDs and
-timestamps, not repeated copies of email/username. Their retention policy must be agreed before
-production data collection; this implementation performs no automatic history deletion. The lifetime
-counter remains independent of any later history retention policy.
+Filter by event type and use `subject_user_id` for per-account login reports. Choose explicit
+timezone boundaries for reporting periods; a login event is not proof of human presence. Events do
+not repeat personal identities, IPs or navigation data. Define retention before production; no
+automatic history deletion is implemented. See [activity journal](administration.md#activity-journal).
 
-## Initial consolidated Alembic revision
+## Reconstructed Alembic revisions
 
-At the owner's explicit request during development, all authentication and installation-state DDL
-is consolidated into `0001_authentication.py`, with revision identifier `0001_database_baseline`.
-It creates the final tables and constraints directly, including the username-only bootstrap account
-support and the singleton `application_state` row initialized with `initialized_at=NULL`.
-The owner also explicitly authorized updating this initial revision for failure-only login budgets
-and `login_attempts` leases, without a second Alembic revision. This does not upgrade a database already
-stamped with an older populated version of the revision. No persistent database is reset automatically.
-Fresh databases use `alembic upgrade head` normally, automatically through Compose. Previously
-populated development variants require a fresh database before using this consolidated revision.
-Future applied migrations must not be rewritten without explicit owner authorization.
+The owner explicitly authorized rebuilding the test-only migration history with no retained volumes:
 
-An already-stamped **old empty baseline** lacks the tables required by the API.
-For that exact empty state, use migration-role settings and run this explicit compatibility command:
+- `0001_users` (`0001_authentication.py`): accounts, roles/permissions, sessions, invitations, setup
+  state and login-attempt protections. Manual invitations are included directly.
+- `0002_promotions`: catalogue and role-independent account memberships.
+- `0003_activity_events`: general journal replacing the former login-only table.
 
-```sh
-python -m app.cli adopt-empty-baseline
-alembic upgrade head
-```
-
-It verifies the exact revision, refuses any existing authentication table, creates the initial
-schema transactionally, and preserves unrelated tables/data. It never stamps over, drops or resets
-existing objects. If any authentication table exists, inspect the mismatch instead. Do not run a
-downgrade against an old stamped empty schema; the consolidated downgrade expects its tables.
-
-Downgrade removes the authentication tables and their data, preserving the schema, unrelated tables
-and provisioned PostgreSQL roles. Run rollback verification only on the dedicated test database.
+Use `alembic upgrade head` on a fresh database. These revisions do not upgrade older populated
+variants or the old `0001_database_baseline`; historical `adopt-empty-baseline` is removed. No database
+is reset automatically. Future applied revisions must not be rewritten without explicit authorization.
+Downgrade is destructive and belongs only in an explicitly disposable test database.
 
 ## Verification and dependencies
 
@@ -444,9 +459,10 @@ runtime/migration role secrets and the running API URL; set `DB_INTEGRATION=1`, 
 `python -m pytest -q`. Unit tests use synthetic keys and explicit inexpensive test-only Argon2
 parameters. Integration tests exercise actual PostgreSQL and ASGI requests, including role checks,
 CSRF, cookies, invitation races, session deadlines/revocation, login counters and key rotation.
-Migration tests check downgrade/upgrade and safe old-baseline adoption with unrelated stored data.
+Migration tests check downgrade/upgrade and consistency with the final SQLAlchemy metadata.
 
 Added dependencies: `argon2-cffi` (MIT), `cryptography` (Apache-2.0 OR BSD-3-Clause), `email-validator`
-(Unlicense), and explicit `anyio` (MIT, already used by the framework). Keep their releases reviewed
-and maintained; passing these checks is not a comprehensive security assessment.
+(Unlicense), explicit `anyio` (MIT, already used by the framework), and `rapidfuzz` (MIT) for fuzzy name
+search. Keep their releases reviewed and maintained; passing these checks is not a comprehensive
+security assessment.
 

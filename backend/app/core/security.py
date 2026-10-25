@@ -9,7 +9,6 @@ import re
 import secrets
 from collections.abc import Callable
 from pathlib import Path
-from uuid import UUID
 
 import anyio
 from argon2 import PasswordHasher, Type
@@ -112,14 +111,14 @@ class IdentityCipher:
         """Return a domain-separated HMAC for exact lookup, uniqueness or rate limiting."""
         return hmac.digest(self._lookup_key, (field + "\0" + value).encode("utf-8"), "sha256")
 
-    def encrypt(self, user_id: UUID, field: str, value: str) -> bytes:
+    def encrypt(self, user_id: int, field: str, value: str) -> bytes:
         """Return a versioned ciphertext using a fresh 96-bit nonce and row-bound AAD."""
         nonce = os.urandom(12)
         aad = f"sophikron:users:{user_id}:{field}:{self.active}".encode()
         encrypted = AESGCM(self._keys[self.active]).encrypt(nonce, value.encode(), aad)
         return self.active.encode() + b":" + nonce + encrypted
 
-    def decrypt(self, user_id: UUID, field: str, value: bytes) -> str:
+    def decrypt(self, user_id: int, field: str, value: bytes) -> str:
         """Authenticate and decrypt a field; refuse unknown keys and transplanted values."""
         try:
             version, payload = value.split(b":", 1)

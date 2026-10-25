@@ -18,6 +18,7 @@ dependencies = [
     "cryptography>=46,<51",
     "email-validator>=2.3,<3",
     "anyio>=4,<5",
+    "rapidfuzz>=3.14,<4",
 ]
 
 [project.optional-dependencies]

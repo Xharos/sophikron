@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import httpx2 as httpx
 import pytest
@@ -21,14 +21,14 @@ from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
 from app.core.database import Database
 from app.core.security import IdentityCipher, PasswordSecurity, token_digest
-from app.dependencies.auth import AuthenticatedUser, StudentUser, TeacherUser
+from app.dependencies.auth import AuthenticatedUser, TeacherUser, UserAccount
 from app.main import create_app
 from app.models import (
     AccountInvitation,
+    ActivityEvent,
     ApplicationState,
     AuthRateLimit,
     LoginAttempt,
-    LoginEvent,
     Session,
     User,
     UserRole,
@@ -36,6 +36,7 @@ from app.models import (
 from app.services.auth import AuthService
 from app.services.errors import AuthError
 from app.services.mail import MailDeliveryError
+from tests.cleanup import clear_test_events
 
 pytestmark = [
     pytest.mark.integration,
@@ -74,9 +75,11 @@ class Harness:
     client: httpx.AsyncClient
     mailer: MemoryMailer
     prefix: str
-    ids: list[UUID] = field(default_factory=list)
-    administrator: UUID | None = None
+    ids: list[int] = field(default_factory=list)
+    administrator: int | None = None
     admin_token: str = ""
+    admin_username: str = ""
+    emails: dict[str, str] = field(default_factory=dict)
 
     def as_admin(self) -> None:
         """Restore the fixture administrator's browser cookie after a role-specific login."""
@@ -88,20 +91,24 @@ class Harness:
             path="/",
         )
 
-    async def create(self, role: str = "student", *, activate: bool = True) -> tuple[UUID, str]:
+    async def create(self, role: str = "user", *, activate: bool = True) -> tuple[int, str]:
         """Create and optionally activate a uniquely named account through the real HTTP API."""
         self.as_admin()
         username = f"{self.prefix}_{len(self.ids)}"
         response = await self.client.post(
             "/api/v1/admin/users",
             json={
-                "username": username,
+                "first_name": "Valentin",
+                "last_name": "Burgaud",
                 "email": f"{username}@example.org",
                 "roles": [role],
             },
         )
         assert response.status_code == 201, response.text
-        user_id = UUID(response.json()["id"])
+        email = f"{username}@example.org"
+        username = response.json()["username"]
+        self.emails[username] = email
+        user_id = int(response.json()["id"])
         self.ids.append(user_id)
         if activate:
             response = await self.client.post(f"/api/v1/admin/users/{user_id}/invite")
@@ -137,7 +144,7 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
         return {"id": str(user.id)}
 
     @app.get("/api/v1/test/student")
-    async def student(user: StudentUser) -> dict[str, str]:
+    async def student(user: UserAccount) -> dict[str, str]:
         """Exercise the reusable student-only dependency."""
         return {"id": str(user.id)}
 
@@ -171,7 +178,8 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                     await client.post(
                         "/api/v1/admin/users",
                         json={
-                            "username": prefix + "_forbidden",
+                            "first_name": "Valentin",
+                            "last_name": "Burgaud",
                             "email": f"{prefix}_forbidden@example.org",
                             "roles": ["teacher"],
                         },
@@ -181,13 +189,15 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                 response = await client.post(
                     "/api/v1/auth/setup",
                     json={
-                        "username": prefix + "_1",
+                        "first_name": "Valentin",
+                        "last_name": "Burgaud",
                         "email": f"{prefix}_1@example.org",
                         "password": PASSWORD,
                     },
                 )
                 assert response.status_code == 201, response.text
-                owner = UUID(response.json()["id"])
+                case.admin_username = response.json()["username"]
+                owner = int(response.json()["id"])
                 case.ids.append(owner)
                 case.administrator = owner
                 assert (await client.get("/api/v1/auth/me")).status_code == 401
@@ -195,7 +205,7 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                     await client.post(
                         "/api/v1/auth/login",
                         json={
-                            "identifier": f"{prefix}_1",
+                            "identifier": case.admin_username,
                             "password": PASSWORD,
                         },
                     )
@@ -211,9 +221,96 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                         | AccountInvitation.issued_by_user_id.in_(case.ids)
                     )
                 )
+                await clear_test_events(case.ids)
                 await session.execute(delete(User).where(User.id.in_(case.ids)))
                 await session.execute(update(ApplicationState).values(initialized_at=None))
         await database.close()
+
+
+@pytest.mark.asyncio
+async def test_manual_invitation_lifecycle(auth_case: Harness) -> None:
+    """Keep manual invitations opt-in, single-use and independent of email verification."""
+    case = auth_case
+    user_id, username = await case.create(activate=False)
+    path = f"/api/v1/admin/users/{user_id}/manual-invitation"
+    assert (await case.client.post(path)).status_code == 403
+    case.app.state.auth_settings = case.app.state.auth_settings.model_copy(
+        update={"manual_invitations_enabled": True}
+    )
+    first = await case.client.post(path)
+    assert first.status_code == 200
+    assert first.headers["cache-control"] == "no-store"
+    second = await case.client.post(path)
+    assert second.status_code == 200
+    token = second.json()["token"]
+    assert first.json()["token"] != token
+    async with case.database.sessions() as session:
+        invitation = await session.scalar(
+            select(AccountInvitation).where(AccountInvitation.token_hash == token_digest(token))
+        )
+        assert invitation is not None and invitation.delivery_method == "manual"
+        assert invitation.used_at is None
+        assert token.encode() != invitation.token_hash
+    case.client.cookies.clear()
+    assert (await case.client.post(path)).status_code == 401
+    for candidate, expected in ((first.json()["token"], 400), (token, 204), (token, 400)):
+        response = await case.client.post(
+            "/api/v1/auth/activate", json={"token": candidate, "password": PASSWORD}
+        )
+        assert response.status_code == expected
+    response = await case.client.post(
+        "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
+    )
+    assert response.status_code == 200
+    assert response.json()["email_verified"] is False
+    assert (await case.client.post(path)).status_code == 403
+    case.as_admin()
+    assert (await case.client.post(path)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_manual_invitation_csrf_and_missing_account(auth_case: Harness) -> None:
+    """Reject forged writes and nonexistent accounts without requiring an SMTP transport."""
+    case = auth_case
+    case.app.state.auth_settings = case.app.state.auth_settings.model_copy(
+        update={"manual_invitations_enabled": True}
+    )
+    path = "/api/v1/admin/users/9223372036854775807/manual-invitation"
+    assert (
+        await case.client.post(path, headers={"Origin": "https://evil.example"})
+    ).status_code == 403
+    assert (await case.client.post(path)).status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_account_activity_is_self_only(auth_case: Harness) -> None:
+    """Expose stored activity only for the authenticated account and never expose verifiers."""
+    case = auth_case
+    user_id, username = await case.create()
+    response = await case.client.post(
+        "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
+    )
+    assert response.status_code == 200
+    assert "last_login_at" not in response.json()
+    response = await case.client.get("/api/v1/auth/me", params={"user_id": str(case.administrator)})
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+    account = response.json()
+    assert account["id"] == user_id
+    assert account["login_count"] == 1
+    assert account["last_login_at"] is not None
+    assert account["password_changed_at"] is not None
+    assert account["email_verified_at"] is not None
+    assert {"password_hash", "token", "token_hash", "session_id"}.isdisjoint(account)
+    async with case.database.sessions() as session:
+        stored = await session.get(User, user_id)
+        assert datetime.fromisoformat(account["last_login_at"]) == stored.last_login_at
+        assert datetime.fromisoformat(account["password_changed_at"]) == stored.password_changed_at
+        assert datetime.fromisoformat(account["updated_at"]) == stored.updated_at
+    case.as_admin()
+    assert (await case.client.get("/api/v1/auth/me")).json()["id"] == case.administrator
+    case.client.cookies.clear()
+    assert (await case.client.get("/api/v1/auth/me")).status_code == 401
 
 
 @pytest.mark.asyncio
@@ -242,14 +339,14 @@ async def test_login_cookie_stats_and_logout(auth_case: Harness) -> None:
             await second.post(
                 "/api/v1/auth/login",
                 json={
-                    "identifier": f"{username.upper()}@EXAMPLE.ORG",
+                    "identifier": case.emails[username].upper(),
                     "password": PASSWORD,
                 },
             )
         ).status_code == 200
         for _ in range(3):
             response = await case.client.get("/api/v1/auth/me")
-            assert response.status_code == 200 and response.json()["roles"] == ["student"]
+            assert response.status_code == 200 and response.json()["roles"] == ["user"]
         async with case.database.sessions() as session:
             user = await session.get(User, user_id)
             assert user.login_count == 2 and user.last_login_at is not None
@@ -263,7 +360,12 @@ async def test_login_cookie_stats_and_logout(auth_case: Harness) -> None:
             assert all(item.token_hash != token.encode() for item in sessions)
             events = list(
                 (
-                    await session.scalars(select(LoginEvent).where(LoginEvent.user_id == user_id))
+                    await session.scalars(
+                        select(ActivityEvent).where(
+                            ActivityEvent.subject_user_id == user_id,
+                            ActivityEvent.event_type == "auth.login_succeeded",
+                        )
+                    )
                 ).all()
             )
             assert len(events) == 2 and all(event.occurred_at.tzinfo for event in events)
@@ -306,7 +408,8 @@ async def test_generic_failures_and_role_boundaries(auth_case: Harness) -> None:
         await case.client.post(
             "/api/v1/admin/users",
             json={
-                "username": "unauthorized",
+                "first_name": "Valentin",
+                "last_name": "Burgaud",
                 "email": "unauthorized@example.org",
                 "roles": ["admin"],
             },
@@ -468,7 +571,7 @@ async def test_password_change_revokes_every_browser(auth_case: Harness) -> None
         await second.post(
             "/api/v1/auth/login",
             json={
-                "identifier": case.prefix + "_1",
+                "identifier": case.admin_username,
                 "password": PASSWORD,
             },
         )
@@ -494,7 +597,7 @@ async def test_password_change_revokes_every_browser(auth_case: Harness) -> None
             await case.client.post(
                 "/api/v1/auth/login",
                 json={
-                    "identifier": case.prefix + "_1",
+                    "identifier": case.admin_username,
                     "password": PASSWORD,
                 },
             )
@@ -503,7 +606,7 @@ async def test_password_change_revokes_every_browser(auth_case: Harness) -> None
             await case.client.post(
                 "/api/v1/auth/login",
                 json={
-                    "identifier": case.prefix + "_1",
+                    "identifier": case.admin_username,
                     "password": SECOND_PASSWORD,
                 },
             )
@@ -580,11 +683,11 @@ async def test_delivery_failure_and_duplicates(auth_case: Harness) -> None:
         )
         assert invitation.revoked_at is not None
     for data in (
-        {"username": username.upper(), "email": "distinct@example.org", "roles": ["student"]},
         {
-            "username": username + "x",
-            "email": username.upper() + "@EXAMPLE.ORG",
-            "roles": ["student"],
+            "first_name": "Valentin",
+            "last_name": "Burgaud",
+            "email": case.emails[username].upper(),
+            "roles": ["user"],
         },
     ):
         assert (await case.client.post("/api/v1/admin/users", json=data)).status_code == 409
@@ -592,7 +695,8 @@ async def test_delivery_failure_and_duplicates(auth_case: Harness) -> None:
         await case.client.post(
             "/api/v1/admin/users",
             json={
-                "username": username + "unknown",
+                "first_name": "Valentin",
+                "last_name": "Burgaud",
                 "email": "unknown_role@example.org",
                 "roles": ["missing"],
             },
@@ -632,9 +736,19 @@ async def test_bootstrap_completion_and_no_automatic_recreation(
 async def test_identity_key_rotation_preserves_login(
     auth_case: Harness, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Re-encrypt identities and rebuild keyed indexes without changing UUIDs or passwords."""
+    """Re-encrypt identities and rebuild keyed indexes without changing integer IDs or passwords."""
     case = auth_case
     previous_path = AuthSettings().keys_file
+    async with case.database.sessions.begin() as session:
+        stored = await session.get(User, case.administrator)
+        stored.birth_date_encrypted = case.app.state.identity_cipher.encrypt(
+            stored.id, "birth_date", '"1988-03-12"'
+        )
+        stored.reference_adult_encrypted = case.app.state.identity_cipher.encrypt(
+            stored.id,
+            "reference_adult",
+            '{"first_name":"Marie","last_name":"Roy","phone":"+33612345678"}',
+        )
     new_path = tmp_path / "rotated-keys"
     generate_keys(new_path)
     monkeypatch.setenv("AUTH_KEYS_FILE", str(new_path))
@@ -647,8 +761,13 @@ async def test_identity_key_rotation_preserves_login(
     cipher = IdentityCipher.from_file(new_path)
     async with case.database.sessions() as session:
         service = AuthService(session, configuration, cipher, case.app.state.passwords, case.mailer)
-        actor, _ = await service.login(case.prefix + "_1", PASSWORD, "rotation-test")
+        actor, _ = await service.login(case.admin_username, PASSWORD, "rotation-test")
         assert actor.id == case.administrator
+        stored = await session.get(User, actor.id)
+        assert cipher.decrypt(actor.id, "birth_date", stored.birth_date_encrypted) == '"1988-03-12"'
+        assert "Marie" in cipher.decrypt(
+            actor.id, "reference_adult", stored.reference_adult_encrypted
+        )
 
 
 @pytest.mark.asyncio
@@ -718,13 +837,17 @@ async def test_automatic_bootstrap_and_renewal(
             async with database.sessions() as session:
                 user = await session.get(User, user_id)
                 assert user.status == "active" and user.password_hash != original_hash
-                assert restarted.state.identity_cipher.decrypt(
-                    user.id, "username", user.username_encrypted
-                ) == prefix + "_new"
+                assert (
+                    restarted.state.identity_cipher.decrypt(
+                        user.id, "username", user.username_encrypted
+                    )
+                    == prefix + "_new"
+                )
                 assert await restarted.state.passwords.verify(user.password_hash, SECOND_PASSWORD)
     finally:
         async with database.sessions.begin() as session:
             if user_id:
+                await clear_test_events([user_id])
                 await session.execute(delete(User).where(User.id == user_id))
             await session.execute(update(ApplicationState).values(initialized_at=None))
         await database.close()
@@ -770,7 +893,7 @@ async def test_setup_is_atomic_and_never_reopens(
     settings = AuthSettings(bootstrap_username=prefix, bootstrap_password_file=secret)
     app = create_app(auth_settings=settings, mailer=MemoryMailer())
     database = Database(DatabaseSettings())
-    ids: list[UUID] = []
+    ids: list[int] = []
     try:
         async with app.router.lifespan_context(app):
             async with httpx.AsyncClient(
@@ -782,7 +905,8 @@ async def test_setup_is_atomic_and_never_reopens(
                     await client.post(
                         "/api/v1/auth/setup",
                         json={
-                            "username": prefix + "_owner",
+                            "first_name": "Valentin",
+                            "last_name": "Burgaud",
                             "email": "owner@example.org",
                             "password": PASSWORD,
                         },
@@ -796,14 +920,20 @@ async def test_setup_is_atomic_and_never_reopens(
                     },
                 )
                 assert login.status_code == 200 and login.json()["email"] is None
-                ids.append(UUID(login.json()["id"]))
+                ids.append(int(login.json()["id"]))
                 bootstrap_token = client.cookies.get(settings.cookie_name)
-                body = {"username": prefix, "email": "owner@example.org", "password": PASSWORD}
-                assert (await client.post("/api/v1/auth/setup", json=body)).status_code == 409
+                body = {
+                    "first_name": "Valentin",
+                    "last_name": "Burgaud",
+                    "username": prefix,
+                    "email": "owner@example.org",
+                    "password": PASSWORD,
+                }
+                assert (await client.post("/api/v1/auth/setup", json=body)).status_code == 422
                 async with database.sessions() as session:
                     assert (await session.get(ApplicationState, 1)).initialized_at is None
                     assert (await session.get(User, ids[0])).status == "active"
-                body["username"] = prefix + "_owner"
+                body.pop("username")
                 rejected = await client.post(
                     "/api/v1/auth/setup", json=body, headers={"Origin": "https://evil.example"}
                 )
@@ -813,7 +943,7 @@ async def test_setup_is_atomic_and_never_reopens(
                         "/api/v1/auth/setup",
                         json=body
                         | {
-                            "roles": ["student"],
+                            "roles": ["user"],
                         },
                     )
                 ).status_code == 422
@@ -833,7 +963,7 @@ async def test_setup_is_atomic_and_never_reopens(
                 assert sorted(r.status_code for r in results)[0] == 201
                 assert sorted(r.status_code for r in results)[1] in {401, 403}
                 permanent = next(r for r in results if r.status_code == 201).json()
-                ids.append(UUID(permanent["id"]))
+                ids.append(int(permanent["id"]))
                 assert permanent["roles"] == ["admin"] and permanent["email_verified"] is False
                 client.cookies.set(
                     settings.cookie_name, bootstrap_token, domain="testserver.local", path="/"
@@ -857,7 +987,7 @@ async def test_setup_is_atomic_and_never_reopens(
                     await client.post(
                         "/api/v1/auth/login",
                         json={
-                            "identifier": prefix + "_owner",
+                            "identifier": permanent["username"],
                             "password": PASSWORD,
                         },
                     )
@@ -866,6 +996,7 @@ async def test_setup_is_atomic_and_never_reopens(
         # Missing username/secret cannot reopen a completed installation, even after deletion
         # of the disabled temporary record by a local operator.
         async with database.sessions.begin() as session:
+            await clear_test_events([ids[0]])
             await session.execute(delete(User).where(User.id == ids[0]))
         restarted = create_app(
             auth_settings=AuthSettings(
@@ -889,6 +1020,7 @@ async def test_setup_is_atomic_and_never_reopens(
                     await service.initialize_installation(renew=True)
     finally:
         async with database.sessions.begin() as session:
+            await clear_test_events(ids)
             await session.execute(delete(User).where(User.id.in_(ids)))
             await session.execute(update(ApplicationState).values(initialized_at=None))
         await database.close()
@@ -1056,14 +1188,16 @@ async def test_expired_rate_counter_maintenance(auth_case: Harness) -> None:
                 ),
             ]
         )
-        event_count = await session.scalar(select(func.count()).select_from(LoginEvent))
+        event_count = await session.scalar(select(func.count()).select_from(ActivityEvent))
     try:
         await execute(argparse.Namespace(command="prune-rate-limits"))
         async with case.database.sessions() as session:
             assert await session.get(AuthRateLimit, expired) is None
             assert await session.get(AuthRateLimit, active) is not None
             assert await session.get(User, case.administrator) is not None
-            assert await session.scalar(select(func.count()).select_from(LoginEvent)) == event_count
+            assert (
+                await session.scalar(select(func.count()).select_from(ActivityEvent)) == event_count
+            )
     finally:
         async with case.database.sessions.begin() as session:
             await session.execute(
@@ -1082,8 +1216,12 @@ async def login_status(
     """Return a service login status using an independent session and optional clock."""
     async with case.database.sessions() as session:
         service = AuthService(
-            session, settings, case.app.state.identity_cipher, case.app.state.passwords,
-            case.mailer, clock=(lambda: now) if now is not None else None,
+            session,
+            settings,
+            case.app.state.identity_cipher,
+            case.app.state.passwords,
+            case.mailer,
+            clock=(lambda: now) if now is not None else None,
         )
         try:
             await service.login(identifier, password, ip)
@@ -1107,9 +1245,11 @@ async def test_activation_uses_permanent_password_policy(
     )
     assert response.status_code == expected
     if expected == 204:
-        assert (await case.client.post(
-            "/api/v1/auth/login", json={"identifier": username, "password": password}
-        )).status_code == 200
+        assert (
+            await case.client.post(
+                "/api/v1/auth/login", json={"identifier": username, "password": password}
+            )
+        ).status_code == 200
 
 
 @pytest.mark.asyncio
@@ -1119,10 +1259,9 @@ async def test_login_successes_do_not_consume_or_clear_failures(auth_case: Harne
     user_id, username = await case.create()
     settings = AuthSettings(login_identity_limit=2, login_ip_limit=20)
     parallel_settings = settings.model_copy(update={"login_identity_limit": 6})
-    results = await asyncio.gather(*(
-        login_status(case, username, PASSWORD, "success-ip", parallel_settings)
-        for _ in range(6)
-    ))
+    results = await asyncio.gather(
+        *(login_status(case, username, PASSWORD, "success-ip", parallel_settings) for _ in range(6))
+    )
     assert results == [200] * 6
     assert await login_status(case, username, "incorrect", "success-ip", settings) == 401
     assert await login_status(case, username, PASSWORD, "success-ip", settings) == 200
@@ -1141,15 +1280,29 @@ async def test_login_window_begins_at_first_failure(auth_case: Harness) -> None:
     settings = AuthSettings(login_identity_limit=2, login_ip_limit=20)
     start = datetime.now(UTC)
     for seconds in (0, 899):
-        assert await login_status(
-            case, username, "incorrect", "window-ip", settings, start + timedelta(seconds=seconds)
-        ) == 401
-    assert await login_status(
-        case, username, PASSWORD, "window-ip", settings, start + timedelta(seconds=899)
-    ) == 429
-    assert await login_status(
-        case, username, PASSWORD, "window-ip", settings, start + timedelta(seconds=900)
-    ) == 200
+        assert (
+            await login_status(
+                case,
+                username,
+                "incorrect",
+                "window-ip",
+                settings,
+                start + timedelta(seconds=seconds),
+            )
+            == 401
+        )
+    assert (
+        await login_status(
+            case, username, PASSWORD, "window-ip", settings, start + timedelta(seconds=899)
+        )
+        == 429
+    )
+    assert (
+        await login_status(
+            case, username, PASSWORD, "window-ip", settings, start + timedelta(seconds=900)
+        )
+        == 200
+    )
 
 
 @pytest.mark.asyncio
@@ -1162,7 +1315,7 @@ async def test_login_aliases_do_not_reveal_account_links(auth_case: Harness) -> 
         for _ in range(2):
             assert await login_status(case, identifier, "incorrect", "alias-ip", settings) == 401
         assert await login_status(case, identifier, "incorrect", "alias-ip", settings) == 429
-    for email in (username + "@example.org", "unknown_" + case.prefix + "@example.org"):
+    for email in (case.emails[username], "unknown_" + case.prefix + "@example.org"):
         assert await login_status(case, email, "incorrect", "alias-ip", settings) == 401
     assert await login_status(case, username, PASSWORD, "other-ip", settings) == 200
 
@@ -1189,9 +1342,10 @@ async def test_parallel_logins_cannot_exceed_failure_budget(
         return await original(encoded, password)
 
     monkeypatch.setattr(case.app.state.passwords, "verify", paused)
-    tasks = [asyncio.create_task(login_status(
-        case, username, "incorrect", "parallel-ip", settings
-    )) for _ in range(12)]
+    tasks = [
+        asyncio.create_task(login_status(case, username, "incorrect", "parallel-ip", settings))
+        for _ in range(12)
+    ]
     try:
         await asyncio.wait_for(entered.wait(), 5)
         async with asyncio.timeout(5):
@@ -1262,12 +1416,15 @@ async def test_abandoned_login_leases_expire(auth_case: Harness) -> None:
         assert lease is not None
     settings = AuthSettings(login_ip_limit=1, login_identity_limit=1)
     try:
-        assert await login_status(
-            case, "unknown", "incorrect", "abandoned-ip", settings, now
-        ) == 429
-        assert await login_status(
-            case, "unknown", "incorrect", "abandoned-ip", settings, now + timedelta(seconds=120)
-        ) == 401
+        assert (
+            await login_status(case, "unknown", "incorrect", "abandoned-ip", settings, now) == 429
+        )
+        assert (
+            await login_status(
+                case, "unknown", "incorrect", "abandoned-ip", settings, now + timedelta(seconds=120)
+            )
+            == 401
+        )
     finally:
         async with case.database.sessions.begin() as session:
             await session.execute(delete(LoginAttempt).where(LoginAttempt.id == lease.id))

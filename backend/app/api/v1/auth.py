@@ -3,7 +3,9 @@
 from fastapi import APIRouter, Depends, Request, Response
 
 from app.dependencies.auth import AuthenticatedUser, AuthServiceDependency, client_ip, require_csrf
+from app.schemas.administration import PromotionBadge
 from app.schemas.auth import (
+    AccountResponse,
     ActivateRequest,
     ChangePasswordRequest,
     CompleteSetupRequest,
@@ -12,6 +14,14 @@ from app.schemas.auth import (
 )
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
+
+
+@router.get("/me/promotions", response_model=list[PromotionBadge])
+async def own_promotions(
+    user: AuthenticatedUser, service: AuthServiceDependency
+) -> list[PromotionBadge]:
+    """Return only the caller's memberships; no role-specific directory permission is needed."""
+    return await service.own_promotions(user)
 
 
 def clear_session_cookie(request: Request, response: Response) -> None:
@@ -61,10 +71,10 @@ async def activate(
     )
 
 
-@router.get("/me", response_model=UserResponse)
-async def me(user: AuthenticatedUser) -> UserResponse:
-    """Return only the identity and current roles of the authenticated account."""
-    return user.profile
+@router.get("/me", response_model=AccountResponse)
+async def me(user: AuthenticatedUser, service: AuthServiceDependency) -> AccountResponse:
+    """Return the authenticated account's identity and activity without credential verifiers."""
+    return await service.account(user)
 
 
 @router.post("/logout", status_code=204)

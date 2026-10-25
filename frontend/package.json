@@ -6,6 +6,7 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"test": "node --experimental-strip-types --test tests/*.test.ts",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
@@ -14,6 +15,7 @@
 		"format": "prettier --write ."
 	},
 	"dependencies": {
+		"@fortawesome/free-solid-svg-icons": "^7.3.1",
 		"@sveltejs/kit": "^3.0.0",
 		"bulma": "^1.0.4",
 		"svelte": "^5.57.1",
@@ -29,6 +31,7 @@
 		"eslint-config-prettier": "^10.1.8",
 		"eslint-plugin-svelte": "^3.19.0",
 		"globals": "^17.6.0",
+		"playwright": "^1.64.1",
 		"prettier": "^3.8.3",
 		"prettier-plugin-svelte": "^4.1.0",
 		"svelte-check": "^4.6.0",

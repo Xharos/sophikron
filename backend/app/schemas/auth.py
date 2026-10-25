@@ -1,11 +1,35 @@
 """Strict public authentication contracts with no credential verifiers in responses."""
 
 from datetime import datetime
-from uuid import UUID
+from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, SecretStr, field_validator
 
-from app.core.security import normalize_email, normalize_username
+from app.core.identity import normalize_name
+from app.core.security import normalize_email
+
+
+def validate_roles(value: list[str]) -> list[str]:
+    """Require one supported role combination for account creation and later changes.
+
+    Parameters
+    ----------
+    value
+        Explicit role codes supplied by the administrator.
+
+    Returns
+    -------
+    list[str]
+        The validated codes, preserving the supplied order.
+    """
+    if len(set(value)) != len(value):
+        raise ValueError("Duplicate roles")
+    if not set(value) <= {"user", "teacher", "admin"} or ("user" in value and len(value) != 1):
+        raise ValueError("Incompatible roles")
+    return value
+
+
+RoleCodes = Annotated[list[str], Field(min_length=1, max_length=2), AfterValidator(validate_roles)]
 
 
 class InputModel(BaseModel):
@@ -36,16 +60,17 @@ class ChangePasswordRequest(InputModel):
 
 
 class UserIdentityRequest(InputModel):
-    """Normalize the username and email supplied for a permanent account."""
+    """Validate identity fields; permanent usernames are generated exclusively by the server."""
 
-    username: str = Field(min_length=3, max_length=64)
+    first_name: str = Field(min_length=1, max_length=100)
+    last_name: str = Field(min_length=1, max_length=100)
     email: str = Field(min_length=3, max_length=254)
 
-    @field_validator("username")
+    @field_validator("first_name", "last_name")
     @classmethod
-    def validate_username(cls, value: str) -> str:
-        """Normalize the public username before encryption and uniqueness checks."""
-        return normalize_username(value)
+    def validate_name(cls, value: str) -> str:
+        """Keep French spelling while rejecting empty and unsupported names."""
+        return normalize_name(value)
 
     @field_validator("email")
     @classmethod
@@ -57,14 +82,15 @@ class UserIdentityRequest(InputModel):
 class CreateUserRequest(UserIdentityRequest):
     """Let administrators explicitly assign existing roles to an unactivated account."""
 
-    roles: list[str] = Field(min_length=1, max_length=20)
+    roles: RoleCodes = Field(default_factory=lambda: ["user"])
+    promotion_ids: list[int] = Field(default_factory=list, max_length=100)
 
-    @field_validator("roles")
+    @field_validator("promotion_ids")
     @classmethod
-    def validate_roles(cls, value: list[str]) -> list[str]:
-        """Reject duplicate and oversized role codes before querying the catalogue."""
-        if len(set(value)) != len(value) or any(not 1 <= len(role) <= 64 for role in value):
-            raise ValueError("Invalid roles")
+    def validate_promotions(cls, value: list[int]) -> list[int]:
+        """Reject nonpositive and duplicate promotion identifiers."""
+        if any(item <= 0 for item in value) or len(set(value)) != len(value):
+            raise ValueError("Invalid promotions")
         return value
 
 
@@ -77,11 +103,40 @@ class CompleteSetupRequest(UserIdentityRequest):
 class UserResponse(BaseModel):
     """Return identity only to the account itself or an authorized administrator."""
 
-    id: UUID
+    id: int
     username: str
+    first_name: str | None
+    last_name: str | None
     email: str | None
     status: str
     roles: tuple[str, ...]
+    permissions: tuple[str, ...]
     email_verified: bool
     is_bootstrap: bool
     created_at: datetime
+
+
+class AccountResponse(UserResponse):
+    """Expose account activity only to the authenticated account itself."""
+
+    updated_at: datetime
+    last_login_at: datetime | None
+    password_changed_at: datetime | None
+    email_verified_at: datetime | None
+    login_count: int
+
+
+class ManualInvitationResponse(BaseModel):
+    """Expose a new invitation only to the issuing permanent administrator."""
+
+    token: str = Field(repr=False)
+    expires_at: datetime
+
+
+class AccessInvitationResponse(BaseModel):
+    """Expose a token only when the server selected manual delivery without SMTP."""
+
+    delivery: str
+    purpose: str
+    expires_at: datetime
+    token: str | None = Field(default=None, repr=False)

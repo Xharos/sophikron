@@ -2,20 +2,29 @@
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from uuid import UUID, uuid4
 
 from sqlalchemy import case, delete, exists, func, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import AccountInvitation, AuthRateLimit, LoginAttempt, Role, Session, User, UserRole
+from app.models import (
+    AccountInvitation,
+    AuthRateLimit,
+    LoginAttempt,
+    Permission,
+    Role,
+    RolePermission,
+    Session,
+    User,
+    UserRole,
+)
 
 
 @dataclass(frozen=True)
 class LoginReservation:
     """Keep lease references valid even when an authentication transaction rolls back."""
 
-    id: UUID
+    id: int
     ip_key: bytes
     identity_key: bytes
 
@@ -27,7 +36,7 @@ class AuthRepository:
         """Use the request's session without owning its transaction."""
         self.session = session
 
-    async def user(self, user_id: UUID, *, lock: bool = False) -> User | None:
+    async def user(self, user_id: int, *, lock: bool = False) -> User | None:
         """Fetch an account, optionally locking it before any security-sensitive mutation."""
         statement = select(User).where(User.id == user_id).execution_options(populate_existing=True)
         if lock:
@@ -39,7 +48,7 @@ class AuthRepository:
         column = User.email_lookup if field == "email" else User.username_lookup
         return await self.session.scalar(select(User).where(column == lookup))
 
-    async def roles(self, user_id: UUID) -> tuple[str, ...]:
+    async def roles(self, user_id: int) -> tuple[str, ...]:
         """Read current role codes rather than trusting a cookie or cached profile."""
         statement = (
             select(Role.code)
@@ -53,8 +62,36 @@ class AuthRepository:
         """Fetch role catalogue entries for a validated explicit assignment."""
         return list((await self.session.scalars(select(Role).where(Role.code.in_(codes)))).all())
 
+    async def permissions(self, user_id: int) -> tuple[str, ...]:
+        """Read the union of explicitly granted capabilities without role inheritance."""
+        statement = (
+            select(Permission.code)
+            .join(RolePermission)
+            .join(UserRole, UserRole.role_id == RolePermission.role_id)
+            .where(UserRole.user_id == user_id)
+            .distinct()
+            .order_by(Permission.code)
+        )
+        return tuple((await self.session.scalars(statement)).all())
+
+    async def grants(self, user_id: int) -> tuple[tuple[str, ...], tuple[str, ...]]:
+        """Read role names and their capability union together for one profile snapshot."""
+        rows = await self.session.execute(
+            select(Role.code, Permission.code)
+            .join(UserRole, UserRole.role_id == Role.id)
+            .outerjoin(RolePermission, RolePermission.role_id == Role.id)
+            .outerjoin(Permission, Permission.id == RolePermission.permission_id)
+            .where(UserRole.user_id == user_id)
+        )
+        roles, permissions = set(), set()
+        for role, permission in rows:
+            roles.add(role)
+            if permission is not None:
+                permissions.add(permission)
+        return tuple(sorted(roles)), tuple(sorted(permissions))
+
     async def session_by_hash(self, digest: bytes) -> Session | None:
-        """Find a session without treating its public UUID as an authentication credential."""
+        """Find a session without treating its public int as an authentication credential."""
         return await self.session.scalar(select(Session).where(Session.token_hash == digest))
 
     async def invitation_by_hash(self, digest: bytes) -> AccountInvitation | None:
@@ -65,7 +102,7 @@ class AuthRepository:
             .execution_options(populate_existing=True)
         )
 
-    async def revoke_sessions(self, user_id: UUID, now: datetime, reason: str) -> None:
+    async def revoke_sessions(self, user_id: int, now: datetime, reason: str) -> None:
         """Revoke outstanding sessions atomically while the service holds the user lock."""
         await self.session.execute(
             update(Session)
@@ -73,7 +110,7 @@ class AuthRepository:
             .values(revoked_at=now, revocation_reason=reason)
         )
 
-    async def revoke_invitations(self, user_id: UUID, now: datetime) -> None:
+    async def revoke_invitations(self, user_id: int, now: datetime) -> None:
         """Invalidate all unused links, including expired links before replacing them."""
         await self.session.execute(
             update(AccountInvitation)
@@ -158,9 +195,7 @@ class AuthRepository:
             ).one()
             if bucket.attempts + pending >= limit:
                 return None, min(earliest, now + timedelta(seconds=1))
-        lease = LoginAttempt(
-            id=uuid4(), ip_key=ip_key, identity_key=identity_key, expires_at=lease_expiry
-        )
+        lease = LoginAttempt(ip_key=ip_key, identity_key=identity_key, expires_at=lease_expiry)
         self.session.add(lease)
         await self.session.flush()
         return LoginReservation(lease.id, ip_key, identity_key), None
@@ -195,9 +230,11 @@ class AuthRepository:
                 delete(AuthRateLimit).where(
                     AuthRateLimit.key == key,
                     AuthRateLimit.attempts == 0,
-                    ~exists().where(or_(
-                        LoginAttempt.ip_key == AuthRateLimit.key,
-                        LoginAttempt.identity_key == AuthRateLimit.key,
-                    )),
+                    ~exists().where(
+                        or_(
+                            LoginAttempt.ip_key == AuthRateLimit.key,
+                            LoginAttempt.identity_key == AuthRateLimit.key,
+                        )
+                    ),
                 )
             )

@@ -1,14 +1,12 @@
-"""Create installation state, encrypted accounts, roles, sessions and login statistics.
+"""Create installation state, encrypted accounts, roles, sessions and explicit permissions.
 
 Consolidated with explicit owner authorization for fresh development installations.
 """
 
-from uuid import UUID
-
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0001_database_baseline"
+revision: str = "0001_users"
 down_revision: str | None = None
 branch_labels: str | None = None
 depends_on: str | None = None
@@ -45,29 +43,36 @@ def upgrade() -> None:
     )
     op.create_table(
         "login_attempts",
-        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
         sa.Column("ip_key", sa.LargeBinary(), nullable=False),
         sa.Column("identity_key", sa.LargeBinary(), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.ForeignKeyConstraint(
-            ["ip_key"], ["sophikron.auth_rate_limits.key"],
-            name=op.f("fk_login_attempts_ip_key_auth_rate_limits"), ondelete="CASCADE",
+            ["ip_key"],
+            ["sophikron.auth_rate_limits.key"],
+            name=op.f("fk_login_attempts_ip_key_auth_rate_limits"),
+            ondelete="CASCADE",
         ),
         sa.ForeignKeyConstraint(
-            ["identity_key"], ["sophikron.auth_rate_limits.key"],
-            name=op.f("fk_login_attempts_identity_key_auth_rate_limits"), ondelete="CASCADE",
+            ["identity_key"],
+            ["sophikron.auth_rate_limits.key"],
+            name=op.f("fk_login_attempts_identity_key_auth_rate_limits"),
+            ondelete="CASCADE",
         ),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_login_attempts")),
         schema="sophikron",
     )
     for column in ("ip_key", "identity_key", "expires_at"):
         op.create_index(
-            op.f(f"ix_login_attempts_{column}"), "login_attempts", [column],
-            unique=False, schema="sophikron",
+            op.f(f"ix_login_attempts_{column}"),
+            "login_attempts",
+            [column],
+            unique=False,
+            schema="sophikron",
         )
     op.create_table(
         "roles",
-        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
         sa.Column("code", sa.String(length=64), nullable=False),
         sa.Column("description", sa.String(length=255), nullable=False),
         sa.Column(
@@ -83,8 +88,15 @@ def upgrade() -> None:
     )
     op.create_table(
         "users",
-        sa.Column("id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
         sa.Column("username_encrypted", sa.LargeBinary(), nullable=False),
+        sa.Column("first_name_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("last_name_encrypted", sa.LargeBinary(), nullable=True),
+        sa.CheckConstraint(
+            "is_bootstrap OR (first_name_encrypted IS NOT NULL AND "
+            "last_name_encrypted IS NOT NULL)",
+            name=op.f("ck_users_permanent_names"),
+        ),
         sa.Column("email_encrypted", sa.LargeBinary(), nullable=True),
         sa.Column("username_lookup", sa.LargeBinary(), nullable=False),
         sa.Column("email_lookup", sa.LargeBinary(), nullable=True),
@@ -110,6 +122,17 @@ def upgrade() -> None:
         sa.Column("login_count", sa.BigInteger(), server_default="0", nullable=False),
         sa.Column("is_bootstrap", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("bootstrap_expires_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("profile_version", sa.BigInteger(), server_default="0", nullable=False),
+        sa.Column("birth_date_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("city_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("postal_code_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("commune_code_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("previous_school_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("baccalaureate_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("orientation_project_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("phone_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("reference_adult_encrypted", sa.LargeBinary(), nullable=True),
         sa.CheckConstraint(
             "status != 'active' OR password_hash IS NOT NULL", name=op.f("ck_users_active_password")
         ),
@@ -151,12 +174,16 @@ def upgrade() -> None:
     )
     op.create_table(
         "account_invitations",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("token_hash", sa.LargeBinary(), nullable=False),
-        sa.Column("issued_by_user_id", sa.Uuid(), nullable=True),
+        sa.Column("issued_by_user_id", sa.BigInteger(), nullable=True),
         sa.Column("issuance_kind", sa.String(length=16), nullable=False),
         sa.Column("delivery_method", sa.String(length=16), nullable=False),
+        sa.Column("purpose", sa.String(16), server_default="activation", nullable=False),
+        sa.CheckConstraint(
+            "purpose IN ('activation', 'reset')", name=op.f("ck_account_invitations_purpose")
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("used_at", sa.DateTime(timezone=True), nullable=True),
@@ -165,10 +192,6 @@ def upgrade() -> None:
             "(issuance_kind = 'bootstrap' AND issued_by_user_id IS NULL) OR "
             "(issuance_kind = 'admin' AND issued_by_user_id IS NOT NULL)",
             name=op.f("ck_account_invitations_issuer"),
-        ),
-        sa.CheckConstraint(
-            "delivery_method != 'manual' OR issuance_kind = 'bootstrap'",
-            name=op.f("ck_account_invitations_manual_bootstrap"),
         ),
         sa.CheckConstraint(
             "delivery_method IN ('email', 'manual')", name=op.f("ck_account_invitations_delivery")
@@ -232,37 +255,9 @@ def upgrade() -> None:
         postgresql_where=sa.text("used_at IS NULL AND revoked_at IS NULL"),
     )
     op.create_table(
-        "login_events",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sa.Uuid(), nullable=False),
-        sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
-        sa.ForeignKeyConstraint(
-            ["user_id"],
-            ["sophikron.users.id"],
-            name=op.f("fk_login_events_user_id_users"),
-            ondelete="CASCADE",
-        ),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_login_events")),
-        schema="sophikron",
-    )
-    op.create_index(
-        op.f("ix_login_events_occurred_at"),
-        "login_events",
-        ["occurred_at"],
-        unique=False,
-        schema="sophikron",
-    )
-    op.create_index(
-        "ix_login_events_user_time",
-        "login_events",
-        ["user_id", "occurred_at"],
-        unique=False,
-        schema="sophikron",
-    )
-    op.create_table(
         "sessions",
-        sa.Column("id", sa.Uuid(), nullable=False),
-        sa.Column("user_id", sa.Uuid(), nullable=False),
+        sa.Column("id", sa.BigInteger(), sa.Identity(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("token_hash", sa.LargeBinary(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
@@ -293,8 +288,8 @@ def upgrade() -> None:
     )
     op.create_table(
         "user_roles",
-        sa.Column("user_id", sa.Uuid(), nullable=False),
-        sa.Column("role_id", sa.Uuid(), nullable=False),
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("role_id", sa.BigInteger(), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -321,7 +316,6 @@ def upgrade() -> None:
     )
     roles = sa.table(
         "roles",
-        sa.column("id", sa.Uuid()),
         sa.column("code", sa.String()),
         sa.column("description", sa.String()),
         schema="sophikron",
@@ -330,37 +324,149 @@ def upgrade() -> None:
         roles,
         [
             {
-                "id": UUID("144a4c76-6995-4538-92dd-36b98e2e1901"),
                 "code": "admin",
                 "description": "Administrator",
             },
             {
-                "id": UUID("144a4c76-6995-4538-92dd-36b98e2e1902"),
                 "code": "teacher",
                 "description": "Teacher",
             },
             {
-                "id": UUID("144a4c76-6995-4538-92dd-36b98e2e1903"),
-                "code": "student",
-                "description": "Student",
+                "code": "user",
+                "description": "User",
             },
         ],
+    )
+
+    op.create_table(
+        "permissions",
+        sa.Column("id", sa.BigInteger(), sa.Identity(always=True), nullable=False),
+        sa.Column("code", sa.String(64), nullable=False),
+        sa.Column("description", sa.String(255), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_permissions")),
+        sa.UniqueConstraint("code", name=op.f("uq_permissions_code")),
+        schema="sophikron",
+    )
+    op.create_table(
+        "role_permissions",
+        sa.Column("role_id", sa.BigInteger(), nullable=False),
+        sa.Column("permission_id", sa.BigInteger(), nullable=False),
+        sa.ForeignKeyConstraint(
+            ["role_id"],
+            ["sophikron.roles.id"],
+            ondelete="CASCADE",
+            name=op.f("fk_role_permissions_role_id_roles"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["permission_id"],
+            ["sophikron.permissions.id"],
+            ondelete="CASCADE",
+            name=op.f("fk_role_permissions_permission_id_permissions"),
+        ),
+        sa.PrimaryKeyConstraint("role_id", "permission_id", name=op.f("pk_role_permissions")),
+        schema="sophikron",
+    )
+    op.create_index(
+        op.f("ix_role_permissions_permission_id"),
+        "role_permissions",
+        ["permission_id"],
+        schema="sophikron",
+    )
+    for role, codes in {
+        "admin": [
+            "users.read",
+            "users.manage",
+            "promotions.read",
+            "promotions.manage",
+            "events.read",
+            "statistics.read",
+            "profiles.read",
+            "profiles.manage",
+        ],
+        "teacher": ["teacher.access", "teaching.read", "profiles.read", "orientation.manage"],
+        "user": ["user.access"],
+    }.items():
+        for code in codes:
+            op.execute(
+                sa.text(
+                    "INSERT INTO sophikron.permissions (code, description) VALUES (:code, :code) "
+                    "ON CONFLICT (code) DO NOTHING"
+                ).bindparams(code=code)
+            )
+            op.execute(
+                sa.text(
+                    "INSERT INTO sophikron.role_permissions (role_id, permission_id) "
+                    "SELECT r.id, p.id FROM sophikron.roles r CROSS JOIN sophikron.permissions p "
+                    "WHERE r.code = :role AND p.code = :code"
+                ).bindparams(role=role, code=code)
+            )
+    op.execute("""
+        CREATE FUNCTION sophikron.lock_role_account() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+        BEGIN
+            PERFORM id FROM sophikron.users WHERE id IN (
+                CASE WHEN TG_OP <> 'INSERT' THEN OLD.user_id ELSE NULL END,
+                CASE WHEN TG_OP <> 'DELETE' THEN NEW.user_id ELSE NULL END
+            ) ORDER BY id FOR UPDATE;
+            IF TG_OP = 'DELETE' THEN RETURN OLD; END IF;
+            RETURN NEW;
+        END $$
+    """)
+    op.execute("""
+        CREATE TRIGGER lock_role_account BEFORE INSERT OR UPDATE OR DELETE
+        ON sophikron.user_roles FOR EACH ROW EXECUTE FUNCTION sophikron.lock_role_account()
+    """)
+    op.execute("""
+        CREATE FUNCTION sophikron.validate_account_roles() RETURNS trigger
+        LANGUAGE plpgsql SET search_path = pg_catalog AS $$
+        DECLARE account_id bigint;
+        BEGIN
+            FOR account_id IN SELECT DISTINCT id FROM (VALUES
+                (CASE WHEN TG_OP <> 'INSERT' THEN OLD.user_id ELSE NULL END),
+                (CASE WHEN TG_OP <> 'DELETE' THEN NEW.user_id ELSE NULL END)
+            ) AS affected(id) WHERE id IS NOT NULL LOOP
+                IF EXISTS (
+                    SELECT 1 FROM sophikron.user_roles ur
+                    JOIN sophikron.roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = account_id AND r.code = 'user'
+                ) AND EXISTS (
+                    SELECT 1 FROM sophikron.user_roles ur
+                    JOIN sophikron.roles r ON r.id = ur.role_id
+                    WHERE ur.user_id = account_id AND r.code IN ('teacher', 'admin')
+                ) THEN
+                    RAISE EXCEPTION 'Incompatible account roles' USING ERRCODE = '23514';
+                END IF;
+            END LOOP;
+            RETURN NULL;
+        END $$
+    """)
+    op.execute("""
+        CREATE CONSTRAINT TRIGGER validate_roles AFTER INSERT OR UPDATE OR DELETE
+        ON sophikron.user_roles DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+        EXECUTE FUNCTION sophikron.validate_account_roles()
+    """)
+    op.execute("GRANT EXECUTE ON FUNCTION sophikron.lock_role_account() TO sophikron_app")
+    op.execute("GRANT EXECUTE ON FUNCTION sophikron.validate_account_roles() TO sophikron_app")
+    op.execute(
+        "REVOKE INSERT, UPDATE, DELETE ON sophikron.roles, sophikron.permissions, "
+        "sophikron.role_permissions FROM sophikron_app"
     )
 
 
 def downgrade() -> None:
     """Remove authentication data while preserving provisioned schema and database roles."""
     # Reverse dependency order preserves provisioned schema and unrelated objects.
+    op.execute("DROP TRIGGER validate_roles ON sophikron.user_roles")
+    op.execute("DROP TRIGGER lock_role_account ON sophikron.user_roles")
+    op.execute("DROP FUNCTION sophikron.validate_account_roles()")
+    op.execute("DROP FUNCTION sophikron.lock_role_account()")
+    op.drop_table("role_permissions", schema="sophikron")
+    op.drop_table("permissions", schema="sophikron")
     op.drop_index(op.f("ix_user_roles_role_id"), table_name="user_roles", schema="sophikron")
     op.drop_table("user_roles", schema="sophikron")
     op.drop_index(op.f("ix_sessions_user_id"), table_name="sessions", schema="sophikron")
     op.drop_index(op.f("ix_sessions_expires_at"), table_name="sessions", schema="sophikron")
     op.drop_table("sessions", schema="sophikron")
-    op.drop_index("ix_login_events_user_time", table_name="login_events", schema="sophikron")
-    op.drop_index(
-        op.f("ix_login_events_occurred_at"), table_name="login_events", schema="sophikron"
-    )
-    op.drop_table("login_events", schema="sophikron")
     op.drop_index(
         "uq_account_invitations_outstanding",
         table_name="account_invitations",

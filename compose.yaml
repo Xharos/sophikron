@@ -21,8 +21,6 @@ services:
       - db_migration_password
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    ports:
-      - "127.0.0.1:${DB_PUBLISHED_PORT:-5432}:5432"
     networks:
       - sophikron_network
     healthcheck:
@@ -59,9 +57,11 @@ services:
       DB_LOCK_TIMEOUT_MS:
       DB_IDLE_TRANSACTION_TIMEOUT_MS:
       DB_HEALTH_TIMEOUT:
-      AUTH_ENVIRONMENT:
-      AUTH_ALLOWED_ORIGINS:
-      AUTH_COOKIE_SECURE:
+      AUTH_ENVIRONMENT: production
+      AUTH_ALLOWED_ORIGINS: '["${SOPHIKRON_ORIGIN:-https://sophikron.invalid}"]'
+      AUTH_COOKIE_SECURE: "true"
+      AUTH_CORS_ENABLED: "false"
+      AUTH_MANUAL_INVITATIONS_ENABLED: ${AUTH_MANUAL_INVITATIONS_ENABLED:-true}
       AUTH_SESSION_SECONDS:
       AUTH_IDLE_SECONDS:
       AUTH_LOGIN_IP_LIMIT:
@@ -85,10 +85,11 @@ services:
       - identity_keys
       - bootstrap_password
       - smtp_password
-    ports:
-      - "${BACKEND_PORT:-8000}:8000"
+    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --proxy-headers, --forwarded-allow-ips, "${BFF_ADDRESS:-172.30.85.2}", --timeout-keep-alive, "5"]
     networks:
-      - sophikron_network
+      sophikron_network:
+      bff_network:
+        ipv4_address: ${API_ADDRESS:-172.30.85.3}
     depends_on:
       db:
         condition: service_healthy
@@ -118,11 +119,22 @@ services:
     build:
       context: .
       dockerfile: frontend/Dockerfile
+      args:
+        SITE_ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+    environment:
+      NODE_ENV: production
+      ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}
+      BACKEND_ORIGIN: http://backend:8000
+      ESTABLISHMENT_NAME: ${ESTABLISHMENT_NAME:-Sophikron}
+      # Only the host reverse proxy can reach this loopback listener.
+      ADDRESS_HEADER: X-Real-IP
+      BODY_SIZE_LIMIT: "16384"
     networks:
-      - sophikron_network
+      bff_network:
+        ipv4_address: ${BFF_ADDRESS:-172.30.85.2}
     depends_on:
       backend:
         condition: service_healthy
@@ -147,3 +159,9 @@ secrets:
 networks:
   sophikron_network:
     driver: bridge
+    internal: true
+  bff_network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${BFF_SUBNET:-172.30.85.0/24}

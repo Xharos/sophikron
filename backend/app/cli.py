@@ -9,17 +9,14 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from alembic.config import Config
-from alembic.migration import MigrationContext
-from alembic.operations import Operations
-from alembic.script import ScriptDirectory
-from sqlalchemy import Connection, delete, exists, inspect, or_, select, text
+from sqlalchemy import delete, exists, or_, select, text
 
 from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
-from app.core.database import Base, Database
+from app.core.database import Database
 from app.core.security import IdentityCipher, PasswordSecurity, write_private_file
 from app.models import AuthRateLimit, LoginAttempt, User
+from app.schemas.profile import PRIVATE_PROFILE_FIELDS
 from app.services.auth import LIFECYCLE_LOCK, AuthService
 from app.services.mail import DisabledMailer
 
@@ -34,28 +31,6 @@ def generate_keys(path: Path) -> None:
     write_private_file(path, json.dumps(keyring, indent=2) + "\n")
 
 
-def adopt_empty_baseline(connection: Connection) -> None:
-    """Apply the consolidated initial migration only to the exact old empty baseline state.
-
-    Parameters
-    ----------
-    connection
-        A migration-role connection inside an explicit transaction. Unrelated tables survive.
-    """
-    context = MigrationContext.configure(connection, opts={"version_table_schema": "sophikron"})
-    if context.get_current_revision() != "0001_database_baseline":
-        raise ValueError("Expected the old stamped baseline")
-    tables = set(inspect(connection).get_table_names(schema="sophikron"))
-    authentication_tables = {table.name for table in Base.metadata.sorted_tables}
-    if tables.intersection(authentication_tables):
-        raise ValueError("Authentication tables already exist; refusing baseline adoption")
-    configuration = Config(str(Path(__file__).resolve().parents[1] / "alembic.ini"))
-    revision = ScriptDirectory.from_config(configuration).get_revision("0001_database_baseline")
-    with Operations.context(context):
-        revision.module.upgrade()
-    connection.execute(text("REVOKE ALL ON sophikron.alembic_version FROM sophikron_app"))
-
-
 async def execute(arguments: argparse.Namespace) -> None:
     """Run one explicitly selected local operation and release every database resource."""
     if arguments.command == "generate-keys":
@@ -63,10 +38,6 @@ async def execute(arguments: argparse.Namespace) -> None:
         return
     database = Database(DatabaseSettings())
     try:
-        if arguments.command == "adopt-empty-baseline":
-            async with database.engine.begin() as connection:
-                await connection.run_sync(adopt_empty_baseline)
-            return
         if arguments.command == "prune-rate-limits":
             async with database.sessions.begin() as session:
                 now = datetime.now(UTC)
@@ -74,10 +45,12 @@ async def execute(arguments: argparse.Namespace) -> None:
                 await session.execute(
                     delete(AuthRateLimit).where(
                         AuthRateLimit.expires_at <= now,
-                        ~exists().where(or_(
-                            LoginAttempt.ip_key == AuthRateLimit.key,
-                            LoginAttempt.identity_key == AuthRateLimit.key,
-                        )),
+                        ~exists().where(
+                            or_(
+                                LoginAttempt.ip_key == AuthRateLimit.key,
+                                LoginAttempt.identity_key == AuthRateLimit.key,
+                            )
+                        ),
                     )
                 )
             return
@@ -110,6 +83,15 @@ async def execute(arguments: argparse.Namespace) -> None:
                             raise ValueError(
                                 "Previous lookup key does not match the stored identities"
                             )
+                        for field in ("first_name", "last_name", *PRIVATE_PROFILE_FIELDS):
+                            encrypted = getattr(user, field + "_encrypted")
+                            if encrypted is not None:
+                                plaintext = previous.decrypt(user.id, field, encrypted)
+                                setattr(
+                                    user,
+                                    field + "_encrypted",
+                                    cipher.encrypt(user.id, field, plaintext),
+                                )
                         user.username_encrypted = cipher.encrypt(user.id, "username", username)
                         user.email_encrypted = (
                             cipher.encrypt(user.id, "email", email) if email is not None else None
@@ -131,9 +113,6 @@ def main() -> None:
     keys.add_argument("--output", type=Path, required=True)
     bootstrap = commands.add_parser("bootstrap", help="Initialize the temporary administrator")
     bootstrap.add_argument("--renew", action="store_true")
-    commands.add_parser(
-        "adopt-empty-baseline", help="Upgrade the previously empty stamped revision"
-    )
     rotate = commands.add_parser(
         "rotate-identities", help="Rotate identity keys during maintenance"
     )

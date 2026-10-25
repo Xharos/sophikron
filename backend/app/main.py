@@ -15,11 +15,12 @@ from app.api.router import router
 from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_database
-from app.core.http import AuthRequestMiddleware, ConfiguredCORSMiddleware
+from app.core.http import AuthRequestMiddleware, ConfiguredCORSMiddleware, SearchAccessLogFilter
 from app.core.security import IdentityCipher, PasswordCapacityError, PasswordSecurity
 from app.services.auth import AuthService
 from app.services.errors import INVALID_REQUEST, AuthError
 from app.services.mail import DisabledMailer, InvitationMailer, SmtpMailer
+from app.services.search import NameSearchCache
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,10 @@ def create_app(
         The configured application, with no import-time database initialization.
     """
 
+    access_logger = logging.getLogger("uvicorn.access")
+    if not any(isinstance(item, SearchAccessLogFilter) for item in access_logger.filters):
+        access_logger.addFilter(SearchAccessLogFilter())
+
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
         """Allocate database resources at startup and dispose them at shutdown."""
@@ -65,12 +70,14 @@ def create_app(
         application.state.identity_cipher = cipher
         application.state.passwords = passwords
         application.state.mailer = delivery
+        application.state.name_search_cache = NameSearchCache()
         try:
             async with database.sessions() as session:
                 service = AuthService(session, authentication, cipher, passwords, delivery)
                 await service.initialize_installation()
             yield
         finally:
+            application.state.name_search_cache.clear()
             await database.close()
             del application.state.database
 

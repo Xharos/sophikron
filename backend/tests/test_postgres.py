@@ -16,7 +16,6 @@ from sqlalchemy import Column, Identity, Integer, MetaData, String, Table, func,
 from sqlalchemy.exc import DBAPIError, IntegrityError
 from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 
-from app.cli import adopt_empty_baseline
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
@@ -83,28 +82,6 @@ def test_migration_roundtrip(migrated_database: None) -> None:
     run_alembic("downgrade", "base")
     run_alembic("upgrade", "head")
     run_alembic("check")
-
-
-@pytest.mark.asyncio
-async def test_old_baseline_adoption(
-    databases: tuple[Database, Database],
-    records: Table,
-) -> None:
-    """Adopt the old empty stamped revision without dropping unrelated stored data."""
-    application, migration = databases
-    async with application.sessions.begin() as session:
-        await session.execute(records.insert().values(value="preserved"))
-    run_alembic("downgrade", "base")
-    run_alembic("stamp", "0001_database_baseline")
-    async with migration.engine.begin() as connection:
-        await connection.run_sync(adopt_empty_baseline)
-    async with application.sessions() as session:
-        assert await session.scalar(select(records.c.value)) == "preserved"
-    run_alembic("upgrade", "head")
-    # Refuse re-adoption of a populated schema instead of silently changing existing tables.
-    with pytest.raises(ValueError, match="already exist"):
-        async with migration.engine.begin() as connection:
-            await connection.run_sync(adopt_empty_baseline)
 
 
 def test_running_api() -> None:

@@ -5,7 +5,8 @@ import { defineConfig } from 'vite';
 export default defineConfig({
 	plugins: [
 		sveltekit({
-			adapter: adapter()
+			adapter: adapter(),
+			paths: { origin: process.env.ORIGIN || 'http://localhost:3000' }
 		})
 	],
 	server: {

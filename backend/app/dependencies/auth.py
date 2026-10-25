@@ -22,7 +22,12 @@ def get_auth_service(
     """Construct a request-scoped service using application-owned security resources."""
     state = request.app.state
     return AuthService(
-        session, state.auth_settings, state.identity_cipher, state.passwords, state.mailer
+        session,
+        state.auth_settings,
+        state.identity_cipher,
+        state.passwords,
+        state.mailer,
+        name_search_cache=state.name_search_cache,
     )
 
 
@@ -112,6 +117,22 @@ class RequireRole:
         return user
 
 
-AdminUser = Annotated[UserContext, Depends(RequireRole("admin"))]
-TeacherUser = Annotated[UserContext, Depends(RequireRole("teacher"))]
-StudentUser = Annotated[UserContext, Depends(RequireRole("student"))]
+class RequirePermission:
+    """Require an explicit capability instead of inferring capabilities from role names."""
+
+    def __init__(self, permission: str) -> None:
+        """Refuse an empty permission policy."""
+        if not permission:
+            raise ValueError("A permission is required")
+        self.permission = permission
+
+    async def __call__(self, user: AuthenticatedUser) -> UserContext:
+        """Return a verified principal or deny missing capabilities."""
+        if self.permission not in user.permissions:
+            raise AuthError(403, FORBIDDEN)
+        return user
+
+
+AdminUser = Annotated[UserContext, Depends(RequirePermission("users.manage"))]
+TeacherUser = Annotated[UserContext, Depends(RequirePermission("teacher.access"))]
+UserAccount = Annotated[UserContext, Depends(RequirePermission("user.access"))]

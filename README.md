@@ -39,13 +39,72 @@ Share teaching materials, publish educational pages and create interactive conte
 
 ## Getting started
 
+See [database documentation](docs/database.md) and [authentication documentation](docs/authentication.md) for detailed configuration and administration.
+
+## Local setup
+
+The public establishment name is configured with `ESTABLISHMENT_NAME=Sophikron` in the root
+`.env` file. It is read by the frontend at runtime and defaults to `Sophikron` when blank or absent.
+See [frontend configuration](frontend/README.md#establishment-name) for container recreation
+and native development instructions.
+
+1. Create a `.env` file at the project root. Docker Compose automatically loads it for variable substitution. Configure the database, authentication settings, ports, and `SOPHIKRON_SECRETS_DIRECTORY` (see [.env.example](.env.example)).
+
+2. Create the directory specified by `SOPHIKRON_SECRETS_DIRECTORY` and add the following files:
+
+   - `bootstrap_password`
+   - `db_admin_password`
+   - `db_app_password`
+   - `db_migration_password`
+   - `smtp_password` (may be empty when SMTP is disabled)
+   - `identity_keys.json` (generated below)
+
+     Generate the identity keys from the `backend/` directory:
+
+     ```bash
+     python -m app.cli generate-keys --output "/path/to/secrets/identity_keys.json"
+     ```
+
+3. Build and start the local infrastructure:
+
+   ```bash
+   docker compose -f compose.yaml -f compose.local.yaml up -d --build
+   ```
+
+   
+Access the [frontend](http://localhost:3000), [Swagger UI](http://localhost:8000/docs), and [ReDoc](http://localhost:8000/redoc) (using the configured ports).
+
+
+### Stopping the infrastructure
+
+Stop containers while **preserving PostgreSQL data**:
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml down
+```
+
+Stop containers and **delete Docker volumes, including PostgreSQL data**:
+
+```bash
+docker compose -f compose.yaml -f compose.local.yaml down -v
+```
+
+**Warning:** `down -v` permanently deletes data stored in Compose-managed volumes. Existing volumes are never automatically reset during startup.
+## Getting started
+
 See [PostgreSQL setup and development](docs/database.md) for Docker Compose startup, runtime secrets,
 database roles, migrations and isolated integration tests. Existing PostgreSQL volumes are never
 automatically reset or reprovisioned.
 
 See [backend authentication](docs/authentication.md) for identity encryption keys, initial
 administrator setup, invitations, cookie sessions and the versioned API. Generate the identity
-keyring before starting the backend. The authentication UI is not implemented yet.
+keyring before starting the backend. See [backend administration](docs/administration.md) for
+generated usernames, promotions, interactive name/username search, scoped teacher access and activity
+events. The [responsive frontend dashboard](docs/frontend-bff.md) provides account/promotion management,
+archiving, invitations and administrator statistics at `/dashboard`.
+Complete school profiles add encrypted birth/contact/location information, baccalaureate subjects
+and marks, orientation and an adult reference contact. Administrators edit profile fields; teachers
+can update only the orientation project of students in their assigned promotions.
 
 Use the single `compose.yaml` with a private `.env` for configuration. Local development, initial
 administrator setup and isolated PostgreSQL verification use the same services.

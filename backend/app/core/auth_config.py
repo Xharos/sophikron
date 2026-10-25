@@ -20,6 +20,8 @@ class AuthSettings(BaseSettings):
     environment: Literal["production", "development", "test"] = "production"
     keys_file: Path = Field(repr=False, exclude=True)
     allowed_origins: list[str] = Field(min_length=1)
+    cors_enabled: bool = True
+    manual_invitations_enabled: bool = False
     cookie_secure: bool = True
     session_seconds: int = Field(default=28800, ge=60, le=86400)
     idle_seconds: int = Field(default=1800, ge=60, le=86400)

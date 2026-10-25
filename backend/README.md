@@ -7,6 +7,12 @@ See [authentication](../docs/authentication.md) for identity encryption, key gen
 administrator setup, API contracts, SMTP, sessions and verification. See
 [database operations](../docs/database.md) for database roles, secrets and Alembic.
 
+See [administration](../docs/administration.md) for integer account IDs, generated immutable usernames,
+four encrypted identity fields, explicit permissions, promotions, fuzzy name search and activity.
+The shared responsive frontend uses these contracts; see [frontend and BFF](../docs/frontend-bff.md).
+Complete school profiles keep optional private information encrypted in `users`, with administrator
+editing and scoped teacher orientation editing; see [profile contracts](../docs/administration.md#complete-school-profiles).
+
 Install into the configured Python environment with `python -m pip install -e ".[dev]"`. Run:
 
 ```sh
@@ -39,7 +45,10 @@ cannot be guaranteed: the console prints the exact disposable project name for m
 Pytest runs in the Python configuration's process, so Debug supports breakpoints in tests and API
 services called through ASGI. The output is a pytest console summary rather than the IDE's pytest
 tree. The live API process remains in Docker; debugging that process requires a separate setup.
-The first run may take longer while Docker builds images. No frontend tests or services are started.
+The first run may take longer while Docker builds images. By default only backend services/tests run.
+Set `BFF_INTEGRATION=1` for the real HTTP frontend journey, and additionally
+`BFF_BROWSER_INTEGRATION=1` for Playwright desktop/mobile interactions using installed Edge
+(`BFF_BROWSER_CHANNEL` can select another installed Playwright channel).
 
 Normal local startup uses `docker compose up -d --build` from the repository root. Compose runs the
 migration service before the API. A fresh installation requires `AUTH_BOOTSTRAP_USERNAME` and a

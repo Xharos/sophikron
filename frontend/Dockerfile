@@ -18,6 +18,9 @@ RUN npm run check && npm run lint
 
 FROM dependencies AS build
 
+ARG SITE_ORIGIN=http://localhost:3000
+ENV ORIGIN=$SITE_ORIGIN
+
 COPY frontend/ ./
 
 RUN npm ci

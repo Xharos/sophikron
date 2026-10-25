@@ -74,8 +74,8 @@ class SmtpMailer:
             message["Subject"] = "Votre invitation Sophikron"
             link = f"{settings.activation_url}#token={quote(token, safe='')}"
             message.set_content(
-                "Vous êtes invité à activer votre compte Sophikron.\n\n"
-                f"{link}\n\nCe lien est valable 48 heures et ne peut être utilisé qu’une fois.\n"
+                "Vous êtes invité à définir ou renouveler votre mot de passe Sophikron.\n\n"
+                f"{link}\n\nCe lien est à durée limitée et ne peut être utilisé qu’une fois.\n"
             )
             context = ssl.create_default_context()
             if settings.smtp_security == "tls":

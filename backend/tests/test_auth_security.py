@@ -7,7 +7,6 @@ import threading
 from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import anyio
 import pytest
@@ -39,7 +38,7 @@ PASSWORD = "IndependentTestPassword2026!"
 def test_identity_encryption_and_binding() -> None:
     """Use randomized ciphertext, keyed lookup and authenticated row/field binding."""
     cipher = IdentityCipher.from_file(AuthSettings().keys_file)
-    user_id = uuid4()
+    user_id = 1
     encrypted = cipher.encrypt(user_id, "email", "teacher@example.org")
     assert b"teacher@example.org" not in encrypted
     assert encrypted != cipher.encrypt(user_id, "email", "teacher@example.org")
@@ -47,7 +46,7 @@ def test_identity_encryption_and_binding() -> None:
     assert cipher.lookup("email", "a") != cipher.lookup("username", "a")
     assert len(cipher.lookup("email", "a")) == 32
     for identifier, field, value in (
-        (uuid4(), "email", encrypted),
+        (2, "email", encrypted),
         (user_id, "username", encrypted),
         (user_id, "email", encrypted[:-1] + bytes([encrypted[-1] ^ 1])),
         (user_id, "email", b"missing:invalid"),
@@ -60,7 +59,7 @@ def test_versioned_encryption_keys() -> None:
     """Keep old ciphertext readable during a versioned encryption-key transition."""
     previous = IdentityCipher("old", {"old": b"a" * 32}, b"b" * 32)
     current = IdentityCipher("new", {"old": b"a" * 32, "new": b"c" * 32}, b"b" * 32)
-    user_id = uuid4()
+    user_id = 1
     encrypted = previous.encrypt(user_id, "username", "teacher")
     assert current.decrypt(user_id, "username", encrypted) == "teacher"
     assert current.encrypt(user_id, "username", "teacher").startswith(b"new:")
@@ -92,11 +91,21 @@ def test_key_generation_never_overwrites(tmp_path: Path) -> None:
     assert path.read_bytes() == original
 
 
-@pytest.mark.parametrize("password", [
-    "Aa1!short", "Aa1!" + "x" * 125, "ABCDEFGHI1!", "abcdefghi1!",
-    "Abcdefghi!!", "Abcdefghi12", "Abcdefghi1! ", "Abcdefghi1!é",
-    "Abcdefghi1!\n", "Abcdefghi1!\x00",
-])
+@pytest.mark.parametrize(
+    "password",
+    [
+        "Aa1!short",
+        "Aa1!" + "x" * 125,
+        "ABCDEFGHI1!",
+        "abcdefghi1!",
+        "Abcdefghi!!",
+        "Abcdefghi12",
+        "Abcdefghi1! ",
+        "Abcdefghi1!é",
+        "Abcdefghi1!\n",
+        "Abcdefghi1!\x00",
+    ],
+)
 def test_password_policy(password: str) -> None:
     """Reject invalid lengths, missing categories and characters outside printable ASCII."""
     with pytest.raises(ValueError):
@@ -274,8 +283,12 @@ def test_oversized_auth_body_precedes_json(
     if length_header is not None:
         headers["Content-Length"] = length_header
     body = b'{"identifier":"' + b"a" * (2 * 1024 * 1024) + b'","password":"synthetic"}'
-    with TestClient(app) as client, patch(
-        "starlette.requests.Request.json", new=AsyncMock(side_effect=AssertionError("JSON parsed"))
+    with (
+        TestClient(app) as client,
+        patch(
+            "starlette.requests.Request.json",
+            new=AsyncMock(side_effect=AssertionError("JSON parsed")),
+        ),
     ):
         response = client.post("/api/v1/auth/login", content=iter([body]), headers=headers)
     assert response.status_code == 413
@@ -289,7 +302,8 @@ def test_exact_auth_body_limit(settings_factory: Callable[..., DatabaseSettings]
             "/api/v1/auth/login",
             content=b"{}" + b" " * (16384 - 2),
             headers={
-                "Origin": "https://testserver", "X-CSRF-Protection": "1",
+                "Origin": "https://testserver",
+                "X-CSRF-Protection": "1",
                 "Content-Type": "application/json",
             },
         )
@@ -312,7 +326,9 @@ async def test_auth_body_read_timeout() -> None:
 
     await middleware(
         {
-            "type": "http", "path": "/api/v1/auth/login", "headers": [],
+            "type": "http",
+            "path": "/api/v1/auth/login",
+            "headers": [],
             "app": SimpleNamespace(state=SimpleNamespace(auth_settings=settings)),
         },
         stalled_receive,
@@ -325,9 +341,9 @@ async def test_auth_body_read_timeout() -> None:
 @pytest.mark.asyncio
 async def test_password_queue_is_bounded_and_recovers() -> None:
     """Reject overflow and expire queued work while preserving a running operation."""
-    passwords = PasswordSecurity(AuthSettings(
-        password_workers=1, password_queue_size=1, password_queue_timeout_seconds=0.05
-    ))
+    passwords = PasswordSecurity(
+        AuthSettings(password_workers=1, password_queue_size=1, password_queue_timeout_seconds=0.05)
+    )
     started, release = threading.Event(), threading.Event()
 
     def blocked() -> str:
@@ -370,11 +386,15 @@ def test_password_overload_http_response(
     settings_factory: Callable[..., DatabaseSettings],
 ) -> None:
     """Return a generic retryable response without exposing saturation internals or credentials."""
-    with TestClient(create_app(settings_factory())) as client, patch(
-        "app.services.auth.AuthService.login", new=AsyncMock(side_effect=PasswordCapacityError)
+    with (
+        TestClient(create_app(settings_factory())) as client,
+        patch(
+            "app.services.auth.AuthService.login", new=AsyncMock(side_effect=PasswordCapacityError)
+        ),
     ):
         response = client.post(
-            "/api/v1/auth/login", json={"identifier": "user", "password": PASSWORD},
+            "/api/v1/auth/login",
+            json={"identifier": "user", "password": PASSWORD},
             headers={"Origin": "https://testserver", "X-CSRF-Protection": "1"},
         )
     assert response.status_code == 503 and response.headers["retry-after"] == "1"

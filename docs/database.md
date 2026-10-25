@@ -41,9 +41,11 @@ Generate the identity keyring as described in [authentication](authentication.md
 `identity_keys.json` file in the same directory, then start the application:
 
 ```sh
-docker compose up -d --build
+docker compose -f compose.yaml -f compose.local.yaml up -d --build
 ```
 
+These local URLs require the explicit local overlay. Production uses only `compose.yaml`, with no
+published API/database ports; see [BFF deployment](frontend-bff.md#production-topology).
 The API is available at `http://localhost:8000`, the frontend at `http://localhost:3000`. PostgreSQL
 is published only on `127.0.0.1:5432` for local Python tests and database tools. `DB_PUBLISHED_PORT`
 changes that host port; `BACKEND_PORT` changes the API's host port. Inside Docker, PostgreSQL still
@@ -74,7 +76,9 @@ cannot assume the migration role. Public database/schema privileges are revoked.
 grant application DML on future migration-owned tables and sequence usage; public execution of future
 migration-owned functions is revoked. Alembic explicitly revokes application access to its version
 table in the migration transaction. Restrict grants further when future business models require it.
-Database roles do not replace application authentication or authorization between users.
+Runtime DELETE on promotions and UPDATE/DELETE on activity events are explicitly revoked, as are
+writes to role/permission catalogues. Database roles do not replace application authentication
+or capability checks between users.
 
 The database image extends the official `postgres:17` image with reviewed initialization SQL.
 Authentication over the Docker network uses SCRAM-SHA-256. Compose secrets are mounted files under
@@ -150,9 +154,10 @@ Add future model imports in `app/models/__init__.py` so Alembic sees them throug
 Metadata uses the explicit `sophikron` schema and stable constraint names. Name check constraints.
 Connections use `search_path=pg_catalog`; qualify application tables explicitly in handwritten SQL.
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
-Its consolidated initial revision creates authentication tables and the application role catalogue.
-See [authentication migration compatibility](authentication.md#initial-consolidated-alembic-revision)
-before using a database stamped with the previously empty baseline.
+Its explicitly reconstructed test-only history contains 0001 users/authentication/permissions,
+0002 promotions/memberships and 0003 activity events. All autonomous IDs are bigint identities;
+associations use composite keys. See [migration requirements](administration.md#migrations-and-verification)
+before using these revisions; older populated/stamped development databases are incompatible.
 
 The migration service defaults to `alembic upgrade head`. Supply a full command to override it:
 
@@ -209,7 +214,7 @@ $env:DB_NAME = 'sophikron_test'
 $env:DB_PUBLISHED_PORT = '55432'
 $env:BACKEND_PORT = '18000'
 $env:AUTH_BOOTSTRAP_USERNAME = 'verification_setup'
-docker compose -p sophikron-tests up -d --build --wait db backend
+docker compose -f compose.yaml -f compose.local.yaml -p sophikron-tests up -d --build --wait db backend
 
 $env:DB_HOST = '127.0.0.1'
 $env:DB_PORT = '55432'
@@ -222,7 +227,7 @@ $env:DB_INTEGRATION = '1'
 Set-Location backend
 python -m pytest -q
 Set-Location ..
-docker compose -p sophikron-tests down
+docker compose -f compose.yaml -f compose.local.yaml -p sophikron-tests down
 ```
 
 Adapt `$secretsDirectory` to the directory configured in `.env`. Compose reads the host directory
@@ -241,7 +246,7 @@ its Python environment against its dedicated test database.
 
 The live HTTP checks validate status codes and JSON responses; they do not audit container users or
 secret mount permissions. The migration round trip checks the authentication schema and Alembic
-wiring; old-baseline adoption checks preservation of unrelated stored data. On migration command
+wiring; metadata consistency checks verify all current tables and indexes. On migration command
 failure, captured diagnostics are reported with the known database passwords redacted.
 
 Validate configuration without displaying any resolved values:
@@ -258,8 +263,8 @@ Multi-host connection selection can support a future primary endpoint, but does 
 replication or failover orchestration. A future PgBouncer deployment needs its own pooling and
 prepared-statement compatibility review.
 
-Usernames and emails in `users` are encrypted in the application before storage. Keyed lookup
-indexes support exact search and uniqueness. Pedagogical resources, UUID relationships, roles and
+Usernames, emails, first names and family names in `users` are encrypted in the application before storage. Keyed lookup
+indexes support exact search and uniqueness. Pedagogical resources, integer relationships, roles and
 security/statistics timestamps remain outside this field-encryption scope. See
 [authentication](authentication.md) for keys, rotation, restoration, sessions and bootstrap. Keep
 encryption keys separate from PostgreSQL and its backups. Account passwords use Argon2id hashing,

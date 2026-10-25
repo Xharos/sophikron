@@ -17,6 +17,7 @@ from app.core.config import DatabaseSettings
 from app.core.database import Database
 from app.models import AccountInvitation, User
 from tests.postgres import run_alembic
+from tests.test_auth_postgres import auth_case  # noqa: F401
 
 
 @pytest.fixture(scope="session")

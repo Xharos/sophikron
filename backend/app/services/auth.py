@@ -1,10 +1,10 @@
 """Atomic account lifecycle and server-side authentication rules."""
 
 import math
+import secrets
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from uuid import UUID, uuid4
 
 import anyio
 from sqlalchemy import select, text
@@ -12,6 +12,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_config import AuthSettings
+from app.core.identity import username_prefix
 from app.core.security import (
     TOKEN_PATTERN,
     IdentityCipher,
@@ -22,9 +23,26 @@ from app.core.security import (
     token_digest,
     validate_password,
 )
-from app.models import AccountInvitation, ApplicationState, LoginEvent, Session, User, UserRole
+from app.models import (
+    AccountInvitation,
+    ApplicationState,
+    Promotion,
+    Session,
+    User,
+    UserPromotion,
+    UserRole,
+)
 from app.repositories.auth import AuthRepository
-from app.schemas.auth import CompleteSetupRequest, CreateUserRequest, UserResponse
+from app.schemas.administration import PromotionBadge
+from app.schemas.auth import (
+    AccessInvitationResponse,
+    AccountResponse,
+    CompleteSetupRequest,
+    CreateUserRequest,
+    ManualInvitationResponse,
+    UserResponse,
+)
+from app.services.activity import record_event
 from app.services.errors import (
     FORBIDDEN,
     INVALID_INVITATION,
@@ -34,6 +52,7 @@ from app.services.errors import (
     AuthError,
 )
 from app.services.mail import InvitationMailer, MailDeliveryError
+from app.services.search import NameSearchCache
 
 # Serialize rare multi-account lifecycle operations in a consistent lock order.
 LIFECYCLE_LOCK = 8023164291
@@ -49,10 +68,10 @@ class UserContext:
     """Carry a detached identity and the session reference, never a bearer credential."""
 
     profile: UserResponse
-    session_id: UUID
+    session_id: int
 
     @property
-    def id(self) -> UUID:
+    def id(self) -> int:
         """Return the stable internal account identifier."""
         return self.profile.id
 
@@ -60,6 +79,11 @@ class UserContext:
     def roles(self) -> tuple[str, ...]:
         """Return explicit role codes verified for this request."""
         return self.profile.roles
+
+    @property
+    def permissions(self) -> tuple[str, ...]:
+        """Return capabilities verified from the database for this request."""
+        return self.profile.permissions
 
 
 class AuthService:
@@ -73,6 +97,7 @@ class AuthService:
         passwords: PasswordSecurity,
         mailer: InvitationMailer,
         clock: Callable[[], datetime] | None = None,
+        name_search_cache: NameSearchCache | None = None,
     ) -> None:
         """Inject a request session, security resources, delivery boundary and testable clock."""
         self.db = session
@@ -82,6 +107,9 @@ class AuthService:
         self.passwords = passwords
         self.mailer = mailer
         self.clock = clock or utc_now
+        self.name_search_cache = (
+            name_search_cache if name_search_cache is not None else NameSearchCache()
+        )
 
     async def _lifecycle_lock(self) -> None:
         """Acquire the transaction-scoped PostgreSQL lock before taking account row locks."""
@@ -106,22 +134,41 @@ class AuthService:
             and session.last_activity_at + timedelta(seconds=self.settings.idle_seconds) > now
         )
 
-    async def _profile(self, user: User) -> UserResponse:
+    async def _profile(
+        self,
+        user: User,
+        *,
+        roles: tuple[str, ...] | None = None,
+        permissions: tuple[str, ...] | None = None,
+    ) -> UserResponse:
         """Decrypt only the response fields authorized by the calling service operation."""
+        if roles is None and permissions is None:
+            roles, permissions = await self.repo.grants(user.id)
         return UserResponse(
             id=user.id,
             username=self.cipher.decrypt(user.id, "username", user.username_encrypted),
+            first_name=self.cipher.decrypt(user.id, "first_name", user.first_name_encrypted)
+            if user.first_name_encrypted is not None
+            else None,
+            last_name=self.cipher.decrypt(user.id, "last_name", user.last_name_encrypted)
+            if user.last_name_encrypted is not None
+            else None,
             email=self.cipher.decrypt(user.id, "email", user.email_encrypted)
             if user.email_encrypted is not None
             else None,
             status=user.status,
-            roles=await self.repo.roles(user.id),
+            roles=await self.repo.roles(user.id) if roles is None else roles,
+            permissions=await self.repo.permissions(user.id)
+            if permissions is None
+            else permissions,
             email_verified=user.email_verified_at is not None,
             is_bootstrap=user.is_bootstrap,
             created_at=user.created_at,
         )
 
-    async def _actor(self, context: UserContext, *, admin: bool = False) -> User:
+    async def _actor(
+        self, context: UserContext, *, admin: bool = False, permission: str | None = None
+    ) -> User:
         """Recheck the actor and session under the user lock inside the mutation transaction."""
         user = await self.repo.user(context.id, lock=True)
         session = await self.db.get(Session, context.session_id, populate_existing=True)
@@ -134,7 +181,11 @@ class AuthService:
             or not self._valid_session(session, now)
         ):
             raise AuthError(401, LOGIN_REQUIRED)
-        if admin and "admin" not in await self.repo.roles(user.id):
+        if admin:
+            permission = "users.manage"
+        if permission and (
+            user.is_bootstrap or permission not in await self.repo.permissions(user.id)
+        ):
             raise AuthError(403, FORBIDDEN)
         return user
 
@@ -209,7 +260,9 @@ class AuthService:
             with anyio.CancelScope(shield=True):
                 async with self.db.begin():
                     await self.repo.finish_login(
-                        lease, failed=failed, now=self.clock(),
+                        lease,
+                        failed=failed,
+                        now=self.clock(),
                         seconds=self.settings.rate_window_seconds,
                     )
 
@@ -247,7 +300,6 @@ class AuthService:
                 else (now + duration)
             )
             session = Session(
-                id=uuid4(),
                 user_id=user.id,
                 token_hash=token_digest(token),
                 created_at=now,
@@ -255,7 +307,9 @@ class AuthService:
                 last_activity_at=now,
             )
             self.db.add(session)
-            self.db.add(LoginEvent(user_id=user.id, occurred_at=now))
+            await record_event(
+                self.db, "auth.login_succeeded", user.id, subject_user_id=user.id, occurred_at=now
+            )
             user.login_count += 1
             user.last_login_at = now
             user.updated_at = now
@@ -278,6 +332,20 @@ class AuthService:
                 raise AuthError(401, LOGIN_REQUIRED)
             session.last_activity_at = now
             return UserContext(await self._profile(user), session.id)
+
+    async def account(self, actor: UserContext) -> AccountResponse:
+        """Return the caller's account timestamps and counters, never credential material."""
+        async with self.db.begin():
+            user = await self._actor(actor)
+            profile = await self._profile(user)
+            return AccountResponse(
+                **profile.model_dump(),
+                updated_at=user.updated_at,
+                last_login_at=user.last_login_at,
+                password_changed_at=user.password_changed_at,
+                email_verified_at=user.email_verified_at,
+                login_count=user.login_count,
+            )
 
     async def logout(self, actor: UserContext) -> None:
         """Revoke only the current browser session while rechecking account activity."""
@@ -333,12 +401,15 @@ class AuthService:
         if len(roles) != len(data.roles):
             raise AuthError(422, INVALID_REQUEST)
         now = self.clock()
-        user_id = uuid4()
+        user_id = await self._next_user_id()
+        username = await self._generate_username(data.first_name, data.last_name)
         user = User(
             id=user_id,
-            username_encrypted=self.cipher.encrypt(user_id, "username", data.username),
+            username_encrypted=self.cipher.encrypt(user_id, "username", username),
+            first_name_encrypted=self.cipher.encrypt(user_id, "first_name", data.first_name),
+            last_name_encrypted=self.cipher.encrypt(user_id, "last_name", data.last_name),
             email_encrypted=self.cipher.encrypt(user_id, "email", data.email),
-            username_lookup=self.cipher.lookup("username", data.username),
+            username_lookup=self.cipher.lookup("username", username),
             email_lookup=self.cipher.lookup("email", data.email),
             status="pending_activation",
             is_bootstrap=bootstrap,
@@ -349,11 +420,53 @@ class AuthService:
             if bootstrap
             else None,
         )
-        self.db.add(user)
-        await self.db.flush()
+        await self._insert_user(user)
         self.db.add_all([UserRole(user_id=user.id, role_id=role.id) for role in roles])
         await self.db.flush()
+        if data.promotion_ids:
+            promotions = list(
+                (
+                    await self.db.scalars(
+                        select(Promotion)
+                        .where(Promotion.id.in_(data.promotion_ids))
+                        .order_by(Promotion.id)
+                        .with_for_update()
+                    )
+                ).all()
+            )
+            if len(promotions) != len(data.promotion_ids) or any(
+                not promotion.is_active for promotion in promotions
+            ):
+                raise AuthError(422, "Promotions inexistantes ou inactives.")
+            self.db.add_all(
+                UserPromotion(user_id=user.id, promotion_id=item.id) for item in promotions
+            )
         return user
+
+    async def _next_user_id(self) -> int:
+        """Reserve an identity before encrypting fields bound to the account's integer ID."""
+        return await self.db.scalar(
+            text("SELECT nextval(pg_get_serial_sequence('sophikron.users', 'id'))")
+        )
+
+    async def _insert_user(self, user: User) -> None:
+        """Insert an account whose sequence-generated identity was reserved for encryption."""
+        self.db.add(user)
+        await self.db.flush()
+
+    async def _generate_username(self, first_name: str, last_name: str) -> str:
+        """Randomly try each suffix at most once under the lifecycle transaction lock."""
+        prefix = username_prefix(first_name, last_name)
+        suffixes = list(range(100, 1000))
+        secrets.SystemRandom().shuffle(suffixes)
+        for suffix in suffixes:
+            candidate = f"{prefix}{suffix}"
+            if (
+                await self.repo.by_lookup("username", self.cipher.lookup("username", candidate))
+                is None
+            ):
+                return candidate
+        raise AuthError(409, "Aucun identifiant disponible pour ce nom et ce prénom.")
 
     async def create_user(self, actor: UserContext, data: CreateUserRequest) -> UserResponse:
         """Create only an unactivated account; never accept an administrator-supplied password."""
@@ -363,14 +476,31 @@ class AuthService:
                 admin = await self._actor(actor, admin=True)
                 if admin.is_bootstrap:
                     raise AuthError(403, FORBIDDEN)
-                return await self._profile(await self._create(data))
+                user = await self._create(data)
+                await record_event(
+                    self.db,
+                    "user.created",
+                    admin.id,
+                    subject_user_id=user.id,
+                    data={"roles": data.roles},
+                )
+                for promotion_id in data.promotion_ids:
+                    await record_event(
+                        self.db,
+                        "promotion.member_added",
+                        admin.id,
+                        subject_user_id=user.id,
+                        resource_type="promotion",
+                        resource_id=promotion_id,
+                    )
+                return await self._profile(user)
         except IntegrityError:
             raise AuthError(409, "Ce compte ne peut pas être créé avec ces informations.") from None
 
     async def _issue(
         self,
         user: User,
-        issuer: UUID | None,
+        issuer: int | None,
         delivery: str,
     ) -> tuple[AccountInvitation, str]:
         """Replace every unused link with a fresh verifier while holding the owner's lock."""
@@ -378,20 +508,47 @@ class AuthService:
         await self.repo.revoke_invitations(user.id, now)
         token = new_token()
         invitation = AccountInvitation(
-            id=uuid4(),
             user_id=user.id,
             token_hash=token_digest(token),
             issued_by_user_id=issuer,
             issuance_kind="bootstrap" if issuer is None else "admin",
             delivery_method=delivery,
+            purpose="reset" if user.status == "active" else "activation",
             created_at=now,
             expires_at=now + timedelta(seconds=self.settings.invitation_seconds),
         )
         self.db.add(invitation)
         await self.db.flush()
+        await record_event(
+            self.db,
+            "invitation.issued",
+            issuer,
+            subject_user_id=user.id,
+            data={"delivery": delivery, "purpose": invitation.purpose},
+        )
         return invitation, token
 
-    async def invite(self, actor: UserContext, user_id: UUID, ip: str) -> None:
+    async def invite_manually(
+        self, actor: UserContext, user_id: int, ip: str
+    ) -> ManualInvitationResponse:
+        """Issue an explicitly enabled manual invitation without verifying the recipient's email."""
+        if not self.settings.manual_invitations_enabled:
+            raise AuthError(403, FORBIDDEN)
+        await self._limit("invite", str(user_id), ip)
+        async with self.db.begin():
+            await self._lifecycle_lock()
+            admin = await self._actor(actor, admin=True)
+            if admin.is_bootstrap:
+                raise AuthError(403, FORBIDDEN)
+            user = await self.repo.user(user_id, lock=True)
+            if user is None:
+                raise AuthError(404, "Compte introuvable.")
+            if user.status not in {"pending_activation", "active"} or user.is_bootstrap:
+                raise AuthError(409, INVALID_REQUEST)
+            invitation, token = await self._issue(user, admin.id, "manual")
+            return ManualInvitationResponse(token=token, expires_at=invitation.expires_at)
+
+    async def invite(self, actor: UserContext, user_id: int, ip: str) -> None:
         """Commit before SMTP and revoke this link on failure, allowing explicit retry."""
         if not self.mailer.available:
             raise AuthError(503, "L’envoi est indisponible. Réessayez plus tard.")
@@ -402,7 +559,7 @@ class AuthService:
             user = await self.repo.user(user_id, lock=True)
             if user is None:
                 raise AuthError(404, "Compte introuvable.")
-            if user.status != "pending_activation" or user.is_bootstrap:
+            if user.status not in {"pending_activation", "active"} or user.is_bootstrap:
                 raise AuthError(409, INVALID_REQUEST)
             if admin.is_bootstrap and "admin" not in await self.repo.roles(user.id):
                 raise AuthError(403, FORBIDDEN)
@@ -443,11 +600,13 @@ class AuthService:
             now = self.clock()
             if (
                 user is None
-                or user.status != "pending_activation"
+                or user.status not in {"pending_activation", "active"}
                 or invitation is None
                 or invitation.used_at is not None
                 or invitation.revoked_at is not None
                 or invitation.expires_at <= now
+                or (invitation.purpose == "activation" and user.status != "pending_activation")
+                or (invitation.purpose == "reset" and user.status != "active")
                 or (user.is_bootstrap and user.bootstrap_expires_at <= now)
             ):
                 raise AuthError(400, INVALID_INVITATION)
@@ -458,6 +617,10 @@ class AuthService:
             user.updated_at = now
             if invitation.delivery_method == "email":
                 user.email_verified_at = now
+            if invitation.purpose == "reset":
+                await self.repo.revoke_sessions(user.id, now, "password_reset")
+                await self.repo.revoke_invitations(user.id, now)
+                await record_event(self.db, "auth.password_reset", user.id, subject_user_id=user.id)
             if not user.is_bootstrap and "admin" in await self.repo.roles(user.id):
                 state = await self.db.get(ApplicationState, 1, with_for_update=True)
                 if state.initialized_at is None:
@@ -471,6 +634,59 @@ class AuthService:
                     initial.updated_at = now
                     await self.repo.revoke_sessions(initial.id, now, "bootstrap_completed")
                     await self.repo.revoke_invitations(initial.id, now)
+
+    async def access_invitation(
+        self, actor: UserContext, user_id: int, ip: str
+    ) -> AccessInvitationResponse:
+        """Choose configured email delivery or return a manual link for activation/reset."""
+        if self.mailer.available:
+            await self.invite(actor, user_id, ip)
+            async with self.db.begin():
+                await self._actor(actor, admin=True)
+                invitation = await self.db.scalar(
+                    select(AccountInvitation).where(
+                        AccountInvitation.user_id == user_id,
+                        AccountInvitation.used_at.is_(None),
+                        AccountInvitation.revoked_at.is_(None),
+                    )
+                )
+                if invitation is None:
+                    raise AuthError(409, INVALID_REQUEST)
+                return AccessInvitationResponse(
+                    delivery="email", purpose=invitation.purpose, expires_at=invitation.expires_at
+                )
+        await self._limit("invite", str(user_id), ip)
+        async with self.db.begin():
+            await self._lifecycle_lock()
+            await self._actor(actor, admin=True)
+            user = await self.repo.user(user_id, lock=True)
+            if user is None or user.is_bootstrap:
+                raise AuthError(404, "Compte introuvable.")
+            if user.status not in {"active", "pending_activation"}:
+                raise AuthError(409, "Réactivez ce compte avant de l’inviter.")
+            invitation, token = await self._issue(user, actor.id, "manual")
+            return AccessInvitationResponse(
+                delivery="manual",
+                purpose=invitation.purpose,
+                expires_at=invitation.expires_at,
+                token=token,
+            )
+
+    async def own_promotions(self, actor: UserContext) -> list[PromotionBadge]:
+        """Read the authenticated account's own memberships without roster access."""
+        async with self.db.begin():
+            await self._actor(actor)
+            promotions = (
+                await self.db.scalars(
+                    select(Promotion)
+                    .join(UserPromotion)
+                    .where(UserPromotion.user_id == actor.id)
+                    .order_by(Promotion.year.desc(), Promotion.identifier)
+                )
+            ).all()
+            return [
+                PromotionBadge.model_validate(item, from_attributes=True) for item in promotions
+            ]
 
     async def initialize_installation(self, *, renew: bool = False) -> bool:
         """Initialize once; only explicit local recovery may reset an unfinished bootstrap.
@@ -509,7 +725,7 @@ class AuthService:
                 if await self.db.scalar(select(User.id).limit(1)) is not None:
                     raise RuntimeError("Existing accounts require explicit installation recovery")
                 now = self.clock()
-                user_id = uuid4()
+                user_id = await self._next_user_id()
                 initial = User(
                     id=user_id,
                     username_encrypted=self.cipher.encrypt(user_id, "username", username),
@@ -525,8 +741,7 @@ class AuthService:
                     password_changed_at=now,
                     login_count=0,
                 )
-                self.db.add(initial)
-                await self.db.flush()
+                await self._insert_user(initial)
                 roles = await self.repo.role_records(["admin"])
                 if len(roles) != 1:
                     raise RuntimeError("The administrator role is missing")
@@ -564,20 +779,21 @@ class AuthService:
         self._check_password(data.password.get_secret_value())
         await self._limit("setup", str(actor.id), ip)
         async with self.db.begin():
-            initial = await self._actor(actor, admin=True)
+            initial = await self._actor(actor)
             if not initial.is_bootstrap:
                 raise AuthError(403, FORBIDDEN)
         hashed = await self.passwords.hash(data.password.get_secret_value())
         try:
             async with self.db.begin():
                 await self._lifecycle_lock()
-                initial = await self._actor(actor, admin=True)
+                initial = await self._actor(actor)
                 state = await self.db.get(ApplicationState, 1, with_for_update=True)
                 if not initial.is_bootstrap or state.initialized_at is not None:
                     raise AuthError(403, FORBIDDEN)
                 permanent = await self._create(
                     CreateUserRequest(
-                        username=data.username,
+                        first_name=data.first_name,
+                        last_name=data.last_name,
                         email=data.email,
                         roles=["admin"],
                     )
@@ -593,6 +809,13 @@ class AuthService:
                 await self.repo.revoke_sessions(initial.id, now, "bootstrap_completed")
                 await self.repo.revoke_invitations(initial.id, now)
                 await self.db.flush()
+                await record_event(
+                    self.db,
+                    "user.created",
+                    initial.id,
+                    subject_user_id=permanent.id,
+                    data={"roles": ["admin"]},
+                )
                 return await self._profile(permanent)
         except IntegrityError:
             raise AuthError(409, "Ce compte ne peut pas être créé avec ces informations.") from None

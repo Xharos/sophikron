@@ -75,13 +75,13 @@ jobs:
 
       - name: Validate Compose configuration
         working-directory: .
-        run: docker compose config --quiet
+        run: docker compose -f compose.yaml -f compose.local.yaml config --quiet
 
       - name: Start full PostgreSQL and API services
         working-directory: .
         timeout-minutes: 15
         run: |
-          docker compose -p sophikron-ci up -d --build --wait db backend
+          docker compose -f compose.yaml -f compose.local.yaml -p sophikron-ci up -d --build --wait db backend
 
       - name: PostgreSQL integration tests
         env:
@@ -92,7 +92,7 @@ jobs:
         if: always()
         working-directory: .
         run: >-
-          docker compose -p sophikron-ci down
+          docker compose -f compose.yaml -f compose.local.yaml -p sophikron-ci down
 
   frontend:
     name: Frontend checks
@@ -120,6 +120,9 @@ jobs:
 
       - name: Check Svelte and TypeScript
         run: npm run check
+
+      - name: Test BFF security boundaries
+        run: npm test
 
       - name: Build frontend
         run: npm run build

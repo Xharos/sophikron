@@ -1,6 +1,7 @@
 # ADR 0003: Local authentication and encrypted account identities
 
-- **Status:** Accepted
+- **Status:** Accepted; identity IDs, field scope, permissions, events and migration history
+  superseded by [ADR 0004](0004-accounts-promotions-activity.md)
 - **Date:** 2026-10-21
 
 ## Decision

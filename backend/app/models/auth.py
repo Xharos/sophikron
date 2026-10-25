@@ -1,7 +1,6 @@
 """Authentication persistence; only users contains reversibly encrypted identities."""
 
 from datetime import datetime
-from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
@@ -9,6 +8,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Identity,
     Index,
     Integer,
     LargeBinary,
@@ -33,7 +33,7 @@ class ApplicationState(Base):
 
 
 class User(Base):
-    """An account identified internally by UUID and externally by encrypted identity fields."""
+    """An integer-keyed account whose external identity fields remain encrypted."""
 
     __tablename__ = "users"
     __table_args__ = (
@@ -43,6 +43,11 @@ class User(Base):
             "status != 'pending_activation' OR password_hash IS NULL", name="pending_password"
         ),
         CheckConstraint("login_count >= 0", name="login_count"),
+        CheckConstraint(
+            "is_bootstrap OR (first_name_encrypted IS NOT NULL AND "
+            "last_name_encrypted IS NOT NULL)",
+            name="permanent_names",
+        ),
         CheckConstraint("octet_length(username_lookup) = 32", name="username_lookup_length"),
         CheckConstraint("octet_length(email_lookup) = 32", name="email_lookup_length"),
         CheckConstraint(
@@ -58,8 +63,10 @@ class User(Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     username_encrypted: Mapped[bytes] = mapped_column(LargeBinary)
+    first_name_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    last_name_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     email_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     username_lookup: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     email_lookup: Mapped[bytes | None] = mapped_column(LargeBinary, unique=True)
@@ -73,6 +80,17 @@ class User(Base):
     login_count: Mapped[int] = mapped_column(BigInteger, server_default="0")
     is_bootstrap: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     bootstrap_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    profile_version: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    birth_date_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    city_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    postal_code_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    commune_code_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    previous_school_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    baccalaureate_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    orientation_project_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    phone_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
+    reference_adult_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
 
 
 class Role(Base):
@@ -81,7 +99,7 @@ class Role(Base):
     __tablename__ = "roles"
     __table_args__ = (CheckConstraint("code ~ '^[a-z][a-z0-9_]{0,63}$'", name="code"),)
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     code: Mapped[str] = mapped_column(String(64), unique=True)
     description: Mapped[str] = mapped_column(String(255))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
@@ -92,11 +110,14 @@ class UserRole(Base):
 
     __tablename__ = "user_roles"
 
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
     )
-    role_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sophikron.roles.id", ondelete="RESTRICT"), primary_key=True, index=True
+    role_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("sophikron.roles.id", ondelete="RESTRICT"),
+        primary_key=True,
+        index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
@@ -112,9 +133,9 @@ class Session(Base):
         CheckConstraint("revoked_at IS NULL OR revoked_at >= created_at", name="revocation"),
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sophikron.users.id", ondelete="CASCADE"), index=True
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("sophikron.users.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -134,13 +155,11 @@ class AccountInvitation(Base):
         CheckConstraint("used_at IS NULL OR used_at >= created_at", name="usage"),
         CheckConstraint("revoked_at IS NULL OR revoked_at >= created_at", name="revocation"),
         CheckConstraint("delivery_method IN ('email', 'manual')", name="delivery"),
+        CheckConstraint("purpose IN ('activation', 'reset')", name="purpose"),
         CheckConstraint(
             "(issuance_kind = 'bootstrap' AND issued_by_user_id IS NULL) OR "
             "(issuance_kind = 'admin' AND issued_by_user_id IS NOT NULL)",
             name="issuer",
-        ),
-        CheckConstraint(
-            "delivery_method != 'manual' OR issuance_kind = 'bootstrap'", name="manual_bootstrap"
         ),
         Index(
             "uq_account_invitations_outstanding",
@@ -150,31 +169,21 @@ class AccountInvitation(Base):
         ),
     )
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(
-        ForeignKey("sophikron.users.id", ondelete="CASCADE"), index=True
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("sophikron.users.id", ondelete="CASCADE"), index=True
     )
     token_hash: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
-    issued_by_user_id: Mapped[UUID | None] = mapped_column(
-        ForeignKey("sophikron.users.id", ondelete="RESTRICT"), index=True
+    issued_by_user_id: Mapped[int | None] = mapped_column(
+        BigInteger, ForeignKey("sophikron.users.id", ondelete="RESTRICT"), index=True
     )
     issuance_kind: Mapped[str] = mapped_column(String(16))
     delivery_method: Mapped[str] = mapped_column(String(16))
+    purpose: Mapped[str] = mapped_column(String(16), server_default="activation")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-
-
-class LoginEvent(Base):
-    """Retain successful login times independently of expiring session records."""
-
-    __tablename__ = "login_events"
-    __table_args__ = (Index("ix_login_events_user_time", "user_id", "occurred_at"),)
-
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
-    user_id: Mapped[UUID] = mapped_column(ForeignKey("sophikron.users.id", ondelete="CASCADE"))
-    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class AuthRateLimit(Base):
@@ -196,7 +205,7 @@ class LoginAttempt(Base):
 
     __tablename__ = "login_attempts"
 
-    id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
+    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     ip_key: Mapped[bytes] = mapped_column(
         ForeignKey("sophikron.auth_rate_limits.key", ondelete="CASCADE"), index=True
     )
