@@ -102,6 +102,7 @@ class AdministrationService:
         """Build response models with one grouped membership count query."""
         counts = await self.repo.member_counts([item.id for item in promotions])
         students = await self.repo.student_counts([item.id for item in promotions])
+        display_counts = await self.repo.display_counts([item.id for item in promotions])
         return [
             PromotionResponse(
                 id=item.id,
@@ -113,6 +114,7 @@ class AdministrationService:
                 updated_at=item.updated_at,
                 member_count=counts.get(item.id, 0),
                 student_count=students.get(item.id, 0),
+                **display_counts.get(item.id, {}),
             )
             for item in promotions
         ]

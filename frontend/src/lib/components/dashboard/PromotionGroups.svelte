@@ -43,6 +43,11 @@
 	} | null>(null);
 	const saved = $derived(data.partitions.find((partition) => partition.kind === kind));
 	const rosterIds = $derived(data.students.map((student) => student.id));
+	const archivedIds = $derived(
+		data.students.filter((student) => student.status === 'disabled').map((student) => student.id)
+	);
+	const archived = $derived(new Set(archivedIds));
+	const nonArchivedCount = $derived(rosterIds.length - archivedIds.length);
 	const names = $derived(
 		new Map(
 			data.students.map((student) => [student.id, `${student.first_name} ${student.last_name}`])
@@ -50,7 +55,7 @@
 	);
 	const assigned = $derived(new Set(groups.flatMap((group) => group.student_ids)));
 	const unassigned = $derived(data.students.filter((student) => !assigned.has(student.id)));
-	const validation = $derived(groupError(kind, groups, rosterIds, targetSize));
+	const validation = $derived(groupError(kind, groups, rosterIds, targetSize, archivedIds));
 	const editable = $derived(administrator && promotion.is_active);
 	const boardWidth = $derived(Math.max(920, ...groups.map((group) => group.x + 300)));
 	const boardHeight = $derived(
@@ -61,6 +66,9 @@
 		groups = structuredClone($state.snapshot(saved?.groups ?? []));
 		targetSize = saved?.target_size ?? 3;
 		selectedStudent = null;
+	}
+	function activeSize(group: GroupDraft): number {
+		return group.student_ids.filter((id) => !archived.has(id)).length;
 	}
 	async function load(signal?: AbortSignal): Promise<void> {
 		loading = true;
@@ -127,11 +135,13 @@
 	function payload(): {
 		expected_revision: string | null;
 		roster_ids: number[];
+		archived_ids: number[];
 		target_size: number;
 	} {
 		return {
 			expected_revision: saved?.revision ?? null,
 			roster_ids: rosterIds,
+			archived_ids: archivedIds,
 			target_size: targetSize
 		};
 	}
@@ -263,7 +273,9 @@
 		}));
 	}
 	function addGroup(): void {
-		const number = groups.length + 1;
+		const used = new Set(groups.map((group) => group.number));
+		let number = 1;
+		while (used.has(number)) number += 1;
 		groups = [
 			...groups,
 			{
@@ -272,12 +284,10 @@
 				y: Math.floor((number - 1) / 3) * 350 + 20,
 				student_ids: []
 			}
-		];
+		].sort((left, right) => left.number - right.number);
 	}
 	function removeEmpty(number: number): void {
-		groups = groups
-			.filter((group) => group.number !== number)
-			.map((group, index) => ({ ...group, number: index + 1 }));
+		groups = groups.filter((group) => group.number !== number);
 	}
 </script>
 
@@ -293,6 +303,10 @@
 			<h3 class="title is-4 mb-2">Les groupes</h3>
 			<p class="muted text-small">
 				Trois répartitions indépendantes. Déplacez les bulles pour explorer les groupes.
+			</p>
+			<p class="muted text-small">
+				Les élèves grisés sont archivés : leurs groupes sont conservés, mais ils sont exclus des
+				effectifs et de l’équilibrage.
 			</p>
 		</div>
 		<button
@@ -316,11 +330,24 @@
 			{/each}
 		</ul>
 	</div>
+	{#if editing}<div class="group-save" role="group" aria-label="Actions d’édition des groupes">
+			<span class="muted text-small">Modifications non enregistrées</span>
+			<div class="buttons mb-0">
+				<button
+					class="button is-primary is-small"
+					disabled={busy || !!validation || stale}
+					class:is-loading={busy}
+					onclick={save}><Icon name="save" />Enregistrer</button
+				>
+				<button class="button is-light is-small" disabled={busy} onclick={cancel}>Annuler</button>
+			</div>
+			{#if validation}<p class="save-validation text-small" role="status">{validation}</p>{/if}
+		</div>{/if}
 	{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
 	{#if success}<p class="notification is-success is-light" role="status">{success}</p>{/if}
 	{#if loading}<p class="loading-state" role="status">Chargement des groupes…</p>
 	{:else}
-		{#if editable}
+		{#if editable && !editing}
 			<div class="group-toolbar">
 				{#if kind === 'kholles'}<div class="field mb-0">
 						<label class="label text-small" for={`kholle-size-${promotion.id}`}
@@ -395,9 +422,9 @@
 				</p>
 				<p class="mt-2">
 					{kind === 'kholles'
-						? `À la sauvegarde, chaque groupe doit contenir ${targetSize} élèves.${rosterIds.length % targetSize ? ` Un seul groupe doit contenir le reste (${rosterIds.length % targetSize} élève(s)).` : ' L’effectif est divisible par cette taille : aucun groupe réduit n’est autorisé.'}`
-						: 'À la sauvegarde, les groupes doivent avoir au maximum un élève d’écart.'} Chaque élève
-					doit être affecté une fois.
+						? `À la sauvegarde, chaque groupe comptant des élèves non archivés doit en contenir ${targetSize}.${nonArchivedCount % targetSize ? ` Un seul groupe doit contenir le reste (${nonArchivedCount % targetSize} élève(s)).` : ' Aucun groupe actif réduit n’est autorisé.'} Les groupes composés uniquement d’archivés sont conservés hors calcul.`
+						: 'À la sauvegarde, les effectifs non archivés doivent avoir au maximum un élève d’écart.'}
+					Chaque élève doit être affecté une fois.
 				</p>
 			</div>{/if}
 		{#if groups.length}
@@ -433,6 +460,8 @@
 							<button
 								class="student-chip"
 								class:chosen={selectedStudent === student.id}
+								class:archived-account={archived.has(student.id)}
+								title={archived.has(student.id) ? 'Compte archivé, exclu des effectifs' : undefined}
 								disabled={!editing || busy}
 								aria-pressed={selectedStudent === student.id}
 								onclick={() =>
@@ -457,9 +486,7 @@
 					{#each groups as group (group.number)}
 						<section
 							class="group-bubble"
-							class:over-limit={editing &&
-								kind === 'kholles' &&
-								group.student_ids.length > targetSize}
+							class:over-limit={editing && kind === 'kholles' && activeSize(group) > targetSize}
 							style={listView ? '' : `left:${group.x}px;top:${group.y}px`}
 							aria-label={groupLabel(kind, group.number)}
 						>
@@ -474,8 +501,17 @@
 								aria-label={`Déplacer la bulle ${groupLabel(kind, group.number)} ; utilisez les flèches du clavier`}
 							>
 								<Icon name="promotions" /><strong>{groupLabel(kind, group.number)}</strong><span
-									class="tag is-rounded">{group.student_ids.length}</span
+									class="tag is-rounded"
+									title="Élèves non archivés">{activeSize(group)}</span
 								>
+								{#if group.student_ids.length > activeSize(group)}<span class="muted text-small"
+										>+{group.student_ids.length - activeSize(group)} archivé{group.student_ids
+											.length -
+											activeSize(group) ===
+										1
+											? ''
+											: 's'}</span
+									>{/if}
 							</button>
 							<div
 								class="bubble-members"
@@ -489,6 +525,8 @@
 								{#each group.student_ids as id (id)}<button
 										class="student-chip"
 										class:chosen={selectedStudent === id}
+										class:archived-account={archived.has(id)}
+										title={archived.has(id) ? 'Compte archivé, exclu des effectifs' : undefined}
 										disabled={!editing || busy}
 										draggable={editing && !busy}
 										aria-pressed={selectedStudent === id}
@@ -524,17 +562,6 @@
 						? 'Aucune répartition créée pour cette catégorie.'
 						: 'Aucun élève dans cette promotion.'}
 				</p>
-			</div>{/if}
-		{#if editing}<div class="group-save mt-4">
-				{#if validation}<p class="has-text-warning-dark" role="status">{validation}</p>{/if}
-				<div class="buttons mt-3">
-					<button
-						class="button is-primary"
-						disabled={busy || !!validation || stale}
-						class:is-loading={busy}
-						onclick={save}><Icon name="save" />Enregistrer</button
-					><button class="button is-light" disabled={busy} onclick={cancel}>Annuler</button>
-				</div>
 			</div>{/if}
 	{/if}
 </section>
@@ -644,6 +671,11 @@
 		outline: 2px solid var(--promotion-color);
 		background: color-mix(in srgb, var(--promotion-color) 12%, var(--color-surface));
 	}
+	.student-chip.archived-account {
+		color: var(--color-muted);
+		border-style: dashed;
+		background: var(--color-subtle);
+	}
 	.over-limit {
 		border: 2px solid var(--color-danger);
 	}
@@ -665,8 +697,27 @@
 		width: auto;
 	}
 	.group-save {
-		border-top: 1px solid var(--color-border);
-		padding-top: 1rem;
+		position: sticky;
+		top: 0.75rem;
+		z-index: 5;
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.5rem 1rem;
+		margin-bottom: 1rem;
+		padding: 0.7rem 0.9rem;
+		background: var(--color-surface);
+		border: var(--border-thin);
+		border-radius: var(--radius-small);
+		box-shadow: var(--shadow-panel);
+	}
+	.group-save .buttons {
+		flex-wrap: nowrap;
+	}
+	.save-validation {
+		flex-basis: 100%;
+		color: var(--color-warning);
 	}
 	@media (max-width: 600px) {
 		.partition-tab {

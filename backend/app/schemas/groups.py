@@ -28,6 +28,7 @@ class PartitionGenerate(PartitionVersion):
     """Carry the pupil snapshot and a khôlle generation target between two and five."""
 
     roster_ids: list[PupilId] = Field(max_length=2000)
+    archived_ids: list[PupilId] = Field(default_factory=list, max_length=2000)
     target_size: int = Field(default=3, ge=2, le=5, strict=True)
 
 
@@ -61,6 +62,7 @@ class GroupStudent(BaseModel):
     id: int
     first_name: str
     last_name: str
+    status: str
 
 
 class PromotionGroupsResponse(BaseModel):

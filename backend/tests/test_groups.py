@@ -48,6 +48,48 @@ def test_large_roster_positions_stay_inside_contract() -> None:
     validate_groups("kholles", groups, set(range(1, 2001)), 2)
 
 
+@pytest.mark.parametrize("kind", ["halves", "thirds", "kholles"])
+def test_generation_preserves_archived_assignments(kind: PartitionKind) -> None:
+    """Regenerate only non-archived pupils and retain every archived group's identity."""
+    pupils = list(range(1, 13))
+    previous = generate_groups(kind, pupils, 3)
+    archived = set(previous[-1].student_ids)
+    result = generate_groups(kind, pupils, 3, archived, previous)
+    for pupil in archived:
+        assert (
+            next(group.number for group in result if pupil in group.student_ids)
+            == previous[-1].number
+        )
+    assert Counter(pupil for group in result for pupil in group.student_ids) == Counter(pupils)
+    validate_groups(kind, result, set(pupils), 3, archived)
+
+
+def test_archived_only_groups_and_manual_moves_do_not_affect_sizes() -> None:
+    """Keep numbered archived-only groups while permitting archived transfers and reactivation."""
+    groups = [
+        GroupDraft(number=1, x=0, y=0, student_ids=[1, 2, 3, 7]),
+        GroupDraft(number=2, x=300, y=0, student_ids=[4, 5, 6]),
+        GroupDraft(number=15, x=600, y=0, student_ids=[8]),
+    ]
+    validate_groups("kholles", groups, set(range(1, 9)), 3, {7, 8})
+    with pytest.raises(AuthError):
+        validate_groups("kholles", groups, set(range(1, 9)), 3, {8})
+    groups[0].student_ids.remove(7)
+    groups[2].student_ids.append(7)
+    validate_groups("kholles", groups, set(range(1, 9)), 3, {7, 8})
+    validate_groups("kholles", groups, set(range(1, 9)), 3, {7})
+
+
+@pytest.mark.parametrize("kind", ["halves", "thirds", "kholles"])
+def test_all_archived_rosters_remain_editable(kind: PartitionKind) -> None:
+    """Retain valid archived assignments even when there are no effective pupils."""
+    pupils = [1, 2, 3, 4]
+    archived = set(pupils)
+    groups = generate_groups(kind, pupils, 3, archived)
+    validate_groups(kind, groups, archived, 3, archived)
+    assert {pupil for group in groups for pupil in group.student_ids} == archived
+
+
 @pytest.mark.parametrize("size", [0, 1, 6, 3.5, True, "3"])
 def test_generation_size_rejects_out_of_range_and_coercion(size: object) -> None:
     """Only integer targets between two and five are accepted from clients."""

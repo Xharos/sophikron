@@ -5,6 +5,7 @@
 	import 'bulma/css/bulma.min.css';
 	import '../../src/app.css';
 	const administrator = !new URL(window.location.href).searchParams.has('teacher');
+	const archived = new URL(window.location.href).searchParams.has('archived');
 	const promotions = [
 		{ id: 1, identifier: 'PT', year: 2026, color: '#244BC1', is_active: true },
 		{ id: 2, identifier: 'PTSI', year: 2026, color: '#67449A', is_active: true }
@@ -16,7 +17,7 @@
 		last_name: 'Martin',
 		email: 'martin.alice@test.fr',
 		roles: ['user'],
-		status: 'active',
+		status: archived ? 'disabled' : 'active',
 		profile_version: 0,
 		subject_ids: [],
 		age: null,

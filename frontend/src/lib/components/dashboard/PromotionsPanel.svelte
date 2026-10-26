@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
-	import { command, read } from '#lib/dashboard';
+	import { command, read, promotionCounts } from '#lib/dashboard';
 	import type { Page, Promotion, PromotionArchiveImpact } from '#lib/types';
 	import Icon from '../Icon.svelte';
 	import Pagination from '../Pagination.svelte';
@@ -161,10 +161,7 @@
 				>
 				<h3 class="title is-3">{selected.identifier}</h3>
 				<p class="muted">
-					{selected.student_count ?? 0} élève{selected.student_count === 1
-						? ''
-						: 's'}{#if administrator}
-						· {selected.member_count ?? 0} membre{selected.member_count === 1 ? '' : 's'} au total{/if}
+					{promotionCounts(selected)}
 				</p>
 			</div>
 			{#if administrator}<div class="profile-buttons">
@@ -287,9 +284,7 @@
 							/></span
 						>
 						<strong>{promotion.identifier}</strong><span class="muted text-small"
-							>{promotion.student_count ?? 0} élève{promotion.student_count === 1 ? '' : 's'} · {promotion.is_active
-								? 'Active'
-								: 'Archivée'}</span
+							>{promotionCounts(promotion)} · {promotion.is_active ? 'Active' : 'Archivée'}</span
 						></button
 					>{/each}
 			</div>{/if}

@@ -64,6 +64,8 @@ the role confirmation explains this and the journal records each automatic remov
 
 Promotion details include independent half, third and khôlle partitions. Administrators generate
 drafts, move group bubbles and transfer pupils by drag/drop or click/keyboard, then explicitly save.
+During editing, compact Save/Cancel controls sit above the groups and stay visible while scrolling;
+generation controls are hidden until editing finishes.
 Khôlle generation defaults to three pupils and accepts targets from two through five. A responsive
 list view complements the scrollable bubble board. Saved bubble positions are shared; staff
 consultation movements are temporary. Deletion requires confirmation and only removes the selected
@@ -71,8 +73,14 @@ partition. See [group rules and API](../docs/administration.md#promotion-group-p
 membership changes and migration `0006_promotion_groups`.
 Promotion member rows show compact group identifiers with accessible tooltips. The same blue
 half-group, violet third-group and green khôlle tags appear beside each authorized promotion in
-the pupil popup and complete profile. Teacher responses exclude unshared promotions and their tags;
+the pupil popup and complete profile. Thirds are named X/Y/Z, halves A/B and khôlles 01/02/etc.
+Teacher responses exclude unshared promotions and their tags;
 missing assignments produce no empty tags. Saving/deleting a partition refreshes the member rows.
+Archived pupils and their tags stay visible in grey and remain movable inside groups. Only
+non-archived pupils participate in balance/target calculations. Regeneration and reactivation
+preserve archived group assignments; archived-only groups retain their numbers outside these
+calculations. Promotion cards/details show pupil, unique teaching-account and archived-account
+counts separately. An archive/reactivation during editing requires a group-board refresh before save.
 
 FastAPI enforces all permissions, membership scope and validation. Components share presentation and
 interaction logic; `src/lib/server/dashboard.ts` translates allowlisted commands/resources to API

@@ -35,6 +35,9 @@ export interface Promotion {
 	is_active: boolean;
 	member_count?: number;
 	student_count?: number;
+	non_archived_student_count?: number;
+	teaching_count?: number;
+	archived_count?: number;
 }
 
 export interface Page<T> {

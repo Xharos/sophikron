@@ -77,7 +77,11 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 	try {
 		await server.listen();
 		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
-		for (const teacher of [false, true]) {
+		for (const [teacher, archived] of [
+			[false, false],
+			[true, false],
+			[false, true]
+		]) {
 			const page = await browser.newPage({
 				viewport: { width: teacher ? 390 : 1280, height: 1000 }
 			});
@@ -100,7 +104,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 				last_name: 'Martin',
 				email: 'martin.alice@test.fr',
 				roles: ['user'],
-				status: 'active',
+				status: archived ? 'disabled' : 'active',
 				created_at: '2026-01-01T00:00:00Z',
 				promotions,
 				group_assignments,
@@ -127,17 +131,21 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 				return route.fulfill({ json });
 			});
 			await page.goto(
-				`${server.resolvedUrls.local[0]}__picker?directory${teacher ? '&teacher' : ''}`
+				`${server.resolvedUrls.local[0]}__picker?directory${teacher ? '&teacher' : ''}${archived ? '&archived' : ''}`
 			);
 			const row = page.locator('.account-row').filter({ hasText: 'Alice Martin' });
 			await row.waitFor();
+			assert.equal(
+				await row.evaluate((element) => element.classList.contains('archived-account')),
+				archived
+			);
 			assert.deepEqual(await row.locator('.group-tags .tag').allTextContents(), [
 				'A',
-				'C',
+				'Z',
 				'02'
 			]);
 			assert.equal(await row.getByLabel('Demi-groupe A', { exact: true }).count(), 1);
-			assert.equal(await row.getByLabel('Tiers de groupe C', { exact: true }).count(), 1);
+			assert.equal(await row.getByLabel('Tiers de groupe Z', { exact: true }).count(), 1);
 			assert.equal(await row.getByLabel('Groupe de khôlle 02', { exact: true }).count(), 1);
 			assert.equal(
 				await page
@@ -154,7 +162,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 					.first()
 					.locator('.group-tags .tag')
 					.allTextContents(),
-				['A', 'C', '02']
+				['A', 'Z', '02']
 			);
 			assert.equal(await full.locator('.membership-row').count(), teacher ? 1 : 2);
 			const search = page.getByRole('textbox', { name: 'Rechercher un compte', exact: true });
@@ -163,12 +171,18 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			await row.waitFor();
 			assert.deepEqual(await row.locator('.group-tags .tag').allTextContents(), [
 				'A',
-				'C',
+				'Z',
 				'02'
 			]);
 			await row.click();
 			const dialog = page.getByRole('dialog');
 			await dialog.locator('.membership-row').first().waitFor();
+			assert.equal(
+				await dialog
+					.locator('.profile-hero')
+					.evaluate((element) => element.classList.contains('archived-account')),
+				archived
+			);
 			assert.equal(await dialog.locator('.membership-row').count(), teacher ? 1 : 2);
 			assert.deepEqual(
 				await dialog
@@ -176,7 +190,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 					.first()
 					.locator('.group-tags .tag')
 					.allTextContents(),
-				['A', 'C', '02']
+				['A', 'Z', '02']
 			);
 			assert.equal(
 				await dialog
@@ -196,6 +210,84 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			assert.deepEqual(errors, []);
 			await page.close();
 		}
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
+test('archived pupils stay grey and movable outside effective khôlle sizes', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		const students = ['Alice', 'Benoît', 'Camille', 'Diane', 'Émile', 'Farah'].map(
+			(name, index) => ({
+				id: index + 1,
+				first_name: name,
+				last_name: 'Martin',
+				status: index === 5 ? 'disabled' : 'active'
+			})
+		);
+		let partition = {
+			kind: 'kholles',
+			revision: 'a'.repeat(32),
+			target_size: 3,
+			groups: [
+				{ number: 1, x: 20, y: 20, student_ids: [1, 2, 3] },
+				{ number: 2, x: 320, y: 20, student_ids: [4, 5] },
+				{ number: 15, x: 620, y: 20, student_ids: [6] }
+			]
+		};
+		const writes = [];
+		await page.route('**/dashboard/data?**', (route) =>
+			route.fulfill({ json: { students, partitions: [partition] } })
+		);
+		await page.route('**/dashboard/command', async (route) => {
+			const input = route.request().postDataJSON();
+			writes.push(input);
+			partition = { ...partition, revision: 'b'.repeat(32), groups: input.data.groups };
+			await route.fulfill({ json: partition });
+		});
+		await page.goto(`${server.resolvedUrls.local[0]}__picker?groups`);
+		await page.getByRole('button', { name: 'Groupes de khôlle', exact: true }).click();
+		const archivedGroup = page.getByRole('region', { name: 'Groupe 15', exact: true });
+		await archivedGroup.waitFor();
+		assert.equal(await archivedGroup.locator('.bubble-handle .tag').textContent(), '0');
+		const archivedStudent = page.getByRole('button', { name: 'Farah Martin', exact: true });
+		assert.equal(
+			await archivedStudent.evaluate((element) => getComputedStyle(element).filter),
+			'grayscale(1)'
+		);
+		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
+		assert.equal(await archivedStudent.isEnabled(), true);
+		assert.equal(await archivedStudent.getAttribute('draggable'), 'true');
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isEnabled(),
+			true
+		);
+		const secondGroup = page.getByRole('region', { name: 'Groupe 02', exact: true });
+		await archivedStudent.dragTo(secondGroup.locator('.bubble-members'));
+		assert.equal(await secondGroup.locator('.student-chip').count(), 3);
+		assert.equal(await secondGroup.locator('.bubble-handle .tag').textContent(), '2');
+		await archivedGroup
+			.getByRole('button', { name: 'Retirer ce groupe vide', exact: true })
+			.click();
+		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+		await page.getByText('Répartition enregistrée.', { exact: true }).waitFor();
+		assert.deepEqual(writes[0].data.archived_ids, [6]);
+		assert.ok(
+			writes[0].data.groups.find((group) => group.number === 2).student_ids.includes(6)
+		);
+		assert.equal(
+			writes[0].data.groups.some((group) => group.number === 15),
+			false
+		);
+		assert.deepEqual(errors, []);
 	} finally {
 		await browser?.close();
 		await server.close();
@@ -271,6 +363,32 @@ test('promotion groups support bubble movement, transfers, saved drafts and inde
 		const bubbles = page.locator('.group-bubble');
 		await bubbles.first().waitFor();
 		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
+		await bubbles.first().waitFor();
+		const editActions = page.getByRole('group', {
+			name: 'Actions d’édition des groupes',
+			exact: true
+		});
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).count(),
+			1
+		);
+		assert.equal(
+			await editActions.evaluate((element) =>
+				Boolean(
+					element.compareDocumentPosition(document.querySelector('.group-board')) &
+					Node.DOCUMENT_POSITION_FOLLOWING
+				)
+			),
+			true
+		);
+		await page.setViewportSize({ width: 1280, height: 600 });
+		const actionsTop = await editActions.evaluate(
+			(element) => element.getBoundingClientRect().top + scrollY
+		);
+		await page.evaluate((top) => window.scrollTo(0, top + 80), actionsTop);
+		assert.ok((await editActions.boundingBox()).y <= 13);
+		await page.evaluate(() => window.scrollTo(0, 0));
+		await page.setViewportSize({ width: 1280, height: 1000 });
 		await bubbles
 			.first()
 			.getByRole('button', { name: 'Alice Martin', exact: true })

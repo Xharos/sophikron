@@ -4,18 +4,6 @@
 
 Share teaching materials, publish educational pages and create interactive content.
 
-Authenticated course pages at `/lessons` provide an ordered programme, sections/subsections, formatted
-text, YouTube links, teacher collaboration and promotion-based access with inherited availability.
-See [course pages](docs/lessons.md) for permissions, migration `0005_lessons` and verification.
-Administrators also configure the public homepage, subjects and calendars, including a shared
-holiday color; see [site administration](docs/site-administration.md) for migration
-`0002_configuration` and the detailed activity journal. Private document uploads are available in courses.
-The dashboard also groups active teaching staff by subject and can optionally archive a promotion's
-pupil accounts, with selective restoration that preserves other blocks; see [administration](docs/administration.md).
-Promotion details also provide independent half, third and khôlle partitions, randomized generation,
-interactive group editing and scoped teacher/khôlleur consultation. Apply migration
-`0006_promotion_groups`; see [group rules and API](docs/administration.md#promotion-group-partitions).
-
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />

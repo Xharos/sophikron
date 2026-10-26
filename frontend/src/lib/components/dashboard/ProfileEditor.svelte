@@ -206,7 +206,7 @@
 	);
 </script>
 
-<header class="profile-page-hero">
+<header class="profile-page-hero" class:archived-account={current.status === 'disabled'}>
 	<div class="avatar large">{current.first_name.slice(0, 1)}{current.last_name.slice(0, 1)}</div>
 	<div>
 		<p class="eyebrow">Fiche du compte</p>
@@ -264,7 +264,11 @@
 			{/if}
 		</section>
 	{/if}
-	<section class="workspace-panel mb-5" aria-label="Promotions et groupes">
+	<section
+		class="workspace-panel mb-5"
+		class:archived-account={current.status === 'disabled'}
+		aria-label="Promotions et groupes"
+	>
 		<h2 class="title is-5"><Icon name="promotions" />Promotions et groupes</h2>
 		{#if !current.can_edit_all}<p class="muted text-small mb-3">
 				Promotions partagées avec vous.

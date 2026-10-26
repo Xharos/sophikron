@@ -161,6 +161,7 @@
 			</div>
 		{:else}{#each users as user (user.id)}<button
 					class="account-row"
+					class:archived-account={user.status === 'disabled'}
 					onclick={() => (profile = user.id)}
 				>
 					<span class="avatar">{user.first_name?.slice(0, 1)}{user.last_name?.slice(0, 1)}</span

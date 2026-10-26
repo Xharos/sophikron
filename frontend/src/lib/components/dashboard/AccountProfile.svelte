@@ -130,7 +130,7 @@
 		<a class="button is-primary is-fullwidth mb-5" href={resolve(`/dashboard/user?id=${userId}`)}
 			><Icon name="profile" />Voir la fiche complète</a
 		>
-		<div class="profile-hero">
+		<div class="profile-hero" class:archived-account={account.status === 'disabled'}>
 			<div class="avatar large">
 				{account.first_name?.slice(0, 1)}{account.last_name?.slice(0, 1)}
 			</div>
@@ -173,7 +173,10 @@
 				Promotions {#if !administrator}<span class="muted text-small">partagées avec vous</span
 					>{/if}
 			</h3>
-			{#each memberships as promotion (promotion.id)}<div class="membership-row">
+			{#each memberships as promotion (promotion.id)}<div
+					class="membership-row"
+					class:archived-account={account.status === 'disabled'}
+				>
 					<div class="is-flex is-flex-wrap-wrap is-align-items-center" style="gap: 0.5rem">
 						<PromotionTag {promotion} />
 						<GroupTags assignments={account.group_assignments} promotionId={promotion.id} />

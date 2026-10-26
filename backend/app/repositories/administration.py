@@ -30,6 +30,51 @@ class AdministrationRepository:
         )
         return dict(rows.all())
 
+    async def display_counts(self, ids: list[int]) -> dict[int, dict[str, int]]:
+        """Count non-archived pupils, unique teaching accounts and all archived members.
+
+        Parameters
+        ----------
+        ids
+            Authorized promotion page IDs.
+
+        Returns
+        -------
+        dict[int, dict[str, int]]
+            Disjoint display categories; teacher/khôlleur combinations count once.
+        """
+        pupil = (
+            select(UserRole.user_id)
+            .join(Role)
+            .where(UserRole.user_id == User.id, Role.code == "user")
+            .exists()
+        )
+        teaching = (
+            select(UserRole.user_id)
+            .join(Role)
+            .where(UserRole.user_id == User.id, Role.code.in_(TEACHING_ROLES))
+            .exists()
+        )
+        rows = await self.db.execute(
+            select(
+                UserPromotion.promotion_id,
+                func.count().filter(pupil, User.status != "disabled"),
+                func.count().filter(teaching, User.status != "disabled"),
+                func.count().filter(User.status == "disabled"),
+            )
+            .join(User, User.id == UserPromotion.user_id)
+            .where(UserPromotion.promotion_id.in_(ids))
+            .group_by(UserPromotion.promotion_id)
+        )
+        return {
+            promotion_id: {
+                "non_archived_student_count": students,
+                "teaching_count": staff,
+                "archived_count": archived,
+            }
+            for promotion_id, students, staff, archived in rows
+        }
+
     async def promotion_students(self, promotion_id: int) -> list[User]:
         """Select only permanent pupils currently linked to this promotion."""
         return list(

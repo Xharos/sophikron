@@ -25,7 +25,11 @@ from app.services.errors import AuthError
 
 
 def generate_groups(
-    kind: PartitionKind, student_ids: list[int], target_size: int
+    kind: PartitionKind,
+    student_ids: list[int],
+    target_size: int,
+    archived_ids: set[int] | None = None,
+    existing_groups: list[GroupDraft] | None = None,
 ) -> list[GroupDraft]:
     """Shuffle pupils, balancing halves/thirds and leaving only one khôlle remainder.
 
@@ -37,6 +41,10 @@ def generate_groups(
         Current promotion pupil IDs, each occurring once.
     target_size
         Khôlle generation target, between two and five.
+    archived_ids
+        Pupils excluded from randomization and all effective-size calculations.
+    existing_groups
+        Preserve archived pupils' current group numbers and bubble positions.
 
     Returns
     -------
@@ -45,10 +53,11 @@ def generate_groups(
     """
     if not student_ids:
         raise AuthError(422, "Ajoutez des élèves à cette promotion avant de générer des groupes.")
-    count = {"halves": 2, "thirds": 3}.get(kind, ceil(len(student_ids) / target_size))
-    shuffled = student_ids.copy()
+    archived_ids = archived_ids or set()
+    shuffled = [student_id for student_id in student_ids if student_id not in archived_ids]
+    count = {"halves": 2, "thirds": 3}.get(kind, max(1, ceil(len(shuffled) / target_size)))
     secrets.SystemRandom().shuffle(shuffled)
-    return [
+    groups = [
         GroupDraft(
             number=index + 1,
             x=(index % 3) * 300 + 20,
@@ -61,10 +70,34 @@ def generate_groups(
         )
         for index in range(count)
     ]
+    indexed = {group.number: group for group in groups}
+    preserved = set()
+    for previous in existing_groups or []:
+        archived_members = [pupil for pupil in previous.student_ids if pupil in archived_ids]
+        if not archived_members:
+            continue
+        if previous.number not in indexed:
+            indexed[previous.number] = GroupDraft(
+                number=previous.number,
+                x=previous.x,
+                y=previous.y,
+                student_ids=[],
+            )
+        indexed[previous.number].x = previous.x
+        indexed[previous.number].y = previous.y
+        indexed[previous.number].student_ids.extend(archived_members)
+        preserved.update(archived_members)
+    for index, pupil in enumerate(sorted(archived_ids - preserved)):
+        groups[index % len(groups)].student_ids.append(pupil)
+    return [group for _, group in sorted(indexed.items()) if kind != "kholles" or group.student_ids]
 
 
 def validate_groups(
-    kind: PartitionKind, groups: list[GroupDraft], pupil_ids: set[int], target_size: int = 3
+    kind: PartitionKind,
+    groups: list[GroupDraft],
+    pupil_ids: set[int],
+    target_size: int = 3,
+    archived_ids: set[int] | None = None,
 ) -> None:
     """Reject incomplete, duplicate, foreign or incorrectly sized saved assignments.
 
@@ -78,17 +111,27 @@ def validate_groups(
         Current authoritative set of pupils in the promotion.
     target_size
         Required khôlle size, except for a single group containing the division remainder.
+    archived_ids
+        Preserve these assignments while excluding their pupils from size constraints.
     """
     numbers = sorted(group.number for group in groups)
-    expected_count = {"halves": 2, "thirds": 3}.get(kind, len(groups))
-    if len(groups) != expected_count or numbers != list(range(1, len(groups) + 1)):
+    archived_ids = archived_ids or set()
+    expected_count = {"halves": 2, "thirds": 3}.get(kind)
+    if (
+        len(numbers) != len(set(numbers))
+        or expected_count is not None
+        and numbers != list(range(1, expected_count + 1))
+    ):
         raise AuthError(422, "Le nombre ou la numérotation des groupes est invalide.")
     assigned = [pupil for group in groups for pupil in group.student_ids]
     if len(assigned) != len(set(assigned)) or set(assigned) != pupil_ids:
         raise AuthError(422, "Chaque élève de la promotion doit apparaître exactement une fois.")
-    sizes = [len(group.student_ids) for group in groups]
+    sizes = [sum(pupil not in archived_ids for pupil in group.student_ids) for group in groups]
     if kind == "kholles":
-        full_groups, remainder = divmod(len(pupil_ids), target_size)
+        if any(not group.student_ids for group in groups):
+            raise AuthError(422, "Retirez les groupes de khôlle entièrement vides.")
+        sizes = [size for size in sizes if size > 0]
+        full_groups, remainder = divmod(len(pupil_ids - archived_ids), target_size)
         expected_sizes = [target_size] * full_groups + ([remainder] if remainder else [])
         if sorted(sizes) != sorted(expected_sizes):
             exception = (
@@ -190,6 +233,7 @@ class GroupsService:
                         last_name=self.auth.cipher.decrypt(
                             pupil.id, "last_name", pupil.last_name_encrypted
                         ),
+                        status=pupil.status,
                     )
                     for pupil in pupils
                 ],
@@ -216,12 +260,21 @@ class GroupsService:
             )
         return partition
 
-    async def _roster(self, promotion_id: int, roster_ids: list[int]) -> set[int]:
+    async def _roster(
+        self,
+        promotion_id: int,
+        roster_ids: list[int],
+        archived_ids: list[int],
+    ) -> tuple[set[int], set[int]]:
         """Reject a draft when promotion membership or pupil roles changed meanwhile."""
-        ids = {pupil.id for pupil in await self.repo.pupils(promotion_id)}
+        pupils = await self.repo.pupils(promotion_id)
+        ids = {pupil.id for pupil in pupils}
+        archived = {pupil.id for pupil in pupils if pupil.status == "disabled"}
         if len(roster_ids) != len(set(roster_ids)) or set(roster_ids) != ids:
             raise AuthError(409, "La liste des élèves a changé. Rechargez les groupes.")
-        return ids
+        if len(archived_ids) != len(set(archived_ids)) or set(archived_ids) != archived:
+            raise AuthError(409, "Le statut des élèves a changé. Rechargez les groupes.")
+        return ids, archived
 
     async def preview(
         self,
@@ -235,8 +288,10 @@ class GroupsService:
             await self.auth._lifecycle_lock()
             await self._promotion(actor, promotion_id, write=True)
             await self._version(promotion_id, kind, data)
-            ids = await self._roster(promotion_id, data.roster_ids)
-            return generate_groups(kind, sorted(ids), data.target_size)
+            ids, archived = await self._roster(promotion_id, data.roster_ids, data.archived_ids)
+            partitions = await self.repo.partitions(promotion_id, ids)
+            existing = next((item["groups"] for item in partitions if item["kind"] == kind), [])
+            return generate_groups(kind, sorted(ids), data.target_size, archived, existing)
 
     async def save(
         self,
@@ -250,8 +305,8 @@ class GroupsService:
             await self.auth._lifecycle_lock()
             promotion = await self._promotion(actor, promotion_id, write=True)
             partition = await self._version(promotion_id, kind, data)
-            ids = await self._roster(promotion_id, data.roster_ids)
-            validate_groups(kind, data.groups, ids, data.target_size)
+            ids, archived = await self._roster(promotion_id, data.roster_ids, data.archived_ids)
+            validate_groups(kind, data.groups, ids, data.target_size, archived)
             groups = [
                 group.model_copy(update={"student_ids": sorted(group.student_ids)})
                 for group in sorted(data.groups, key=lambda group: group.number)

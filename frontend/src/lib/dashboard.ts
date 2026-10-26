@@ -3,6 +3,14 @@ import type { Subject } from './site';
 import { loginDestination } from './loginRedirect.ts';
 export { roleLabels } from './roles.ts';
 
+/** Display disjoint promotion counts, counting combined teacher/khôlleur roles once. */
+export function promotionCounts(promotion: Promotion): string {
+	const pupils = promotion.non_archived_student_count ?? promotion.student_count ?? 0;
+	const staff = promotion.teaching_count ?? 0;
+	const archived = promotion.archived_count ?? 0;
+	return `${pupils} élève${pupils === 1 ? '' : 's'} · ${staff} enseignant${staff === 1 ? '' : 's'} · ${archived} archivé${archived === 1 ? '' : 's'}`;
+}
+
 /** Same-origin dashboard transport; credentials and keys remain in server code. */
 async function responseData<T>(response: Response): Promise<T> {
 	if (response.status === 401) {

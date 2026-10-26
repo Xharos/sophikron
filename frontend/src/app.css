@@ -1669,3 +1669,13 @@ a.navbar-item[aria-current='page'] {
 .tag-selector:disabled {
 	opacity: 0.7;
 }
+
+/* Archived accounts stay interactive while their names and group tags remain distinct. */
+.archived-account {
+	color: var(--color-muted);
+	filter: grayscale(1);
+}
+.archived-account strong,
+.archived-account .title {
+	color: var(--color-muted);
+}

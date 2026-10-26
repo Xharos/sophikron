@@ -113,6 +113,9 @@ class PromotionResponse(BaseModel):
     updated_at: datetime
     member_count: int
     student_count: int = 0
+    non_archived_student_count: int = 0
+    teaching_count: int = 0
+    archived_count: int = 0
 
 
 class PromotionPage(BaseModel):

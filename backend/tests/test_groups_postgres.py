@@ -44,6 +44,191 @@ async def preview_and_save(case: Harness, path: str, pupils: list[int], kind: st
 
 
 @pytest.mark.asyncio
+async def test_archive_counts_preservation_regeneration_and_reactivation(
+    auth_case: Harness,
+) -> None:
+    """Preserve archived links, exclude their sizes and reject stale status snapshots."""
+    case = auth_case
+    promotion_id = await make_promotion(case, "ARCHIVES")
+    path = f"/api/v1/promotion-groups/{promotion_id}"
+    try:
+        pupils = await create_roster(case, promotion_id)
+        saved = {
+            kind: await preview_and_save(case, path, pupils, kind)
+            for kind in ("halves", "thirds", "kholles")
+        }
+        archived_id = saved["kholles"]["groups"][-1]["student_ids"][0]
+        original_groups = {
+            kind: next(
+                group["number"]
+                for group in partition["groups"]
+                if archived_id in group["student_ids"]
+            )
+            for kind, partition in saved.items()
+        }
+        teacher, _ = await case.create("teacher", activate=False)
+        combined, _ = await case.create("kholleur", activate=False)
+        response = await case.client.patch(
+            f"/api/v1/admin/users/{combined}/profile",
+            json={
+                "expected_version": 0,
+                "roles": ["teacher", "kholleur"],
+            },
+        )
+        assert response.status_code == 200, response.text
+        assert (
+            await case.client.post(
+                f"/api/v1/admin/promotions/{promotion_id}/users",
+                json={"user_ids": [teacher, combined]},
+            )
+        ).status_code == 204
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{archived_id}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        metadata = (await case.client.get(f"/api/v1/admin/promotions/{promotion_id}")).json()
+        assert (
+            metadata["non_archived_student_count"],
+            metadata["teaching_count"],
+            metadata["archived_count"],
+        ) == (6, 2, 1)
+        assert metadata["member_count"] == 9 and metadata["student_count"] == 7
+        board = (await case.client.get(path)).json()
+        assert (
+            next(pupil for pupil in board["students"] if pupil["id"] == archived_id)["status"]
+            == "disabled"
+        )
+        assert {item["kind"]: item for item in board["partitions"]} == saved
+        stale = {
+            "expected_revision": saved["kholles"]["revision"],
+            "roster_ids": pupils,
+            "groups": saved["kholles"]["groups"],
+        }
+        assert (await case.client.put(f"{path}/kholles", json=stale)).status_code == 409
+        assert (
+            await case.client.post(
+                f"{path}/kholles/preview",
+                json={
+                    "expected_revision": saved["kholles"]["revision"],
+                    "roster_ids": pupils,
+                    "archived_ids": [],
+                },
+            )
+        ).status_code == 409
+        for kind in saved:
+            body = {
+                "expected_revision": saved[kind]["revision"],
+                "roster_ids": pupils,
+                "archived_ids": [archived_id],
+            }
+            response = await case.client.post(f"{path}/{kind}/preview", json=body)
+            assert response.status_code == 200, response.text
+            groups = response.json()
+            assert (
+                next(group["number"] for group in groups if archived_id in group["student_ids"])
+                == original_groups[kind]
+            )
+            sizes = [
+                sum(pupil != archived_id for pupil in group["student_ids"]) for group in groups
+            ]
+            if kind == "kholles":
+                assert sorted(sizes) == [0, 3, 3]
+            else:
+                assert max(sizes) - min(sizes) <= 1
+            response = await case.client.put(f"{path}/{kind}", json={**body, "groups": groups})
+            assert response.status_code == 200, response.text
+            saved[kind] = response.json()
+        # Archived pupils remain manually movable; an archived-only group is not a size error.
+        groups = copy.deepcopy(saved["kholles"]["groups"])
+        source = next(group for group in groups if archived_id in group["student_ids"])
+        source["student_ids"].remove(archived_id)
+        groups[0]["student_ids"].append(archived_id)
+        groups = [group for group in groups if group["student_ids"]]
+        body = {
+            "expected_revision": saved["kholles"]["revision"],
+            "roster_ids": pupils,
+            "archived_ids": [archived_id],
+            "groups": groups,
+        }
+        response = await case.client.put(f"{path}/kholles", json=body)
+        assert response.status_code == 200, response.text
+        body["expected_revision"] = response.json()["revision"]
+        retained_number = next(
+            group["number"] for group in groups if archived_id in group["student_ids"]
+        )
+        # Archived staff are also excluded from the unique teaching-account counter.
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{teacher}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        metadata = (await case.client.get(f"/api/v1/admin/promotions/{promotion_id}")).json()
+        assert (
+            metadata["non_archived_student_count"],
+            metadata["teaching_count"],
+            metadata["archived_count"],
+        ) == (6, 1, 2)
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{archived_id}/archive", json={"archived": False}
+            )
+        ).status_code == 204
+        metadata = (await case.client.get(f"/api/v1/admin/promotions/{promotion_id}")).json()
+        assert (
+            metadata["non_archived_student_count"],
+            metadata["teaching_count"],
+            metadata["archived_count"],
+        ) == (7, 1, 1)
+        board = (await case.client.get(path)).json()
+        partition = next(
+            partition for partition in board["partitions"] if partition["kind"] == "kholles"
+        )
+        assert (
+            next(
+                group["number"]
+                for group in partition["groups"]
+                if archived_id in group["student_ids"]
+            )
+            == retained_number
+        )
+        assert (await case.client.put(f"{path}/kholles", json=body)).status_code == 409
+        assert (
+            await case.client.put(f"{path}/kholles", json={**body, "archived_ids": []})
+        ).status_code == 422
+    finally:
+        await clear_promotions([promotion_id])
+
+
+@pytest.mark.asyncio
+async def test_all_archived_promotion_can_generate_and_save(auth_case: Harness) -> None:
+    """Preserve memberships and allow editing groups when all pupils are archived."""
+    case = auth_case
+    promotion_id = await make_promotion(case, "TOUS_ARCHIVES")
+    path = f"/api/v1/promotion-groups/{promotion_id}"
+    try:
+        pupils = await create_roster(case, promotion_id, 2)
+        for pupil in pupils:
+            assert (
+                await case.client.patch(
+                    f"/api/v1/admin/users/{pupil}/archive", json={"archived": True}
+                )
+            ).status_code == 204
+        for kind in ("halves", "thirds", "kholles"):
+            body = {"expected_revision": None, "roster_ids": pupils, "archived_ids": pupils}
+            response = await case.client.post(f"{path}/{kind}/preview", json=body)
+            assert response.status_code == 200, response.text
+            assert (
+                await case.client.put(f"{path}/{kind}", json={**body, "groups": response.json()})
+            ).status_code == 200
+        metadata = (await case.client.get(f"/api/v1/admin/promotions/{promotion_id}")).json()
+        assert metadata["non_archived_student_count"] == 0 and metadata["archived_count"] == 2
+        assert metadata["student_count"] == 2 and metadata["member_count"] == 2
+    finally:
+        await clear_promotions([promotion_id])
+
+
+@pytest.mark.asyncio
 async def test_directory_and_profiles_scope_saved_group_tags(auth_case: Harness) -> None:
     """Expose saved tags in lists, searches and details without leaking unshared promotions."""
     case = auth_case
@@ -175,7 +360,7 @@ async def test_partition_atomicity_independence_and_roster_changes(auth_case: Ha
         kholles = await preview_and_save(case, path, pupils, "kholles")
         baseline = (await case.client.get(path)).json()
         assert len(baseline["students"]) == 7
-        assert set(baseline["students"][0]) == {"id", "first_name", "last_name"}
+        assert set(baseline["students"][0]) == {"id", "first_name", "last_name", "status"}
         edited = {
             **body,
             "expected_revision": halves["revision"],

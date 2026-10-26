@@ -279,9 +279,13 @@ rewritten schema against a previously stamped database. Development data is neve
 ## Promotion group partitions
 
 The promotion detail in `/dashboard` provides independent half (`halves`), third (`thirds`)
-and khôlle (`kholles`) partitions. Half/third labels are Groupe A, B and C; khôlle labels are
+and khôlle (`kholles`) partitions. Half labels are Groupe A/B; thirds use Groupe X/Y/Z
+(violet), and khôlle labels are
 Groupe 01, 02, etc. Each created partition covers all permanent pupils currently attached to
 the promotion, including pending and archived accounts, and excludes teaching staff.
+Archived pupils keep their promotion/group links and remain visible, grey and movable. Only
+non-archived pupils count for randomization, balance, the khôlle target and its division remainder.
+Pending-activation pupils are non-archived and remain included in effective counts.
 
 Administrators generate randomized drafts and explicitly save them. Half/third generation balances
 sizes with at most one pupil difference. Khôlle generation defaults to a target of three pupils,
@@ -290,10 +294,23 @@ pupils fill each group to the target, with at most one smaller group containing 
 (seven pupils with target three gives 3/3/1). During manual editing, temporary imbalance is allowed.
 Saving halves/thirds requires at most one pupil difference. Saving khôlles requires the exact target
 in every group, except for a single group containing the remainder when division is not exact.
-For 45 pupils and target three, all 15 groups must contain three pupils; 5/1 and 4/2 splits are
-rejected. For 46 pupils, 15 groups of three and one group of one are required. The remainder group
+For 45 non-archived pupils and target three, all 15 groups must contain three effective pupils;
+5/1 and 4/2 splits are rejected. For 46, 15 groups of three and one group of one are required. The remainder group
 can have any number in the sequence. Every pupil must occur exactly once per partition.
 Empty khôlle bubbles must be filled or removed. Half/third bubbles can be empty for tiny rosters.
+Groups containing only archived pupils remain valid, keep their identifiers and are ignored in
+effective-size constraints. Khôlle numbers can have gaps to preserve these identities; removing
+an empty bubble does not renumber surviving groups. Regeneration preserves archived pupils' current
+groups and redistributes only non-archived pupils. Archived pupils without a prior assignment are
+assigned outside effective counts. Archiving/reactivating never moves a pupil automatically;
+reactivation keeps the current group and makes the pupil count again. An existing distribution
+may consequently need manual balancing before its next save. All-archived rosters remain editable.
+
+Promotion cards/details display three disjoint categories: non-archived pupils, non-archived
+teaching accounts (teacher/khôlleur combinations count once) and all archived accounts.
+`non_archived_student_count`, `teaching_count` and `archived_count` expose these grouped counts;
+legacy `student_count`/`member_count` continue to include archived accounts. Counters and status
+presentation are computed from current records without a new migration or removal of links.
 
 The board supports movable bubbles, drag/drop student transfer, click/keyboard transfer and a list
 view on small screens. Saved positions are shared; consultation movements are temporary.
@@ -335,10 +352,12 @@ promotions return 404. Student accounts have no access. Khôlleur dashboard acce
 student profiles, teacher statistics or other teaching APIs. Existing authentication, no-store,
 JSON and CSRF protections apply. Archived promotions are read-only, including for administrators.
 
-Preview/save bodies contain `expected_revision` (null for an absent partition), `roster_ids` and
-`target_size` (default 3). Save also includes `groups` with sequential `number`, bounded integer
+Preview/save bodies contain `expected_revision` (null for an absent partition), `roster_ids`,
+`archived_ids` (the observed archived pupil IDs, default empty) and `target_size` (default 3).
+Group roster responses include each pupil's `status`. Save also includes `groups` with unique `number`, bounded integer
 `x`/`y`, and `student_ids`. Delete contains only `expected_revision`. Unknown fields are rejected.
-A stale partition or roster returns 409 without partial changes. Writes share the existing lifecycle
+A stale partition, roster or archived-status snapshot returns 409 without partial changes.
+Writes share the existing lifecycle
 lock with membership and role changes. New pupils remain unassigned in existing partitions until
 administrator action; removing a promotion membership cascades its group assignments. A former
 pupil's assignments are excluded when reading after a role change; saving replaces those stale rows.
