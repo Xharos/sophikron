@@ -12,6 +12,10 @@ export function canAccess(user: User | null, access: PageAccess = 'authenticated
 	if (access === 'authenticated') return true;
 	if (access === 'admin') return hasPermission(user, 'users.manage');
 	if (access === 'staff')
-		return hasPermission(user, 'users.read') || hasPermission(user, 'teaching.read');
+		return (
+			hasPermission(user, 'users.read') ||
+			hasPermission(user, 'teaching.read') ||
+			hasPermission(user, 'kholleur.access')
+		);
 	return hasPermission(user, 'teacher.access');
 }

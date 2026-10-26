@@ -24,7 +24,13 @@ test('the bridge permits course roots and element operations while refusing arbi
 		['/lessons/12', 'PUT'],
 		['/lessons/12/elements/34', 'DELETE'],
 		['/lessons/12/elements/34/move', 'POST'],
-		['/lessons/12/promotion-options?offset=0', 'GET']
+		['/lessons/12/promotion-options?offset=0', 'GET'],
+		['/promotion-groups/promotions?limit=12', 'GET'],
+		['/promotion-groups/promotions/12', 'GET'],
+		['/promotion-groups/12', 'GET'],
+		['/promotion-groups/12/halves/preview', 'POST'],
+		['/promotion-groups/12/thirds', 'PUT'],
+		['/promotion-groups/12/kholles', 'DELETE']
 	] as const) {
 		await requestBackend(event().input, config, path, method, undefined, async (url) => {
 			assert.equal(url, `${config.backendOrigin}/api/v1${path}`);
@@ -35,7 +41,9 @@ test('the bridge permits course roots and element operations while refusing arbi
 		'/lessons/../admin/users',
 		'//evil.example',
 		'/lessons/12#secret',
-		'/unknown/path'
+		'/unknown/path',
+		'/promotion-groups/12/unknown',
+		'/promotion-groups/12/../admin/users'
 	]) {
 		let called = false;
 		await assert.rejects(

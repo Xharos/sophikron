@@ -49,6 +49,14 @@ class MembershipRemoval(InputModel):
     reason: Literal["manual", "role_removed"] = "manual"
 
 
+class GroupActivity(InputModel):
+    """Record partition type and aggregate counts without student identities."""
+
+    kind: Literal["halves", "thirds", "kholles"]
+    group_count: int | None = Field(default=None, ge=1, le=1000)
+    student_count: int | None = Field(default=None, ge=0, le=2000)
+
+
 class DownloadFacts(InputModel):
     """Keep numeric historical file facts without filenames, bodies or storage paths."""
 
@@ -334,6 +342,20 @@ EVENTS = {
         label="Invitations",
         icon="email",
         message="{actor} a généré une invitation pour {subject}.",
+    ),
+    "promotion.groups_saved": EventDefinition(
+        resource="promotion",
+        payload=GroupActivity,
+        label="Répartitions enregistrées",
+        icon="promotions",
+        message="{actor} a enregistré une répartition des groupes de {promotion}.",
+    ),
+    "promotion.groups_deleted": EventDefinition(
+        resource="promotion",
+        payload=GroupActivity,
+        label="Répartitions supprimées",
+        icon="remove",
+        message="{actor} a supprimé une répartition des groupes de {promotion}.",
     ),
     "promotion.created": EventDefinition(
         resource="promotion",

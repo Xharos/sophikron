@@ -54,11 +54,13 @@ export interface DirectoryUser {
 	roles?: string[];
 	email?: string | null;
 	promotions?: Promotion[];
+	group_assignments?: import('./groups').GroupAssignment[];
 }
 
 export interface AdminAccount extends Account {
 	archived_at: string | null;
 	invitation: { status: string; expires_at: string | null; purpose: string | null };
+	group_assignments?: import('./groups').GroupAssignment[];
 }
 
 export interface AccessInvitation {
@@ -153,6 +155,7 @@ export interface FullProfile {
 	profile: SchoolProfile;
 	age: number | null;
 	promotions: Promotion[];
+	group_assignments?: import('./groups').GroupAssignment[];
 	can_edit_all: boolean;
 	can_edit_orientation: boolean;
 }

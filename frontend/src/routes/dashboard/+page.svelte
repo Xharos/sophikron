@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
+	import { hasPermission } from '#lib/access';
 	import Icon from '#lib/components/Icon.svelte';
 	import Overview from '#lib/components/dashboard/Overview.svelte';
 	import SubjectsPanel from '#lib/components/dashboard/SubjectsPanel.svelte';
@@ -14,6 +15,7 @@
 	import type { Promotion } from '#lib/types';
 	import type { Subject } from '#lib/site';
 	let { data }: PageProps = $props();
+	const canReadStudents = $derived(hasPermission(data.user, 'teaching.read'));
 	let initialPromotion = $state<Promotion | undefined>(
 		untrack(() => data.initialPromotion ?? undefined)
 	);
@@ -67,12 +69,15 @@
 				]
 			: [
 					{ id: 'promotions', name: 'Mes promotions', icon: 'promotions' as const },
-					{ id: 'accounts', name: 'Mes élèves', icon: 'student' as const },
-					{ id: 'statistics', name: 'Mes statistiques', icon: 'overview' as const }
+					...(canReadStudents
+						? [
+								{ id: 'accounts', name: 'Mes élèves', icon: 'student' as const },
+								{ id: 'statistics', name: 'Mes statistiques', icon: 'overview' as const }
+							]
+						: [])
 				]
 	);
 	function navigate(value: string): void {
-		section = value;
 		const url = new URL(window.location.href);
 		url.searchParams.set('tab', value);
 		url.searchParams.delete('create');
@@ -102,9 +107,11 @@
 			><span class="workspace-symbol"
 				><Icon name={data.administrator ? 'overview' : 'student'} size={23} /></span
 			><span
-				>{data.administrator ? 'Administration' : 'Espace professeur'}<small
-					>{data.establishmentName}</small
-				></span
+				>{data.administrator
+					? 'Administration'
+					: canReadStudents
+						? 'Espace professeur'
+						: 'Espace khôlleur'}<small>{data.establishmentName}</small></span
 			></a
 		>
 		<nav aria-label="Navigation de l’espace de gestion">
@@ -134,17 +141,19 @@
 			</p>
 		</header>
 		{#if section === 'overview' && data.administrator}<Overview />
-		{:else if section === 'statistics'}<StatisticsPanel />
+		{:else if section === 'statistics' && (data.administrator || canReadStudents)}<StatisticsPanel
+			/>
 		{:else if section === 'subjects' && data.administrator}<SubjectsPanel {initialSubject} />
 		{:else if section === 'team' && data.administrator}<TeachingTeamPanel />
 		{:else if section === 'configuration' && data.administrator}<SitePanel />
 		{:else if section === 'promotions'}<PromotionsPanel
 				administrator={data.administrator}
 				currentUserId={data.user!.id}
+				{canReadStudents}
 				{initialPromotion}
 				initialEdit={editPromotion}
 			/>
-		{:else}<AccountsPanel
+		{:else if data.administrator || canReadStudents}<AccountsPanel
 				administrator={data.administrator}
 				currentUserId={data.user!.id}
 				initialCreate={data.create && data.administrator}

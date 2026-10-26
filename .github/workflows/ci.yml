@@ -121,6 +121,9 @@ jobs:
       - name: Check Svelte and TypeScript
         run: npm run check
 
+      - name: Install Chromium for browser security tests
+        run: npx playwright install --with-deps chromium
+
       - name: Test BFF security boundaries
         run: npm test
 

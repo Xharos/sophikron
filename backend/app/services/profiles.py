@@ -12,6 +12,7 @@ from app.core.roles import can_join_promotion
 from app.models import Promotion, User, UserPromotion, UserRole
 from app.models.lessons import Lesson, LessonCollaborator
 from app.models.site import Subject, TeacherSubject
+from app.repositories.groups import GroupsRepository
 from app.schemas.administration import PromotionBadge
 from app.schemas.profile import (
     PRIVATE_PROFILE_FIELDS,
@@ -107,6 +108,12 @@ class ProfileService:
                 PromotionBadge.model_validate(promotion, from_attributes=True)
                 for promotion in promotions
             ],
+            group_assignments=(
+                await GroupsRepository(self.db).assignments(
+                    [user.id],
+                    promotion_ids={promotion.id for promotion in promotions},
+                )
+            ).get(user.id, []),
             can_edit_all=can_edit_all,
             subject_ids=list(
                 await self.db.scalars(

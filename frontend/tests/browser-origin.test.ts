@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join, resolve, sep } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import type { AddressInfo } from 'node:net';
+import { chromium } from 'playwright';
 
 const browser = [
 	process.env.BROWSER_EXECUTABLE,
+	chromium.executablePath(),
 	'C:/Program Files/Google/Chrome/Application/chrome.exe',
 	'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
 	'/usr/bin/google-chrome',
@@ -18,18 +17,12 @@ const browser = [
 
 test(
 	'the production referrer policy preserves Origin on a native browser form POST',
-	{ skip: !browser, timeout: 30000 },
+	{ skip: !browser && !process.env.CI, timeout: 30000 },
 	async () => {
+		assert.ok(browser, 'Install Chromium with npx playwright install chromium');
 		const hooks = await readFile(new URL('../src/hooks.server.ts', import.meta.url), 'utf8');
 		const policy = hooks.match(/set\('Referrer-Policy', '([^']+)'\)/)?.[1];
 		assert.ok(policy, 'The application must define an explicit referrer policy');
-		const profile = await mkdtemp(join(tmpdir(), 'sophikron-origin-'));
-		const target = resolve(profile);
-		assert.ok(
-			target.startsWith(resolve(tmpdir()) + sep) &&
-				target.split(sep).at(-1)?.startsWith('sophikron-origin-'),
-			'Unexpected temporary browser profile path'
-		);
 		let received: string | undefined;
 		const server = createServer((request, response) => {
 			response.setHeader('Referrer-Policy', policy);
@@ -39,35 +32,35 @@ test(
 				response.end('<p>Submitted</p>');
 			} else {
 				response.end(
-					'<form method="POST" action="/logout"><button type="submit">Logout</button></form><script>document.querySelector("button").click()</script>'
+					'<form method="POST" action="/logout"><button type="submit">Logout</button></form>'
 				);
 			}
 		});
 		await new Promise<void>((done) => server.listen(0, '127.0.0.1', done));
 		try {
 			const origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-			const child = spawn(
-				browser!,
-				[
-					'--headless=new',
-					'--disable-background-networking',
-					'--disable-extensions',
-					'--no-first-run',
-					`--user-data-dir=${profile}`,
-					'--dump-dom',
-					'--virtual-time-budget=2000',
-					origin
-				],
-				{ windowsHide: true, stdio: 'ignore', signal: AbortSignal.timeout(15000) }
-			);
-			await new Promise<void>((done, reject) => {
-				child.on('exit', () => done());
-				child.on('error', reject);
+			const instance = await chromium.launch({
+				executablePath: browser,
+				headless: true,
+				timeout: 10000
 			});
-			assert.equal(received, origin, 'Native forms must send their actual origin, never null');
+			try {
+				const page = await instance.newPage();
+				page.setDefaultTimeout(10000);
+				await page.goto(origin);
+				await Promise.all([
+					page.waitForResponse(
+						(response) =>
+							response.url() === `${origin}/logout` && response.request().method() === 'POST'
+					),
+					page.getByRole('button', { name: 'Logout' }).click()
+				]);
+				assert.equal(received, origin, 'Native forms must send their actual origin, never null');
+			} finally {
+				await instance.close();
+			}
 		} finally {
 			await new Promise<void>((done) => server.close(() => done()));
-			await rm(target, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 		}
 	}
 );

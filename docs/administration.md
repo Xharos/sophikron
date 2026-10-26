@@ -276,6 +276,82 @@ Existing 0001 is amended with explicit owner authorization for a fresh disposabl
 no new migration is introduced. Rebuild/recreate the authorized test database before using this
 rewritten schema against a previously stamped database. Development data is never reset by code.
 
+## Promotion group partitions
+
+The promotion detail in `/dashboard` provides independent half (`halves`), third (`thirds`)
+and khôlle (`kholles`) partitions. Half/third labels are Groupe A, B and C; khôlle labels are
+Groupe 01, 02, etc. Each created partition covers all permanent pupils currently attached to
+the promotion, including pending and archived accounts, and excludes teaching staff.
+
+Administrators generate randomized drafts and explicitly save them. Half/third generation balances
+sizes with at most one pupil difference. Khôlle generation defaults to a target of three pupils,
+selectable from two through five. The target determines the number of groups using ceiling division;
+pupils fill each group to the target, with at most one smaller group containing the remainder
+(seven pupils with target three gives 3/3/1). During manual editing, temporary imbalance is allowed.
+Saving halves/thirds requires at most one pupil difference. Saving khôlles requires the exact target
+in every group, except for a single group containing the remainder when division is not exact.
+For 45 pupils and target three, all 15 groups must contain three pupils; 5/1 and 4/2 splits are
+rejected. For 46 pupils, 15 groups of three and one group of one are required. The remainder group
+can have any number in the sequence. Every pupil must occur exactly once per partition.
+Empty khôlle bubbles must be filled or removed. Half/third bubbles can be empty for tiny rosters.
+
+The board supports movable bubbles, drag/drop student transfer, click/keyboard transfer and a list
+view on small screens. Saved positions are shared; consultation movements are temporary.
+Cancel discards the draft. Deleting a partition requires confirmation and preserves promotion
+memberships and all other partitions. Regeneration also requires confirmation and creates a draft
+without changing the published partition until save.
+
+Promotion member rows, the pupil popup and `/dashboard/user?id=…` display compact saved group
+tags: letters for halves/thirds and padded numbers for khôlles. Blue, violet and green distinguish
+the three kinds; accessible labels and tooltips name the kind. Missing assignments render no tag.
+The complete profile groups promotion badges and their group tags in a dedicated section.
+Saving/deleting a partition refreshes the promotion member list.
+
+Administrator/teacher account lists, searches, pupil popup responses and complete profiles include
+`group_assignments`: minimal `{promotion_id, kind, number}` references. A promotion-filtered list
+or search includes only that promotion's tags. Other administrator directory reads include all
+current pupil assignments; teacher reads include only promotions currently shared with the caller,
+even when the pupil belongs to other promotions. Full-profile references follow that profile's
+already-authorized promotion list. These fields are not added to session/authentication responses.
+Assignments are batch-loaded for returned directory rows; no per-pupil HTTP/SQL request is needed.
+Deleted partitions/memberships disappear on subsequent reads, and old assignments of accounts
+that no longer have the pupil role are excluded. Existing read-only/authorization rules apply;
+no schema migration or new permission is introduced for these tags.
+
+`/api/v1/promotion-groups` exposes:
+
+| Method and suffix | Behavior |
+| --- | --- |
+| `GET /promotions` | Paginated promotion catalogue inside staff scope |
+| `GET /promotions/{id}` | Scoped promotion display metadata |
+| `GET /{id}` | Current pupil names/IDs and all saved partitions |
+| `POST /{id}/{kind}/preview` | Administrator-only random draft, without persistence |
+| `PUT /{id}/{kind}` | Administrator-only atomic validated replacement |
+| `DELETE /{id}/{kind}` | Administrator-only removal of one partition |
+
+Administrators use `promotions.read`/`promotions.manage`; teachers with `teaching.read` and khôlleurs
+with `kholleur.access` can only consult promotions to which they are currently attached. Unrelated
+promotions return 404. Student accounts have no access. Khôlleur dashboard access does not grant
+student profiles, teacher statistics or other teaching APIs. Existing authentication, no-store,
+JSON and CSRF protections apply. Archived promotions are read-only, including for administrators.
+
+Preview/save bodies contain `expected_revision` (null for an absent partition), `roster_ids` and
+`target_size` (default 3). Save also includes `groups` with sequential `number`, bounded integer
+`x`/`y`, and `student_ids`. Delete contains only `expected_revision`. Unknown fields are rejected.
+A stale partition or roster returns 409 without partial changes. Writes share the existing lifecycle
+lock with membership and role changes. New pupils remain unassigned in existing partitions until
+administrator action; removing a promotion membership cascades its group assignments. A former
+pupil's assignments are excluded when reading after a role change; saving replaces those stale rows.
+No automatic reshuffle occurs. The current roster and revision are checked again on save.
+
+Migration `0006_promotion_groups` adds `promotion_partitions`, `promotion_groups` and
+`promotion_group_members`; it preserves existing accounts, memberships and applied migrations.
+Composite foreign keys enforce promotion membership and group identity; a composite primary key
+prevents multiple assignments within one partition. Atomic activity events `promotion.groups_saved`
+and `promotion.groups_deleted` record partition kind and aggregate counts, never pupil identities.
+Apply with `alembic upgrade head` before using the feature. Existing Compose migration startup
+also applies this revision. No new dependency or external service is required.
+
 ## Interactive search
 
 `GET /api/v1/admin/users/search?q=valentin%20burgo&limit=20` requires `users.read`.
@@ -381,7 +457,7 @@ retention purge; define retention before production and use a privileged mainten
 ## Migrations and verification
 
 With explicit owner authorization after deletion of the local volumes, the fresh baseline has
-exactly five feature revisions:
+five initial feature revisions, followed by an additive group migration:
 
 1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
    protection and the append-only activity journal.
@@ -389,6 +465,7 @@ exactly five feature revisions:
 3. `0003_promotions`: promotion catalogue and account memberships.
 4. `0004_subjects`: subject catalogue and account subject assignments.
 5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
+6. `0006_promotion_groups`: independent half/third/khôlle partitions and their pupil assignments.
 
 Use `alembic upgrade head` on a fresh database. This rewritten history does not upgrade databases
 stamped with the former revisions. No persistent volume is reset by the application or tests.

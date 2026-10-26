@@ -6,6 +6,8 @@
 	import { canJoinPromotion, roleSelectionError, sameRoles } from '#lib/roles';
 	import RoleSelector from '../RoleSelector.svelte';
 	import RoleBadges from '../RoleBadges.svelte';
+	import PromotionTag from '../PromotionTag.svelte';
+	import GroupTags from '../GroupTags.svelte';
 	import type { FullProfile, SchoolProfile } from '#lib/types';
 	import Icon from '../Icon.svelte';
 	import Modal from '../Modal.svelte';
@@ -262,6 +264,18 @@
 			{/if}
 		</section>
 	{/if}
+	<section class="workspace-panel mb-5" aria-label="Promotions et groupes">
+		<h2 class="title is-5"><Icon name="promotions" />Promotions et groupes</h2>
+		{#if !current.can_edit_all}<p class="muted text-small mb-3">
+				Promotions partagées avec vous.
+			</p>{/if}
+		{#each current.promotions as promotion (promotion.id)}
+			<div class="membership-row">
+				<PromotionTag {promotion} />
+				<GroupTags assignments={current.group_assignments} promotionId={promotion.id} />
+			</div>
+		{:else}<p class="muted">Aucune promotion affectée.</p>{/each}
+	</section>
 	<div class="school-profile-grid">
 		<section class="workspace-panel profile-information accent-blue">
 			<h2 class="title is-5"><Icon name="profile" />Identité et coordonnées</h2>

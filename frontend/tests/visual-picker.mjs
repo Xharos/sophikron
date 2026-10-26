@@ -24,7 +24,7 @@ function pickerServer() {
 				load(id) {
 					if (id === '\0test-paths') return 'export const resolve = (path) => path;';
 					if (id === '\0test-navigation')
-						return 'export const beforeNavigate = () => {};';
+						return 'export const beforeNavigate = () => {}; export const goto = async () => {}; export const invalidateAll = async () => {};';
 					if (id === '\0test-state')
 						return `export const page = {
 							url: new URL(window.location.href),
@@ -35,13 +35,17 @@ function pickerServer() {
 				},
 				configureServer(vite) {
 					vite.middlewares.use('/__picker', async (_request, response) => {
-						const fixture = _request.url.includes('error')
-							? 'ErrorHarness'
-							: _request.url.includes('lesson')
-								? 'LessonHarness'
-								: _request.url.includes('theme')
-									? 'ThemeHarness'
-									: 'VisualPickerHarness';
+						const fixture = _request.url.includes('directory')
+							? 'DirectoryHarness'
+							: _request.url.includes('groups')
+								? 'GroupsHarness'
+								: _request.url.includes('error')
+									? 'ErrorHarness'
+									: _request.url.includes('lesson')
+										? 'LessonHarness'
+										: _request.url.includes('theme')
+											? 'ThemeHarness'
+											: 'VisualPickerHarness';
 						const preference = /(?:^|;\s*)sophikron_theme=([^;]*)/.exec(
 							_request.headers.cookie || ''
 						)?.[1];
@@ -66,6 +70,325 @@ function pickerServer() {
 		server: { host: '127.0.0.1', port: 0, watch: null, hmr: false }
 	});
 }
+
+test('saved group tags appear in promotion rosters, popup cards and full profiles', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		for (const teacher of [false, true]) {
+			const page = await browser.newPage({
+				viewport: { width: teacher ? 390 : 1280, height: 1000 }
+			});
+			const errors = [];
+			page.on('pageerror', (error) => errors.push(error.message));
+			const promotions = [
+				{ id: 1, identifier: 'PT', year: 2026, color: '#244BC1', is_active: true },
+				{ id: 2, identifier: 'PTSI', year: 2026, color: '#67449A', is_active: true }
+			].filter((promotion) => !teacher || promotion.id === 1);
+			const group_assignments = [
+				{ promotion_id: 1, kind: 'halves', number: 1 },
+				{ promotion_id: 1, kind: 'thirds', number: 3 },
+				{ promotion_id: 1, kind: 'kholles', number: 2 },
+				...(!teacher ? [{ promotion_id: 2, kind: 'kholles', number: 7 }] : [])
+			];
+			const student = {
+				id: 3,
+				username: 'alice123',
+				first_name: 'Alice',
+				last_name: 'Martin',
+				email: 'martin.alice@test.fr',
+				roles: ['user'],
+				status: 'active',
+				created_at: '2026-01-01T00:00:00Z',
+				promotions,
+				group_assignments,
+				last_login_at: null,
+				password_changed_at: null,
+				login_count: 0,
+				invitation: { status: 'none' }
+			};
+			await page.route('**/dashboard/data?**', (route) => {
+				const resource = new URL(route.request().url()).searchParams.get('resource');
+				let json;
+				if (resource === 'user') json = student;
+				else if (resource === 'subjects') json = { items: [], total: 0 };
+				else if (resource === 'search') json = [student];
+				else if (resource === 'users')
+					json = {
+						items: [
+							student,
+							{ ...student, id: 4, first_name: 'Benoît', group_assignments: [] }
+						],
+						total: 2
+					};
+				else json = { items: promotions, total: promotions.length };
+				return route.fulfill({ json });
+			});
+			await page.goto(
+				`${server.resolvedUrls.local[0]}__picker?directory${teacher ? '&teacher' : ''}`
+			);
+			const row = page.locator('.account-row').filter({ hasText: 'Alice Martin' });
+			await row.waitFor();
+			assert.deepEqual(await row.locator('.group-tags .tag').allTextContents(), [
+				'A',
+				'C',
+				'02'
+			]);
+			assert.equal(await row.getByLabel('Demi-groupe A', { exact: true }).count(), 1);
+			assert.equal(await row.getByLabel('Tiers de groupe C', { exact: true }).count(), 1);
+			assert.equal(await row.getByLabel('Groupe de khôlle 02', { exact: true }).count(), 1);
+			assert.equal(
+				await page
+					.locator('.account-row')
+					.filter({ hasText: 'Benoît Martin' })
+					.locator('.group-tags')
+					.count(),
+				0
+			);
+			const full = page.getByRole('region', { name: 'Promotions et groupes', exact: true });
+			assert.deepEqual(
+				await full
+					.locator('.membership-row')
+					.first()
+					.locator('.group-tags .tag')
+					.allTextContents(),
+				['A', 'C', '02']
+			);
+			assert.equal(await full.locator('.membership-row').count(), teacher ? 1 : 2);
+			const search = page.getByRole('textbox', { name: 'Rechercher un compte', exact: true });
+			await search.fill('Alice');
+			await page.waitForResponse((response) => response.url().includes('resource=search'));
+			await row.waitFor();
+			assert.deepEqual(await row.locator('.group-tags .tag').allTextContents(), [
+				'A',
+				'C',
+				'02'
+			]);
+			await row.click();
+			const dialog = page.getByRole('dialog');
+			await dialog.locator('.membership-row').first().waitFor();
+			assert.equal(await dialog.locator('.membership-row').count(), teacher ? 1 : 2);
+			assert.deepEqual(
+				await dialog
+					.locator('.membership-row')
+					.first()
+					.locator('.group-tags .tag')
+					.allTextContents(),
+				['A', 'C', '02']
+			);
+			assert.equal(
+				await dialog
+					.getByRole('link', { name: 'Voir la fiche complète' })
+					.getAttribute('href'),
+				'/dashboard/user?id=3'
+			);
+			if (teacher)
+				assert.equal(
+					await dialog.getByLabel('Groupe de khôlle 07', { exact: true }).count(),
+					0
+				);
+			assert.equal(
+				await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+				true
+			);
+			assert.deepEqual(errors, []);
+			await page.close();
+		}
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
+test('promotion groups support bubble movement, transfers, saved drafts and independent deletion', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		const students = ['Alice', 'Benoît', 'Camille', 'Diane', 'Émile', 'Farah'].map(
+			(name, index) => ({ id: index + 1, first_name: name, last_name: 'Martin' })
+		);
+		const initial = [
+			{ number: 1, x: 20, y: 20, student_ids: [1, 2, 3] },
+			{ number: 2, x: 320, y: 20, student_ids: [4, 5, 6] }
+		];
+		let partitions = ['halves', 'kholles'].map((kind) => ({
+			kind,
+			revision: 'a'.repeat(32),
+			target_size: 3,
+			groups: structuredClone(initial)
+		}));
+		const commands = [];
+		await page.route('**/dashboard/data?**', (route) =>
+			route.fulfill({ json: { students, partitions } })
+		);
+		await page.route('**/dashboard/command', async (route) => {
+			const input = route.request().postDataJSON();
+			commands.push(input);
+			if (input.command === 'previewGroups') {
+				const count =
+					input.kind === 'kholles'
+						? Math.ceil(students.length / input.data.target_size)
+						: input.kind === 'thirds'
+							? 3
+							: 2;
+				await route.fulfill({
+					json: Array.from({ length: count }, (_, index) => ({
+						number: index + 1,
+						x: index * 300 + 20,
+						y: 20,
+						student_ids: (input.kind === 'kholles'
+							? students.slice(
+									index * input.data.target_size,
+									(index + 1) * input.data.target_size
+								)
+							: students.filter((_, i) => i % count === index)
+						).map((student) => student.id)
+					}))
+				});
+			} else if (input.command === 'saveGroups') {
+				const partition = {
+					kind: input.kind,
+					revision: 'b'.repeat(32),
+					target_size: input.data.target_size,
+					groups: input.data.groups
+				};
+				partitions = [...partitions.filter((item) => item.kind !== input.kind), partition];
+				await route.fulfill({ json: partition });
+			} else {
+				partitions = partitions.filter((item) => item.kind !== input.kind);
+				await route.fulfill({ json: { success: true } });
+			}
+		});
+		const url = `${server.resolvedUrls.local[0]}__picker?groups`;
+		await page.goto(url);
+		const bubbles = page.locator('.group-bubble');
+		await bubbles.first().waitFor();
+		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
+		await bubbles
+			.first()
+			.getByRole('button', { name: 'Alice Martin', exact: true })
+			.dragTo(bubbles.nth(1).locator('.bubble-members'));
+		assert.equal(await bubbles.nth(1).locator('.student-chip').count(), 4);
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(),
+			true
+		);
+		await bubbles.nth(1).getByRole('button', { name: 'Diane Martin', exact: true }).click();
+		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isEnabled(),
+			true
+		);
+		const handle = bubbles.first().locator('.bubble-handle');
+		const box = await handle.boundingBox();
+		await page.mouse.move(box.x + 50, box.y + 20);
+		await page.mouse.down();
+		await page.mouse.move(box.x + 100, box.y + 60, { steps: 5 });
+		await page.mouse.up();
+		await handle.focus();
+		await page.keyboard.press('ArrowRight');
+		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+		await page.getByText('Répartition enregistrée.', { exact: true }).waitFor();
+		const saved = commands.find((input) => input.command === 'saveGroups');
+		assert.equal(saved.data.groups[0].x, 90);
+		assert.equal(saved.data.groups[0].y, 60);
+		assert.deepEqual(saved.data.groups[0].student_ids, [2, 3, 4]);
+		await page.getByRole('button', { name: 'Tiers de groupe', exact: true }).click();
+		await page.getByRole('button', { name: 'Générer', exact: true }).click();
+		await page.getByText('Mode édition · modifications non enregistrées.').waitFor();
+		assert.equal(await bubbles.count(), 3);
+		assert.equal(
+			partitions.some((partition) => partition.kind === 'thirds'),
+			false
+		);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		assert.equal(await bubbles.count(), 0);
+		await page.getByRole('button', { name: 'Groupes de khôlle', exact: true }).click();
+		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
+		await bubbles.nth(1).getByRole('button', { name: 'Diane Martin', exact: true }).click();
+		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(),
+			true
+		);
+		await bubbles.nth(1).getByRole('button', { name: 'Émile Martin', exact: true }).click();
+		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
+		assert.equal(await bubbles.first().locator('.student-chip').count(), 5);
+		assert.equal(await bubbles.nth(1).locator('.student-chip').count(), 1);
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(),
+			true
+		);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		const target = page.getByLabel('Taille cible à la génération', { exact: true });
+		assert.equal(await target.inputValue(), '3');
+		assert.deepEqual(
+			await target
+				.locator('option')
+				.evaluateAll((options) => options.map((option) => option.value)),
+			['2', '3', '4', '5']
+		);
+		await target.selectOption('5');
+		await page.getByRole('button', { name: 'Régénérer', exact: true }).click();
+		await page.getByRole('button', { name: 'Confirmer', exact: true }).click();
+		await page.getByText('Mode édition · modifications non enregistrées.').waitFor();
+		assert.equal(commands.at(-1).data.target_size, 5);
+		assert.equal(await bubbles.first().locator('.student-chip').count(), 5);
+		assert.equal(await bubbles.nth(1).locator('.student-chip').count(), 1);
+		assert.equal(
+			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isEnabled(),
+			true
+		);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		await page.getByRole('button', { name: 'Supprimer la répartition', exact: true }).click();
+		assert.equal(
+			commands.some((input) => input.command === 'deleteGroups'),
+			false
+		);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		assert.equal(await bubbles.count(), 2);
+		await page.getByRole('button', { name: 'Supprimer la répartition', exact: true }).click();
+		await page.getByRole('button', { name: 'Confirmer', exact: true }).click();
+		await page.getByText('Répartition supprimée.', { exact: true }).waitFor();
+		assert.deepEqual(
+			partitions.map((partition) => partition.kind),
+			['halves']
+		);
+		await page.setViewportSize({ width: 390, height: 844 });
+		await page.goto(url + '&readonly');
+		await bubbles.first().waitFor();
+		assert.equal(
+			await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).count(),
+			0
+		);
+		assert.equal(
+			await page
+				.getByRole('button', { name: 'Supprimer la répartition', exact: true })
+				.count(),
+			0
+		);
+		const before = commands.length;
+		await bubbles.first().locator('.bubble-handle').focus();
+		await page.keyboard.press('ArrowRight');
+		await page.getByRole('button', { name: 'Vue liste', exact: true }).click();
+		assert.equal(
+			await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+			true
+		);
+		assert.equal(commands.length, before);
+		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
 
 test('404 shows only the retained messages and the cat rests its paw while looking around', async () => {
 	const server = await pickerServer();

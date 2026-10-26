@@ -6,6 +6,7 @@ from app.api.v1 import (
     admin,
     auth,
     dashboard,
+    groups,
     lesson_documents,
     lessons,
     profiles,
@@ -19,6 +20,7 @@ v1 = APIRouter(prefix="/api/v1")
 v1.include_router(auth.router)
 v1.include_router(admin.router)
 v1.include_router(dashboard.router)
+v1.include_router(groups.router)
 v1.include_router(statistics.router)
 v1.include_router(teaching.router)
 v1.include_router(profiles.router)

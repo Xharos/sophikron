@@ -12,6 +12,9 @@ holiday color; see [site administration](docs/site-administration.md) for migrat
 `0002_configuration` and the detailed activity journal. Private document uploads are available in courses.
 The dashboard also groups active teaching staff by subject and can optionally archive a promotion's
 pupil accounts, with selective restoration that preserves other blocks; see [administration](docs/administration.md).
+Promotion details also provide independent half, third and khôlle partitions, randomized generation,
+interactive group editing and scoped teacher/khôlleur consultation. Apply migration
+`0006_promotion_groups`; see [group rules and API](docs/administration.md#promotion-group-partitions).
 
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />

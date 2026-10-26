@@ -102,7 +102,7 @@ def test_migration_helper_refuses_unsafe_targets(
 
 
 def test_feature_migration_chain() -> None:
-    """Keep exactly five ordered, independently named feature revisions."""
+    """Keep the ordered feature revisions and a single upgrade head."""
     scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
     expected = [
         "0001_authentication",
@@ -110,6 +110,7 @@ def test_feature_migration_chain() -> None:
         "0003_promotions",
         "0004_subjects",
         "0005_lessons",
+        "0006_promotion_groups",
     ]
     revisions = list(reversed(list(scripts.walk_revisions())))
     assert [revision.revision for revision in revisions] == expected

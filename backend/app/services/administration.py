@@ -27,10 +27,12 @@ from app.models import (
 )
 from app.models.site import Subject, TeacherSubject
 from app.repositories.administration import AdministrationRepository
+from app.repositories.groups import GroupsRepository
 from app.schemas.administration import (
     AccountArchive,
     AdminAccountResponse,
     DashboardSummary,
+    DirectoryAccountResponse,
     EventPage,
     EventResponse,
     EventTypeResponse,
@@ -47,7 +49,6 @@ from app.schemas.administration import (
     TeamSubject,
     UserPage,
 )
-from app.schemas.auth import UserResponse
 from app.services.activity import EVENTS, capture_roles, record_event, record_subject_changes
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
@@ -116,7 +117,9 @@ class AdministrationService:
             for item in promotions
         ]
 
-    async def _profiles(self, users: list[User]) -> list[UserResponse]:
+    async def _profiles(
+        self, users: list[User], *, promotion_id: int | None = None
+    ) -> list[DirectoryAccountResponse]:
         """Batch-load roles and permissions before decrypting only this response page."""
         ids = [user.id for user in users]
         roles: dict[int, list[str]] = {}
@@ -132,13 +135,24 @@ class AdministrationService:
             .where(UserRole.user_id.in_(ids))
         ):
             permissions.setdefault(user_id, set()).add(code)
-        return [
+        assignments = await GroupsRepository(self.db).assignments(
+            ids,
+            promotion_ids={promotion_id} if promotion_id is not None else None,
+        )
+        profiles = [
             await self.auth._profile(
                 user,
                 roles=tuple(sorted(roles.get(user.id, []))),
                 permissions=tuple(sorted(permissions.get(user.id, set()))),
             )
             for user in users
+        ]
+        return [
+            DirectoryAccountResponse(
+                **profile.model_dump(),
+                group_assignments=assignments.get(profile.id, []),
+            )
+            for profile in profiles
         ]
 
     async def create_promotion(
@@ -508,7 +522,10 @@ class AdministrationService:
                 ).all()
             )
             return UserPage(
-                items=await self._profiles(users), total=total, offset=offset, limit=limit
+                items=await self._profiles(users, promotion_id=promotion_id),
+                total=total,
+                offset=offset,
+                limit=limit,
             )
 
     async def add_members(
@@ -740,7 +757,16 @@ class AdministrationService:
                     )
                 )
             ).all()
-        return await self.match_search(rows, query, limit)
+        results = await self.match_search(rows, query, limit)
+        async with self.db.begin():
+            await self.auth._actor(actor, permission="users.read")
+            assignments = await GroupsRepository(self.db).assignments(
+                [item.id for item in results],
+                promotion_ids={promotion_id} if promotion_id is not None else None,
+            )
+            for item in results:
+                item.group_assignments = assignments.get(item.id, [])
+        return results
 
     async def match_search(self, rows: Sequence[Row], query: str, limit: int) -> list[SearchResult]:
         """Rank already authorized candidate rows; callers must apply their own scope in SQL."""

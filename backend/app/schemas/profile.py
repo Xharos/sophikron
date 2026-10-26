@@ -10,6 +10,7 @@ from app.core.identity import normalize_name
 from app.core.security import normalize_email
 from app.schemas.administration import PromotionBadge
 from app.schemas.auth import InputModel, RoleCodes
+from app.schemas.groups import GroupAssignment
 
 Grade = Annotated[float, Field(ge=0, le=20, allow_inf_nan=False)]
 PRIVATE_PROFILE_FIELDS = (
@@ -204,6 +205,7 @@ class FullProfile(BaseModel):
     profile: SchoolProfile
     age: int | None
     promotions: list[PromotionBadge]
+    group_assignments: list[GroupAssignment] = Field(default_factory=list)
     can_edit_all: bool
     can_edit_orientation: bool
     subject_ids: list[int] = Field(default_factory=list)

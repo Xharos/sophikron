@@ -31,6 +31,16 @@ function event(event_type: string, data: Record<string, unknown>): ActivityEvent
 	};
 }
 
+test('partition activity distinguishes independent group families without pupil identities', () => {
+	assert.deepEqual(eventDetails(event('promotion.groups_saved', { kind: 'halves' })), [
+		'Demi-groupes'
+	]);
+	assert.deepEqual(eventDetails(event('promotion.groups_deleted', { kind: 'kholles' })), [
+		'Groupes de khôlle'
+	]);
+	assert.deepEqual(eventDetails(event('promotion.groups_saved', { kind: '<script>' })), []);
+});
+
 test('messages preserve participant positions and leave unknown markup as literal text', () => {
 	assert.deepEqual(
 		messageParts('{actor} a ajouté {subject} à {promotion}.').map((part) => part.kind),

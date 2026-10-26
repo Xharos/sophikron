@@ -18,6 +18,13 @@ function identifier(value: unknown): number {
 	return id;
 }
 
+/** Only the three known partition kinds can enter a backend route. */
+function partitionKind(value: unknown): string {
+	if (value !== 'halves' && value !== 'thirds' && value !== 'kholles')
+		error(422, 'Type de répartition invalide.');
+	return value;
+}
+
 /** Expose a small resource vocabulary while keeping query construction on the server. */
 export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	requireAccess(event, 'staff');
@@ -44,6 +51,9 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	let path: string;
 	switch (resource) {
+		case 'promotionGroups':
+			path = `/promotion-groups/${identifier(event.url.searchParams.get('id'))}`;
+			break;
 		case 'team':
 			requireAccess(event, 'admin');
 			path = '/admin/team';
@@ -70,7 +80,10 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 			path = `/admin/${resource}`;
 			break;
 		case 'promotions':
-			path = `${prefix}/promotions`;
+			path =
+				!admin && !hasPermission(event.locals.user, 'teaching.read')
+					? '/promotion-groups/promotions'
+					: `${prefix}/promotions`;
 			break;
 		case 'eventTypes':
 			requireAccess(event, 'admin');
@@ -119,6 +132,27 @@ export async function commandDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	requireAccess(event, 'admin');
 	switch (input.command) {
+		case 'previewGroups':
+			return api(
+				event,
+				`/promotion-groups/${identifier(input.id)}/${partitionKind(input.kind)}/preview`,
+				'POST',
+				input.data
+			);
+		case 'saveGroups':
+			return api(
+				event,
+				`/promotion-groups/${identifier(input.id)}/${partitionKind(input.kind)}`,
+				'PUT',
+				input.data
+			);
+		case 'deleteGroups':
+			return api(
+				event,
+				`/promotion-groups/${identifier(input.id)}/${partitionKind(input.kind)}`,
+				'DELETE',
+				input.data
+			);
 		case 'saveSettings':
 			return api(event, '/admin/site', 'PUT', input.data);
 		case 'createSubject':

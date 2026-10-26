@@ -44,7 +44,8 @@ contrast; solid colored icons use contrasting black/white foregrounds without ch
 - `/setup`: first permanent administrator, names/email/password, generated immutable username.
 - `/me`: own identity, promotions, activity and password change.
 - `/dashboard`: administrator overview, account search/management and promotion rosters, or a
-  teacher's scoped read-only directory including archived students.
+  teacher's scoped read-only directory including archived students. Assigned khôlleurs can consult
+  their promotions and groups without receiving teacher directory/profile/statistics permissions.
 - `/activate`: first activation or password renewal from an expiring invitation.
 - `/dashboard/user?id=…`: complete encrypted school profile; administrator edits and scoped
   teacher orientation edits, with one save button and unsaved-navigation confirmation.
@@ -60,6 +61,18 @@ Promotion member lists offer All roles, Pupils and Professors; Professors uses t
 server pagination. Account creation and assignment forms exclude administrator-only accounts.
 Losing the last eligible role automatically removes active and archived promotion memberships;
 the role confirmation explains this and the journal records each automatic removal.
+
+Promotion details include independent half, third and khôlle partitions. Administrators generate
+drafts, move group bubbles and transfer pupils by drag/drop or click/keyboard, then explicitly save.
+Khôlle generation defaults to three pupils and accepts targets from two through five. A responsive
+list view complements the scrollable bubble board. Saved bubble positions are shared; staff
+consultation movements are temporary. Deletion requires confirmation and only removes the selected
+partition. See [group rules and API](../docs/administration.md#promotion-group-partitions) for validation,
+membership changes and migration `0006_promotion_groups`.
+Promotion member rows show compact group identifiers with accessible tooltips. The same blue
+half-group, violet third-group and green khôlle tags appear beside each authorized promotion in
+the pupil popup and complete profile. Teacher responses exclude unshared promotions and their tags;
+missing assignments produce no empty tags. Saving/deleting a partition refreshes the member rows.
 
 FastAPI enforces all permissions, membership scope and validation. Components share presentation and
 interaction logic; `src/lib/server/dashboard.ts` translates allowlisted commands/resources to API
@@ -90,8 +103,12 @@ node --test tests/visual-picker.mjs
 node --test tests/establishment.mjs
 ```
 
-The visual picker/theme browser tests require Playwright Chromium. Set `PLAYWRIGHT_CHANNEL=msedge`
+The visual picker/theme/group-board browser tests require Playwright Chromium. Set `PLAYWRIGHT_CHANNEL=msedge`
 to use an installed Microsoft Edge instead.
+The group-board browser scenario uses synthetic intercepted API responses to test transfers,
+position persistence requests, draft cancellation, deletion confirmation and mobile read-only access.
+Real PostgreSQL authorization, constraints, independence and concurrency are tested by
+`backend/tests/test_groups_postgres.py` through the existing disposable test runner.
 
 The unit suite uses Node's built-in runner (Node 22.6+ / 24). For real PostgreSQL + BFF integration,
 run `python run_tests.py` from `backend/` with `BFF_INTEGRATION=1`. Add

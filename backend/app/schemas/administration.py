@@ -6,6 +6,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.auth import AccountResponse, InputModel, UserResponse
+from app.schemas.groups import GroupAssignment
 
 
 class PromotionCreate(InputModel):
@@ -133,10 +134,16 @@ class PromotionBadge(BaseModel):
     is_active: bool
 
 
+class DirectoryAccountResponse(UserResponse):
+    """Extend only administrator directory responses with current saved group tags."""
+
+    group_assignments: list[GroupAssignment] = Field(default_factory=list)
+
+
 class UserPage(BaseModel):
     """Return one ordered page of authorized account identities."""
 
-    items: list[UserResponse]
+    items: list[DirectoryAccountResponse]
     total: int
     offset: int
     limit: int
@@ -150,6 +157,7 @@ class SearchResult(BaseModel):
     first_name: str
     last_name: str
     status: str
+    group_assignments: list[GroupAssignment] = Field(default_factory=list)
 
 
 class EventResponse(BaseModel):
@@ -232,6 +240,7 @@ class AdminAccountResponse(AccountResponse):
 
     archived_at: datetime | None
     invitation: InvitationState
+    group_assignments: list[GroupAssignment] = Field(default_factory=list)
 
 
 class StudentResponse(BaseModel):
@@ -244,6 +253,7 @@ class StudentResponse(BaseModel):
     status: str
     created_at: datetime
     promotions: list[PromotionResponse] = Field(default_factory=list)
+    group_assignments: list[GroupAssignment] = Field(default_factory=list)
 
 
 class StudentPage(BaseModel):

@@ -7,15 +7,18 @@
 	import AccountsPanel from './AccountsPanel.svelte';
 	import PromotionEditor from './PromotionEditor.svelte';
 	import MembershipPicker from './MembershipPicker.svelte';
+	import PromotionGroups from './PromotionGroups.svelte';
 	let {
 		administrator,
 		currentUserId,
 		initialPromotion,
+		canReadStudents = true,
 		initialEdit = false
 	}: {
 		administrator: boolean;
 		currentUserId: number;
 		initialPromotion?: Promotion;
+		canReadStudents?: boolean;
 		initialEdit?: boolean;
 	} = $props();
 	let query = $state('');
@@ -37,6 +40,8 @@
 	let message = $state('');
 	let ready = $state(false);
 	let revision = $state(0);
+	let groupsDirty = $state(false);
+	let groupsRevision = $state(0);
 	onMount(() => {
 		ready = true;
 	});
@@ -143,6 +148,8 @@
 		<button
 			class="button is-text mb-4"
 			onclick={() => {
+				if (groupsDirty && !window.confirm('Quitter sans enregistrer les groupes ?')) return;
+				groupsDirty = false;
 				selected = null;
 				confirmArchive = false;
 			}}><Icon name="previous" />Toutes les promotions</button
@@ -289,7 +296,18 @@
 		<Pagination {offset} limit={12} {total} busy={loading} onchange={(value) => (offset = value)} />
 	{/if}
 </section>
-{#if selected}{#key selected.id + ':' + revision}<AccountsPanel
+{#if selected}
+	{#key selected.id}
+		<PromotionGroups
+			promotion={selected}
+			{administrator}
+			rosterRevision={revision}
+			ondirty={(value) => (groupsDirty = value)}
+			onchanged={() => (groupsRevision += 1)}
+		/>
+	{/key}
+{/if}
+{#if selected && (administrator || canReadStudents)}{#key selected.id + ':' + revision + ':' + groupsRevision}<AccountsPanel
 			{administrator}
 			{currentUserId}
 			promotionId={selected.id}

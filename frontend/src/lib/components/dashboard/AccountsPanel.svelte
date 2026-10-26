@@ -2,6 +2,7 @@
 	import { onMount, untrack } from 'svelte';
 	import { read, statusLabels } from '#lib/dashboard';
 	import RoleBadges from '../RoleBadges.svelte';
+	import GroupTags from '../GroupTags.svelte';
 	import type { DirectoryUser, Page } from '#lib/types';
 	import Icon from '../Icon.svelte';
 	import Pagination from '../Pagination.svelte';
@@ -166,8 +167,9 @@
 					><span class="account-identity"
 						><strong>{user.first_name} {user.last_name}</strong><span class="muted text-small"
 							>@{user.username}</span
-						></span
-					>
+						>
+						{#if promotionId}<GroupTags assignments={user.group_assignments} {promotionId} />{/if}
+					</span>
 					<span class="account-role"><RoleBadges roles={user.roles ?? []} /></span>
 					<span
 						class="account-status"

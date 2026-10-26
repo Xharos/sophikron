@@ -4,6 +4,7 @@ from sqlalchemy import Select, func, select
 from sqlalchemy.orm import aliased
 
 from app.models import Promotion, User, UserPromotion
+from app.repositories.groups import GroupsRepository
 from app.schemas.administration import PromotionPage, SearchResult, StudentPage, StudentResponse
 from app.services.administration import AdministrationService
 from app.services.auth import AuthService, UserContext
@@ -100,8 +101,16 @@ class TeachingService:
             users = (
                 await self.db.scalars(statement.order_by(User.id).offset(offset).limit(limit))
             ).all()
+            assignments = await GroupsRepository(self.db).assignments(
+                [user.id for user in users],
+                staff_id=actor.id,
+                promotion_ids={promotion_id} if promotion_id is not None else None,
+            )
+            items = [self.student_profile(user) for user in users]
+            for item in items:
+                item.group_assignments = assignments.get(item.id, [])
             return StudentPage(
-                items=[self.student_profile(user) for user in users],
+                items=items,
                 total=total,
                 offset=offset,
                 limit=limit,
@@ -130,6 +139,13 @@ class TeachingService:
             )
             result = self.student_profile(user)
             result.promotions = await self.dashboard._promotion_profiles(promotions)
+            result.group_assignments = (
+                await GroupsRepository(self.db).assignments(
+                    [user.id],
+                    promotion_ids={promotion.id for promotion in promotions},
+                    staff_id=actor.id,
+                )
+            ).get(user.id, [])
             return result
 
     async def search(
@@ -151,4 +167,16 @@ class TeachingService:
                     )
                 )
             ).all()
-        return await self.dashboard.match_search(rows, query, limit)
+        results = await self.dashboard.match_search(rows, query, limit)
+        async with self.db.begin():
+            await self.auth._actor(actor, permission="teaching.read")
+            if promotion_id is not None:
+                await self.require_promotion(actor.id, promotion_id)
+            assignments = await GroupsRepository(self.db).assignments(
+                [item.id for item in results],
+                staff_id=actor.id,
+                promotion_ids={promotion_id} if promotion_id is not None else None,
+            )
+            for item in results:
+                item.group_assignments = assignments.get(item.id, [])
+        return results

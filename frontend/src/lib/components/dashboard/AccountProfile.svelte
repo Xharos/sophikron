@@ -8,6 +8,7 @@
 	import Icon from '../Icon.svelte';
 	import RoleBadges from '../RoleBadges.svelte';
 	import PromotionTag from '../PromotionTag.svelte';
+	import GroupTags from '../GroupTags.svelte';
 	import InvitationResult from '../InvitationResult.svelte';
 	import type { CourseImpact } from '#lib/site';
 	let {
@@ -173,7 +174,10 @@
 					>{/if}
 			</h3>
 			{#each memberships as promotion (promotion.id)}<div class="membership-row">
-					<PromotionTag {promotion} />
+					<div class="is-flex is-flex-wrap-wrap is-align-items-center" style="gap: 0.5rem">
+						<PromotionTag {promotion} />
+						<GroupTags assignments={account.group_assignments} promotionId={promotion.id} />
+					</div>
 					{#if administrator}<button
 							class="icon-button"
 							title="Retirer cette affectation"

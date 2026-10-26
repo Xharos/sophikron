@@ -62,5 +62,5 @@ test('role labels alone never confer a permission and bootstrap cannot access ma
 	bootstrap.is_bootstrap = true;
 	assert.equal(canAccess(bootstrap, 'staff'), false);
 	assert.equal(canAccess(user(['teacher']), 'staff'), true);
-	assert.equal(canAccess(user(['kholleur']), 'staff'), false);
+	assert.equal(canAccess(user(['kholleur']), 'staff'), true);
 });

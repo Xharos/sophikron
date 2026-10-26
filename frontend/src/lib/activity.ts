@@ -2,6 +2,7 @@ import { roleLabels } from './roles.ts';
 import { lessonIcons, lessonDate } from './lessons.ts';
 import type { Subject } from './site.ts';
 import type { ActivityEvent } from './types';
+import { partitionLabels } from './groups.ts';
 
 export type MessagePart = {
 	kind: 'text' | 'actor' | 'subject' | 'promotion' | 'roles' | 'lesson';
@@ -102,6 +103,11 @@ export function eventSubjects(value: unknown): ActivitySubject[] {
 /** Explain recorded facts without copying private profile values or invitation secrets. */
 export function eventDetails(event: ActivityEvent): string[] {
 	const data = event.data;
+	if (['promotion.groups_saved', 'promotion.groups_deleted'].includes(event.event_type)) {
+		const kind = data.kind;
+		if (kind !== 'halves' && kind !== 'thirds' && kind !== 'kholles') return [];
+		return [partitionLabels[kind]];
+	}
 	if (event.event_type === 'promotion.member_removed' && data.reason === 'role_removed')
 		return ['Retrait automatique : aucun rôle Élève, Enseignant ou Khôlleur conservé.'];
 	if (['user.archived', 'user.reactivated'].includes(event.event_type)) {

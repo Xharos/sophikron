@@ -11,6 +11,7 @@ from app.models.auth import (
     User,
     UserRole,
 )
+from app.models.groups import PromotionGroup, PromotionGroupMember, PromotionPartition
 from app.models.lessons import (
     Lesson,
     LessonCollaborator,
@@ -54,6 +55,9 @@ __all__ = [
     "LessonPromotion",
     "Permission",
     "Promotion",
+    "PromotionPartition",
+    "PromotionGroup",
+    "PromotionGroupMember",
     "PromotionAccountBlock",
     "Role",
     "RolePermission",

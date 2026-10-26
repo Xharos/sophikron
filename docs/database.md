@@ -68,7 +68,8 @@ authorization. Using a separate Compose project creates an independent local vol
 The five feature revisions also own reversible account archival: authentication defines
 `users.manually_archived`; promotions defines `promotion_account_blocks`, a separate association with
 composite `(user_id, promotion_id)` primary key and an index on promotion ID. Causes survive membership
-changes until the responsible promotion is reactivated. No sixth migration is needed for this fresh baseline.
+changes until the responsible promotion is reactivated. The additive `0006_promotion_groups` revision
+introduces independent half, third and khôlle partitions; existing memberships are preserved.
 
 | Role | Purpose | Secret available to |
 | --- | --- | --- |
@@ -161,7 +162,8 @@ Connections use `search_path=pg_catalog`; qualify application tables explicitly 
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
 Its explicitly reconstructed fresh-install history contains five features in dependency order:
 authentication (including the journal), configuration (including calendars), promotions, subjects,
-and lessons. All autonomous IDs are bigint identities;
+and lessons. The additive sixth revision introduces promotion group partitions.
+All autonomous IDs are bigint identities;
 associations use composite keys. See [migration requirements](administration.md#migrations-and-verification)
 before using these revisions; older populated/stamped development databases are incompatible.
 
