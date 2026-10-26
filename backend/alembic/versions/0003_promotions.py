@@ -3,8 +3,8 @@
 import sqlalchemy as sa
 from alembic import op
 
-revision: str = "0002_promotions"
-down_revision: str = "0001_users"
+revision: str = "0003_promotions"
+down_revision: str = "0002_configuration"
 branch_labels: str | None = None
 depends_on: str | None = None
 
@@ -64,10 +64,38 @@ def upgrade() -> None:
         ["promotion_id"],
         schema="sophikron",
     )
+    op.create_table(
+        "promotion_account_blocks",
+        sa.Column("user_id", sa.BigInteger(), nullable=False),
+        sa.Column("promotion_id", sa.BigInteger(), nullable=False),
+        sa.PrimaryKeyConstraint(
+            "user_id", "promotion_id", name=op.f("pk_promotion_account_blocks")
+        ),
+        sa.ForeignKeyConstraint(
+            ["user_id"],
+            ["sophikron.users.id"],
+            ondelete="CASCADE",
+            name=op.f("fk_promotion_account_blocks_user_id_users"),
+        ),
+        sa.ForeignKeyConstraint(
+            ["promotion_id"],
+            ["sophikron.promotions.id"],
+            ondelete="RESTRICT",
+            name=op.f("fk_promotion_account_blocks_promotion_id_promotions"),
+        ),
+        schema="sophikron",
+    )
+    op.create_index(
+        op.f("ix_promotion_account_blocks_promotion_id"),
+        "promotion_account_blocks",
+        ["promotion_id"],
+        schema="sophikron",
+    )
     op.execute("REVOKE DELETE ON sophikron.promotions FROM sophikron_app")
 
 
 def downgrade() -> None:
     """Remove memberships before their catalogue; only the migration role can do this."""
+    op.drop_table("promotion_account_blocks", schema="sophikron")
     op.drop_table("user_promotions", schema="sophikron")
     op.drop_table("promotions", schema="sophikron")

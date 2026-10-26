@@ -24,12 +24,15 @@ def validate_roles(value: list[str]) -> list[str]:
     """
     if len(set(value)) != len(value):
         raise ValueError("Duplicate roles")
-    if not set(value) <= {"user", "teacher", "admin"} or ("user" in value and len(value) != 1):
+    codes = set(value)
+    if not codes or not codes <= {"user", "kholleur", "teacher", "admin"}:
+        raise ValueError("Unknown or missing roles")
+    if "user" in codes and len(codes) > 1:
         raise ValueError("Incompatible roles")
     return value
 
 
-RoleCodes = Annotated[list[str], Field(min_length=1, max_length=2), AfterValidator(validate_roles)]
+RoleCodes = Annotated[list[str], Field(min_length=1, max_length=3), AfterValidator(validate_roles)]
 
 
 class InputModel(BaseModel):

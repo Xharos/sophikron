@@ -4,12 +4,34 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { test } from 'node:test';
 import { chromium } from 'playwright';
+import { createServer } from 'node:http';
 
 /** Start the production handler on an operating-system-assigned port. */
 async function startFrontend(name) {
 	const env = { ...process.env, ORIGIN: 'http://localhost:3000', NODE_ENV: 'production' };
-	delete env.ESTABLISHMENT_NAME;
-	if (name !== undefined) env.ESTABLISHMENT_NAME = name;
+	let currentName = name?.trim() || 'Sophikron';
+	const backend = createServer((request, response) => {
+		if (request.url !== '/api/v1/site') {
+			response.writeHead(404).end();
+			return;
+		}
+		response.setHeader('content-type', 'application/json');
+		response.end(
+			JSON.stringify({
+				settings: {
+					name: currentName,
+					home_text: '# Bienvenue\n**Bonjour** <script>alert(1)</script>',
+					text_color: '#244BC1',
+					version: 0
+				},
+				timelines: [],
+				events: [],
+				today: '2026-10-25'
+			})
+		);
+	});
+	await new Promise((resolve) => backend.listen(0, '127.0.0.1', resolve));
+	env.BACKEND_ORIGIN = `http://127.0.0.1:${backend.address().port}`;
 	const child = spawn(
 		process.execPath,
 		[
@@ -45,14 +67,19 @@ async function startFrontend(name) {
 		});
 		return {
 			base,
+			setName(value) {
+				currentName = value;
+			},
 			async stop() {
 				const exited = once(child, 'exit');
 				child.kill();
 				await exited;
+				await new Promise((resolve) => backend.close(resolve));
 			}
 		};
 	} catch (cause) {
 		child.kill();
+		backend.close();
 		throw cause;
 	}
 }
@@ -98,13 +125,19 @@ test('one production build renders different runtime names and escapes HTML in t
 					assert.ok(html.includes(`content="${escapedAttribute} — Apprendre, ensemble"`));
 			}
 		} finally {
+			server.setName('Nouveau nom');
+			assert.ok(
+				(await (await fetch(server.base)).text()).includes(
+					'<title>Nouveau nom — Apprendre, ensemble</title>'
+				)
+			);
 			await server.stop();
 		}
 	}
 });
 
 test('a long establishment name fits mobile navigation and survives browser navigation', async () => {
-	const name = 'Établissement des arts et sciences ' + 'Pédagogie'.repeat(12);
+	const name = 'Établissement des arts et sciences ' + 'Pédagogie'.repeat(6);
 	const server = await startFrontend(name);
 	let browser;
 	try {
@@ -119,6 +152,46 @@ test('a long establishment name fits mobile navigation and survives browser navi
 		assert.equal(await page.title(), `Connexion — ${name}`);
 		assert.equal(await page.locator('.brand-name').textContent(), name);
 		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+	} finally {
+		await browser?.close();
+		await server.stop();
+	}
+});
+
+test('missing pages retain HTTP 404 and hydrate one of the three cat messages', async () => {
+	const server = await startFrontend('Lycée des chats');
+	let browser;
+	try {
+		browser = await chromium.launch({ channel: process.env.BFF_BROWSER_CHANNEL || 'msedge' });
+		const page = await browser.newPage({
+			viewport: { width: 375, height: 812 },
+			colorScheme: 'dark'
+		});
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		page.on('console', (message) => {
+			if (/hydration/i.test(message.text())) errors.push(message.text());
+		});
+		await page.addInitScript(() => {
+			Math.random = () => 0.99;
+		});
+		const response = await page.goto(`${server.base}/this-cat-page-does-not-exist`);
+		assert.equal(response.status(), 404);
+		assert.match(await response.text(), /Cette page a filé entre les pattes\./);
+		await page
+			.getByText('Même le chat sèche. Et pourtant, il a neuf vies pour chercher.', {
+				exact: true
+			})
+			.waitFor();
+		assert.equal(await page.title(), 'Erreur 404 — Lycée des chats');
+		const image = page.getByRole('img', { name: /Un chat tricolore/ });
+		await image.evaluate((element) => element.decode());
+		assert.ok(await image.evaluate((element) => element.naturalWidth > 0));
+		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+		await page.getByRole('link', { name: 'Retour à l’accueil', exact: true }).click();
+		await page.waitForURL(server.base + '/');
+		assert.equal(await page.locator('.not-found').count(), 0);
+		assert.deepEqual(errors, []);
 	} finally {
 		await browser?.close();
 		await server.stop();

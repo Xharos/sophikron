@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.auth_config import AuthSettings
 from app.core.identity import username_prefix
+from app.core.roles import can_join_promotion
 from app.core.security import (
     TOKEN_PATTERN,
     IdentityCipher,
@@ -53,6 +54,7 @@ from app.services.errors import (
 )
 from app.services.mail import InvitationMailer, MailDeliveryError
 from app.services.search import NameSearchCache
+from app.services.statistics_recording import record_login_failure
 
 # Serialize rare multi-account lifecycle operations in a consistent lock order.
 LIFECYCLE_LOCK = 8023164291
@@ -244,6 +246,8 @@ class AuthService:
                 self.settings.login_reservation_seconds,
             )
         if lease is None:
+            async with self.db.begin():
+                await record_login_failure(self.db, now, limited=True)
             raise AuthError(
                 429,
                 "Trop de tentatives. Réessayez plus tard.",
@@ -265,6 +269,8 @@ class AuthService:
                         now=self.clock(),
                         seconds=self.settings.rate_window_seconds,
                     )
+                    if failed:
+                        await record_login_failure(self.db, self.clock(), limited=False)
 
     async def _login_reserved(
         self, field: str, normalized: str, password: str, previous_token: str | None
@@ -397,6 +403,10 @@ class AuthService:
 
     async def _create(self, data: CreateUserRequest, *, bootstrap: bool = False) -> User:
         """Encrypt identities and assign catalogue roles within the caller's transaction."""
+        if data.promotion_ids and not can_join_promotion(data.roles):
+            raise AuthError(
+                422, "Seul un élève, un enseignant ou un khôlleur peut rejoindre une promotion."
+            )
         roles = await self.repo.role_records(data.roles)
         if len(roles) != len(data.roles):
             raise AuthError(422, INVALID_REQUEST)

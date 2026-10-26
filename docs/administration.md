@@ -16,11 +16,11 @@ Session and invitation credentials remain independent random secrets, never inte
 
 ```json
 {
-  "first_name": "Valentin",
-  "last_name": "BURGAUD",
-  "email": "valentin@example.org",
-  "roles": ["user"],
-  "promotion_ids": [1, 2]
+    "first_name": "Valentin",
+    "last_name": "BURGAUD",
+    "email": "valentin@example.org",
+    "roles": ["user"],
+    "promotion_ids": [1, 2]
 }
 ```
 
@@ -52,12 +52,19 @@ continue as documented in [authentication](authentication.md).
 
 ## Roles and permissions
 
-Valid role sets are `user`, `teacher`, `admin`, and `teacher + admin`. `student` is replaced by `user`.
+The promotion member picker excludes accounts already assigned to the selected promotion in both
+pupil and teaching categories. Administrator account listing and search accept `exclude_promotion_id`
+(a positive existing promotion ID), applied in SQL before counting, pagination and fuzzy ranking.
+Accounts assigned to another promotion remain eligible. Removing a membership makes the account
+available again; concurrent duplicate additions remain idempotent.
+
+Valid role sets are `user` alone or any nonempty subset of `kholleur`, `teacher`, `admin`.
+Student (`user`) is exclusive; staff roles combine freely. `student` is replaced by `user`.
 Omitting `roles` when creating an account defaults to `user` (Élève).
 
 Administrators can change an existing account's roles through
 `PATCH /admin/users/{id}/profile` with `expected_version` and an explicit `roles` list.
-The same four combinations apply: empty, null, duplicate, unknown or mixed student/staff grants
+The same role rules apply: empty, null, duplicate, unknown or mixed student/staff grants
 return 422. Omit `roles` to preserve existing grants. Identity, private profile fields and roles
 commit together; a stale version returns 409 without a partial change. A real role change increments
 `profile_version` and records `user.roles_updated` with the previous/new role codes. Reordering
@@ -67,62 +74,103 @@ add/remove their own `teacher` role. Administrators can change other administrat
 the first permanent administrator has no special owner protection.
 
 Existing sessions use the updated role/permission grants on their next request. Account status,
-passwords, invitations and promotion memberships are preserved by role-only changes. Teacher access
+passwords and invitations are preserved by role-only changes. Promotion memberships are preserved
+while the account retains a pupil, teacher or khôlleur role. Losing the last eligible role removes
+all memberships, including archived promotions, atomically with the profile update and records one
+`promotion.member_removed` event per promotion with `reason=role_removed`. Restoring a role does
+not restore memberships. A failed or stale profile update preserves both roles and memberships. Teacher access
 to students follows current role and promotion membership checks, including after a role change.
-No schema migration is needed; changes reuse `user_roles`, `profile_version` and the activity journal.
+Changes reuse `user_roles`, `profile_version` and the activity journal. The fresh database baseline
+includes the updated deferred role constraint; see [site administration](site-administration.md).
 
-The profile editor exposes role choices only to administrators and requests confirmation on save
+The profile editor exposes colored role checkboxes only to administrators and requests confirmation on save
 with the account name and old/new grants. Cancel preserves the draft without sending a mutation.
 Other profile edits use the existing save flow. Shared badges pair an icon and label with blue for
-Élève, dark green for Enseignant and red for Administrateur; combined roles display both badges,
+Élève, purple for Khôlleur, dark green for Enseignant and red for Administrateur; combined roles display each badge,
 including on mobile. New-account forms default/reset to Élève.
-`user` cannot coexist with either other role. Creation validates the set; a deferred PostgreSQL
+`user` cannot coexist with any other role. Creation validates the set; a deferred PostgreSQL
 constraint trigger also rejects incompatible combinations after serializing changes per account.
 Removing all role grants locally denies all role-specific permissions; no role-management API is added.
 
 `permissions` and `role_permissions` separate capabilities from role names. Initial grants are:
 
-| Role | Permissions |
-| --- | --- |
-| `user` | `user.access` |
-| `teacher` | `teacher.access`, `teaching.read`, `profiles.read`, `orientation.manage` |
-| `admin` | `users.read`, `users.manage`, `promotions.read`, `promotions.manage`, `events.read`, `statistics.read`, `profiles.read`, `profiles.manage` |
+| Role       | Permissions                                                                                                                                |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `user`     | `user.access`                                                                                                                              |
+| `kholleur` | `kholleur.access`                                                                                                                          |
+| `teacher`  | `teacher.access`, `teaching.read`, `profiles.read`, `orientation.manage`                                                                   |
+| `admin`    | `users.read`, `users.manage`, `promotions.read`, `promotions.manage`, `events.read`, `statistics.read`, `profiles.read`, `profiles.manage` |
 
-An admin-only account has no teacher permission. A teacher/admin receives the union of its explicit
+An admin-only account has no teacher permission. Any combination of staff roles receives the union of its explicit
 grants. The application role cannot edit the role/permission catalogues; changes require reviewed
 migrations. API dependencies and service transactions verify capabilities from current database grants.
+
+Subject assignments, course-impact confirmations and account-archive revocation are documented in
+[site administration](site-administration.md). These extend profile updates and account archival.
 
 ## Promotions and memberships
 
 Promotions contain `id`, `year` (1–9999), `identifier` (trimmed, 1–64 characters), `color` (`#RRGGBB`),
 `is_active`, `created_at`, `updated_at`. The exact `(year, identifier)` pair is unique, including archives.
-Colors are returned uppercase. Any permanent account can belong to multiple promotions regardless
-of its role or activation status. The bootstrap account cannot be assigned.
+Colors are returned uppercase. Permanent pupils, teachers and khôlleurs can belong to multiple
+promotions regardless of activation status. Administrator alone does not confer eligibility;
+administrator combined with teacher or khôlleur is eligible. The bootstrap account cannot be assigned.
+Creation with memberships, individual assignment and batch assignment all enforce this rule
+server-side. An ineligible account causes HTTP 422 and rejects the entire operation, without partial
+accounts, assignments or audit events. Actor authorization still uses the existing management
+permissions; eligibility is a business rule, not an additional administrator permission.
+Historical incompatible memberships are not bulk-deleted; they remain available for manual removal.
 
-| Method and path, under `/api/v1` | Permission | Behavior |
-| --- | --- | --- |
-| `POST /admin/promotions` | `promotions.manage` | Create active promotion; 201 |
-| `GET /admin/promotions` | `promotions.read` | List all states; optional `year`, `is_active`, `q` (identifier/year) |
-| `GET /admin/promotions/{id}` | `promotions.read` | Metadata, `member_count` and `student_count` |
-| `PATCH /admin/promotions/{id}` | `promotions.manage` | Partial metadata or archive/reactivation |
-| `GET /admin/promotions/{id}/users` | `users.read` | Paginated accounts; optional `role`, `status` |
-| `GET /admin/users` | `users.read` | Paginated accounts; optional `role`, `status`, `promotion_id` |
-| `GET /admin/users/{id}` | `users.read` | Account, activity/security dates and latest invitation state |
-| `PATCH /admin/users/{id}/archive` | `users.manage` | `{"archived": true}` or `false`; revoke credentials |
-| `POST /admin/promotions/{id}/users` | `promotions.manage` | Atomic addition of 1–100 `user_ids` |
-| `GET /admin/summary` | `statistics.read` | Global account and promotion counts |
-| `GET /admin/users/{id}/promotions` | `promotions.read` | Memberships including archived promotions |
-| `PUT /admin/users/{id}/promotions/{promotion_id}` | `promotions.manage` | Idempotent addition; 204 |
-| `DELETE /admin/users/{id}/promotions/{promotion_id}` | `promotions.manage` | Idempotent removal; 204 |
+| Method and path, under `/api/v1`                     | Permission          | Behavior                                                             |
+| ---------------------------------------------------- | ------------------- | -------------------------------------------------------------------- |
+| `POST /admin/promotions`                             | `promotions.manage` | Create active promotion; 201                                         |
+| `GET /admin/promotions`                              | `promotions.read`   | List all states; optional `year`, `is_active`, `q` (identifier/year) |
+| `GET /admin/promotions/{id}`                         | `promotions.read`   | Metadata, `member_count` and `student_count`                         |
+| `PATCH /admin/promotions/{id}`                       | `promotions.manage` | Partial metadata or archive/reactivation                             |
+| `GET /admin/promotions/{id}/archive-impact`          | `promotions.manage` | Preview pupil login blocks and restoration counts                    |
+| `GET /admin/team`                                    | `users.manage`      | Active teaching staff grouped by active subject                      |
+| `GET /admin/promotions/{id}/users`                   | `users.read`        | Paginated accounts; optional `role`, `status`                        |
+| `GET /admin/users`                                   | `users.read`        | Paginated accounts; optional `role`, `status`, `promotion_id`        |
+| `GET /admin/users/{id}`                              | `users.read`        | Account, activity/security dates and latest invitation state         |
+| `PATCH /admin/users/{id}/archive`                    | `users.manage`      | `{"archived": true}` or `false`; revoke credentials                  |
+| `POST /admin/promotions/{id}/users`                  | `promotions.manage` | Atomic addition of 1–100 `user_ids`                                  |
+| `GET /admin/summary`                                 | `statistics.read`   | Global account and promotion counts                                  |
+| `GET /admin/users/{id}/promotions`                   | `promotions.read`   | Memberships including archived promotions                            |
+| `PUT /admin/users/{id}/promotions/{promotion_id}`    | `promotions.manage` | Idempotent addition; 204                                             |
+| `DELETE /admin/users/{id}/promotions/{promotion_id}` | `promotions.manage` | Idempotent removal; 204                                              |
 
 Lists return `items`, `total`, `offset`, `limit` (default 50, maximum 100). Accounts sort by ID;
 promotions by descending year, then identifier and ID. `member_count` includes all linked permanent
-accounts, including teachers, administrators and pending/disabled accounts.
+accounts, including teachers/khôlleurs with administrator grants and pending/disabled accounts.
 `student_count` counts only members with the `user` role, including archived/pending students.
+The `role=teaching` filter combines teacher and khôlleur grants using EXISTS, so accounts holding
+both roles appear once. Listing, totals, pagination and name-search ranking use the same union.
 
 Archive with `PATCH {"is_active": false}`, reactivate with `true`. Explicit nulls are invalid.
-Archiving preserves memberships and does not disable accounts. New associations to an archive return
-409; existing memberships can be read or removed. Repeated additions/removals do not duplicate facts.
+Archiving preserves memberships and, by default, does not disable accounts. The administrator may
+send `archive_students: true` with `is_active: false` and `acknowledge_student_impact: true` to
+block every current permanent pupil (exclusive `user` role). The checkbox starts unchecked every time;
+a warning precedes confirmation, including when pupils also belong to other promotions. Teachers,
+kholleurs and administrators are unaffected. The server rejects missing acknowledgement (409) and an
+archive-students command without an active-to-archived transition (422).
+
+Each cause is recorded in `promotion_account_blocks`, independently of `users.manually_archived`.
+Reactivation requires acknowledgement when recorded blocks exist, removes only this promotion's
+blocks and restores only accounts free of all other blocks. Manual archives made before **or after**
+a promotion archive remain effective. A membership removal or later role change does not discard the
+recorded cause; it lasts until this promotion is reactivated. Repeated state changes are no-ops.
+A manually requested account reactivation returns 409 while any promotion block remains.
+The preview and confirmation explain how many accounts will recover and how many remain disabled.
+
+Disabling revokes sessions and invitations immediately. Login returns the same invalid-credentials
+response as an unknown account, without identifying archived accounts. Restoration uses `active` when
+a password exists, otherwise `pending_activation`; old credentials are never revived. Pending users
+need a newly issued invitation. All state, causes and audit facts share the lifecycle lock and one
+transaction. Promotion journal entries count blocks and actual status changes; automatic account
+entries identify the promotion without copying pupil names.
+
+New associations to an archive return 409; existing memberships can be read or removed. Repeated
+additions/removals do not duplicate facts.
 No promotion DELETE route exists, and PostgreSQL denies runtime DELETE on `promotions`.
 
 Account archiving sets status `disabled` and `archived_at`, revokes all sessions and invitations,
@@ -132,6 +180,21 @@ Reactivation clears `archived_at` and restores `active` when a password exists, 
 Summary counts exclude the bootstrap: total = active + pending activation + archived. A pending
 account is counted even if its invitation has not yet been issued; the UI labels this category
 as accounts awaiting activation.
+
+## Teaching team
+
+The administrator-only `/dashboard?tab=team` reads `GET /admin/team`. Every active subject has a
+colored block, including subjects without staff. Only active, assigned teachers and kholleurs appear.
+The page shows teachers first, then kholleurs, sorted within each role by accent-insensitive family
+name, given name and ID. Each name links to the full profile inside the badge for that teaching role,
+even when the account is also an administrator. A person with both staff roles appears twice per
+subject: once as a teacher and once as a kholleur. There is no subject search bar.
+No emails or private profile fields are returned. The API retains one member per subject with all
+explicit roles; the page expands teaching roles for display. `member_count` counts unique displayed
+accounts across all subjects. `teacher_count` and `kholleur_count` count occurrences per subject,
+independently: a dual-role account contributes to both totals for each assigned active subject.
+Assignments are maintained in the administrator profile editor for either staff role.
+They do not add course collaborations or confer automatic course access.
 
 ## Teacher directory
 
@@ -177,14 +240,14 @@ not as encryption. `rotate-identities` includes every new encrypted field.
 - Reference adult: optional object with required first name, family name and phone when present.
   Names follow the existing French-name validation; contact phone uses the same normalization.
 
-| Method and path, under `/api/v1` | Access |
-| --- | --- |
-| `GET /auth/me/profile` | Own complete profile; no self-editing permission is granted |
-| `GET /admin/users/{id}/profile` | Administrator with `profiles.read` |
-| `PATCH /admin/users/{id}/profile` | Administrator with `profiles.manage`; names/email, roles and school fields; role changes also require `users.manage` |
-| `GET /teaching/users/{id}/profile` | Teacher with `profiles.read`, student in a shared promotion |
-| `PATCH /teaching/users/{id}/profile` | Teacher with `orientation.manage`; orientation project only |
-| `GET /admin/communes?q=Paris` | Administrator with `profiles.manage`; public reference suggestions |
+| Method and path, under `/api/v1`     | Access                                                                                                               |
+| ------------------------------------ | -------------------------------------------------------------------------------------------------------------------- |
+| `GET /auth/me/profile`               | Own complete profile; no self-editing permission is granted                                                          |
+| `GET /admin/users/{id}/profile`      | Administrator with `profiles.read`                                                                                   |
+| `PATCH /admin/users/{id}/profile`    | Administrator with `profiles.manage`; names/email, roles and school fields; role changes also require `users.manage` |
+| `GET /teaching/users/{id}/profile`   | Teacher with `profiles.read`, student in a shared promotion                                                          |
+| `PATCH /teaching/users/{id}/profile` | Teacher with `orientation.manage`; orientation project only                                                          |
+| `GET /admin/communes?q=Paris`        | Administrator with `profiles.manage`; public reference suggestions                                                   |
 
 Teachers may read the new full profile (including contact details) only for their shared students,
 including archived accounts. Their existing compact directory DTO still excludes private details and
@@ -252,7 +315,7 @@ must also prepare names; realistic production latency depends on hardware, volum
 `activity_events` replaces `login_events`. Fields: integer `id`, UTC-aware `occurred_at`, `event_type`,
 `schema_version`, optional `actor_user_id`, `subject_user_id`, `resource_type`, `resource_id`, and bounded
 JSONB `data`. Historical `actor_role` and `subject_role` preserve the highest explicit role
-(`admin` > `teacher` > `user`) at the action. Null means a system or unknown role, never an inferred
+(`admin` > `teacher` > `kholleur` > `user`) at the action. Null means a system or unknown role, never an inferred
 student role. Account references are foreign keys with `RESTRICT`, preserving event referents.
 `promotion_snapshot` contains the historical identifier, year and validated hexadecimal color;
 non-promotion events use SQL NULL. Account names remain in their existing encrypted user records.
@@ -317,23 +380,27 @@ retention purge; define retention before production and use a privileged mainten
 
 ## Migrations and verification
 
-With explicit owner authorization for fresh test installations, the migration history is reconstructed:
+With explicit owner authorization after deletion of the local volumes, the fresh baseline has
+exactly five feature revisions:
 
-1. `0001_users` in `0001_authentication.py`: accounts, roles/permissions, authentication and setup.
-2. `0002_promotions`: catalogue and memberships.
-3. `0003_activity_events`: generic journal; no `login_events` table is created.
+1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
+   protection and the append-only activity journal.
+2. `0002_configuration`: public site settings, shared holiday color, timelines and events.
+3. `0003_promotions`: promotion catalogue and account memberships.
+4. `0004_subjects`: subject catalogue and account subject assignments.
+5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
 
-Manual invitations, activation/reset purposes, account archive dates and capability grants are folded
-into 0001 under renewed owner authorization. No extra migration was introduced. `adopt-empty-baseline` is removed.
 Use `alembic upgrade head` on a fresh database. This rewritten history does not upgrade databases
-stamped with the former revisions; never reuse it against an old populated installation.
-
-Historical roles, promotion snapshots and the type/time/ID index are folded into 0003 with explicit
-owner authorization after destruction of the local test volume. No extra migration or compatibility
-SQL script is introduced. Changing a migration file does not alter an already-stamped database.
+stamped with the former revisions. No persistent volume is reset by the application or tests.
 
 Run `python -m pytest -q`, `ruff check .`, and the full disposable PostgreSQL suite using
 `python run_tests.py`, from `backend/` with the configured interpreter. Integration tests verify
 atomic mutations, privileges, role incompatibility, membership concurrency, archive preservation,
 encryption, event pagination, search and existing authentication races. The test launcher reuses
 existing Compose files and synthetic secrets without reading/modifying the local `.env`.
+
+Subject-assignment, subject-catalogue, site-setting and calendar events now include bounded version-2
+metadata. Assignment deltas include historical public subject tags and automatic removal causes;
+calendar operations retain entry type, name and dates, including after deletion. Site changes expose
+field names rather than copies of homepage text. Version-1 entries remain readable without invented
+details. See [site administration](site-administration.md#detailed-journal-entries).

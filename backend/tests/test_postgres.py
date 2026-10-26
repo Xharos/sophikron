@@ -291,3 +291,49 @@ async def test_lock_timeout(databases: tuple[Database, Database], records: Table
                 assert error.value.orig.sqlstate == "55P03"
     finally:
         await limited.close()
+
+
+@pytest.mark.asyncio
+async def test_feature_migration_stages(databases: tuple[Database, Database]) -> None:
+    """Create each feature only at its revision and enforce configuration constraints."""
+    _, migration = databases
+    try:
+        run_alembic("downgrade", "0001_authentication")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.activity_events')"))
+            assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.site_settings')")) is None
+            )
+        run_alembic("upgrade", "0002_configuration")
+        async with migration.sessions() as session:
+            assert (
+                await session.scalar(
+                    text("SELECT holiday_color FROM sophikron.site_settings WHERE id = 1")
+                )
+                == "#244BC1"
+            )
+            for name in ("promotions", "subjects", "lessons"):
+                assert (
+                    await session.scalar(
+                        text("SELECT to_regclass(:name)"), {"name": "sophikron." + name}
+                    )
+                    is None
+                )
+        async with migration.sessions() as session:
+            with pytest.raises(IntegrityError):
+                async with session.begin():
+                    await session.execute(
+                        text(
+                            "UPDATE sophikron.site_settings SET holiday_color = 'red' WHERE id = 1"
+                        )
+                    )
+        run_alembic("upgrade", "0003_promotions")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.user_promotions')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.subjects')")) is None
+        run_alembic("upgrade", "0004_subjects")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.teacher_subjects')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.lessons')")) is None
+    finally:
+        run_alembic("upgrade", "head")

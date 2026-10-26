@@ -71,7 +71,14 @@
 			<div>
 				<span>Dernière connexion</span><strong>{formatDate(data.account.last_login_at)}</strong>
 			</div>
-			<div><span>Connexions réussies</span><strong>{data.account.login_count}</strong></div>
+			<div>
+				<span
+					>Connexion{data.account.login_count === 1 ? '' : 's'} réussie{data.account.login_count ===
+					1
+						? ''
+						: 's'}</span
+				><strong>{data.account.login_count}</strong>
+			</div>
 			<div><span>Compte créé le</span><strong>{formatDate(data.account.created_at)}</strong></div>
 			<div>
 				<span>Dernière mise à jour</span><strong>{formatDate(data.account.updated_at)}</strong>

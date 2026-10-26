@@ -38,6 +38,8 @@ class PromotionUpdate(InputModel):
     identifier: str | None = Field(default=None, min_length=1, max_length=64)
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     is_active: bool | None = None
+    archive_students: bool = False
+    acknowledge_student_impact: bool = False
 
     @field_validator("year", "identifier", "color", "is_active", mode="before")
     @classmethod
@@ -58,6 +60,44 @@ class PromotionUpdate(InputModel):
     def normalize_color(cls, value: str) -> str:
         """Apply the same color normalization as creation."""
         return value.upper()
+
+
+class PromotionArchiveImpact(BaseModel):
+    """Preview affected pupils without exposing their identities."""
+
+    student_count: int
+    accounts_to_disable: int
+    blocked_count: int
+    accounts_to_restore: int
+    accounts_remaining_disabled: int
+
+
+class TeamMember(BaseModel):
+    """Expose only an administrator's staff directory identity and explicit roles."""
+
+    id: int
+    first_name: str
+    last_name: str
+    roles: list[str]
+
+
+class TeamSubject(BaseModel):
+    """Group active staff under one active subject, including empty groups."""
+
+    id: int
+    name: str
+    icon: str
+    color: str
+    members: list[TeamMember]
+
+
+class TeachingTeam(BaseModel):
+    """Count unique staff accounts and role occurrences across active subjects."""
+
+    subjects: list[TeamSubject]
+    member_count: int
+    teacher_count: int
+    kholleur_count: int
 
 
 class PromotionResponse(BaseModel):
@@ -121,8 +161,8 @@ class EventResponse(BaseModel):
     schema_version: int
     actor_user_id: int | None
     subject_user_id: int | None
-    actor_role: Literal["admin", "teacher", "user"] | None
-    subject_role: Literal["admin", "teacher", "user"] | None
+    actor_role: Literal["admin", "teacher", "kholleur", "user"] | None
+    subject_role: Literal["admin", "teacher", "kholleur", "user"] | None
     promotion_snapshot: PromotionCreate | None
     resource_type: str | None
     resource_id: int | None
@@ -159,12 +199,18 @@ class DashboardSummary(BaseModel):
     archived_accounts: int
     total_promotions: int
     active_promotions: int
+    active_subjects: int = 0
+    archived_subjects: int = 0
+    subject_teachers: int = 0
+    total_lessons: int = 0
+    kholleurs: int = 0
 
 
 class AccountArchive(InputModel):
     """Set archive state without accepting arbitrary account fields."""
 
     archived: bool
+    acknowledge_course_impact: bool = False
 
 
 class MembershipBatch(InputModel):

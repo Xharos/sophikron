@@ -9,7 +9,7 @@ import sys
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import delete, exists, or_, select, text
+from sqlalchemy import Connection, delete, exists, or_, select, text
 
 from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
@@ -38,7 +38,25 @@ async def execute(arguments: argparse.Namespace) -> None:
         return
     database = Database(DatabaseSettings())
     try:
-        if arguments.command == "prune-rate-limits":
+        if arguments.command in {"upgrade-statistics", "upgrade-lesson-policies"}:
+            from alembic.migration import MigrationContext
+            from alembic.operations import Operations
+            from alembic.script import ScriptDirectory
+
+            def upgrade_statistics(connection: Connection) -> None:
+                """Apply the selected amended baseline helper without resetting course data."""
+                script = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
+                with Operations.context(MigrationContext.configure(connection)):
+                    migration = script.get_revision("0005_lessons").module
+                    if arguments.command == "upgrade-statistics":
+                        migration.upgrade_statistics()
+                    else:
+                        migration.upgrade_lesson_policies()
+
+            async with database.engine.begin() as connection:
+                await connection.run_sync(upgrade_statistics)
+            return
+        elif arguments.command == "prune-rate-limits":
             async with database.sessions.begin() as session:
                 now = datetime.now(UTC)
                 await session.execute(delete(LoginAttempt).where(LoginAttempt.expires_at <= now))
@@ -109,6 +127,14 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Sophikron backend administration")
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser("prune-rate-limits", help="Remove expired ephemeral rate-limit counters")
+    commands.add_parser(
+        "upgrade-statistics",
+        help="Add statistics to an existing local 0005 schema without resetting data",
+    )
+    commands.add_parser(
+        "upgrade-lesson-policies",
+        help="Normalize course visibility and remove obsolete dates without resetting data",
+    )
     keys = commands.add_parser("generate-keys", help="Create a new protected identity keyring")
     keys.add_argument("--output", type=Path, required=True)
     bootstrap = commands.add_parser("bootstrap", help="Initialize the temporary administrator")

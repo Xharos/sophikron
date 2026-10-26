@@ -8,6 +8,7 @@ from fastapi.security import APIKeyCookie
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.documents import is_document_upload
 from app.services.auth import AuthService, UserContext
 from app.services.errors import FORBIDDEN, INVALID_REQUEST, AuthError
 
@@ -66,7 +67,12 @@ def require_csrf(
         raise AuthError(403, INVALID_REQUEST)
     if request.headers.get("content-length", "0") != "0" or "transfer-encoding" in request.headers:
         media_type = request.headers.get("content-type", "").split(";", 1)[0].strip().lower()
-        if media_type != "application/json":
+        expected_type = (
+            "application/octet-stream"
+            if is_document_upload(request.url.path, request.method)
+            else "application/json"
+        )
+        if media_type != expected_type:
             raise AuthError(415, INVALID_REQUEST)
 
 

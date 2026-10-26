@@ -2,15 +2,16 @@ import { error, fail, redirect, type RequestEvent } from '@sveltejs/kit';
 import { BackendError } from './backend';
 import { canAccess, type PageAccess } from '../access';
 import { api } from './api';
+import { loginDestination } from '../loginRedirect';
 
 /** Protect page loads as well as direct URL visits, using the profile verified by FastAPI. */
 export function requirePageAccess(event: RequestEvent, access: PageAccess = 'authenticated'): void {
-	if (!event.locals.user) redirect(303, '/login');
+	if (!event.locals.user) redirect(303, loginDestination(event.url.pathname + event.url.search));
 	if (!canAccess(event.locals.user, access)) error(403, 'Vous n’avez pas accès à cette page.');
 }
 
 export function requireUser(event: RequestEvent, admin = false): void {
-	if (!event.locals.user) redirect(303, '/login');
+	if (!event.locals.user) redirect(303, loginDestination(event.url.pathname + event.url.search));
 	if (event.locals.user.is_bootstrap) redirect(303, '/setup');
 	if (admin && !canAccess(event.locals.user, 'admin'))
 		error(403, 'Accès réservé aux administrateurs.');

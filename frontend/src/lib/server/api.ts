@@ -1,5 +1,5 @@
 import type { RequestEvent } from '@sveltejs/kit';
-import { requestBackend, type BackendConfig, type BackendMethod } from './backend';
+import { requestBackend, type BackendConfig, type BackendMethod } from './backend.ts';
 
 /** Only server code reads these variables. No PUBLIC_ variable contains a credential. */
 export function configuration(): BackendConfig {

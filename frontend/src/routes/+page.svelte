@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { PageProps } from './$types';
+	import FormattedText from '#lib/components/lessons/FormattedText.svelte';
+	import Timelines from '#lib/components/Timelines.svelte';
 	let { data }: PageProps = $props();
 </script>
 
@@ -20,6 +22,7 @@
 	<meta property="og:url" content={`${data.siteOrigin}/`} />
 </svelte:head>
 
+{#if data.site}<Timelines site={data.site} />{/if}
 <section class="section home-hero container">
 	<div class="hero-copy">
 		<p class="eyebrow"><span class="status-dot"></span> La pédagogie, en commun</p>
@@ -52,6 +55,12 @@
 		</div>
 	</div>
 </section>
+{#if data.site?.settings.home_text}<section
+		class="section container"
+		aria-label="Présentation de l’établissement"
+	>
+		<FormattedText text={data.site.settings.home_text} color={data.site.settings.text_color} />
+	</section>{/if}
 <section class="section home-principles container" aria-label="Nos principes">
 	<div>
 		<span class="principle-number">01</span>

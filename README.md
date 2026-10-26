@@ -4,6 +4,15 @@
 
 Share teaching materials, publish educational pages and create interactive content.
 
+Authenticated course pages at `/lessons` provide an ordered programme, sections/subsections, formatted
+text, YouTube links, teacher collaboration and promotion-based access with inherited availability.
+See [course pages](docs/lessons.md) for permissions, migration `0005_lessons` and verification.
+Administrators also configure the public homepage, subjects and calendars, including a shared
+holiday color; see [site administration](docs/site-administration.md) for migration
+`0002_configuration` and the detailed activity journal. Private document uploads are available in courses.
+The dashboard also groups active teaching staff by subject and can optionally archive a promotion's
+pupil accounts, with selective restoration that preserves other blocks; see [administration](docs/administration.md).
+
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />
@@ -43,37 +52,34 @@ See [database documentation](docs/database.md) and [authentication documentation
 
 ## Local setup
 
-The public establishment name is configured with `ESTABLISHMENT_NAME=Sophikron` in the root
-`.env` file. It is read by the frontend at runtime and defaults to `Sophikron` when blank or absent.
-See [frontend configuration](frontend/README.md#establishment-name) for container recreation
-and native development instructions.
+Administrators configure the public site name, welcome text and annual timelines in
+`/dashboard?tab=configuration`. Settings are stored in PostgreSQL and take effect without a restart.
+See [site administration](docs/site-administration.md) for subject and course access rules.
 
 1. Create a `.env` file at the project root. Docker Compose automatically loads it for variable substitution. Configure the database, authentication settings, ports, and `SOPHIKRON_SECRETS_DIRECTORY` (see [.env.example](.env.example)).
 
 2. Create the directory specified by `SOPHIKRON_SECRETS_DIRECTORY` and add the following files:
 
-   - `bootstrap_password`
-   - `db_admin_password`
-   - `db_app_password`
-   - `db_migration_password`
-   - `smtp_password` (may be empty when SMTP is disabled)
-   - `identity_keys.json` (generated below)
+    - `bootstrap_password`
+    - `db_admin_password`
+    - `db_app_password`
+    - `db_migration_password`
+    - `smtp_password` (may be empty when SMTP is disabled)
+    - `identity_keys.json` (generated below)
 
-     Generate the identity keys from the `backend/` directory:
+        Generate the identity keys from the `backend/` directory:
 
-     ```bash
-     python -m app.cli generate-keys --output "/path/to/secrets/identity_keys.json"
-     ```
+        ```bash
+        python -m app.cli generate-keys --output "/path/to/secrets/identity_keys.json"
+        ```
 
 3. Build and start the local infrastructure:
 
-   ```bash
-   docker compose -f compose.yaml -f compose.local.yaml up -d --build
-   ```
+    ```bash
+    docker compose -f compose.yaml -f compose.local.yaml up -d --build
+    ```
 
-   
 Access the [frontend](http://localhost:3000), [Swagger UI](http://localhost:8000/docs), and [ReDoc](http://localhost:8000/redoc) (using the configured ports).
-
 
 ### Stopping the infrastructure
 
@@ -90,6 +96,7 @@ docker compose -f compose.yaml -f compose.local.yaml down -v
 ```
 
 **Warning:** `down -v` permanently deletes data stored in Compose-managed volumes. Existing volumes are never automatically reset during startup.
+
 ## Getting started
 
 See [PostgreSQL setup and development](docs/database.md) for Docker Compose startup, runtime secrets,
@@ -102,6 +109,9 @@ keyring before starting the backend. See [backend administration](docs/administr
 generated usernames, promotions, interactive name/username search, scoped teacher access and activity
 events. The [responsive frontend dashboard](docs/frontend-bff.md) provides account/promotion management,
 archiving, invitations and administrator statistics at `/dashboard`.
+The [statistics dashboard](docs/statistics.md) adds interactive login/download charts, document
+storage and scoped author/course analytics. For an existing local schema at 0005, its additive
+upgrade command installs the new counters without resetting application data.
 Complete school profiles add encrypted birth/contact/location information, baccalaureate subjects
 and marks, orientation and an adult reference contact. Administrators edit profile fields; teachers
 can update only the orientation project of students in their assigned promotions.
@@ -110,6 +120,15 @@ Use the single `compose.yaml` with a private `.env` for configuration. Local dev
 administrator setup and isolated PostgreSQL verification use the same services.
 After configuring secrets, `docker compose up -d --build` runs migrations and starts the application.
 Complete the first administrator through `/api/v1/auth/setup`; SMTP is not required for this step.
+
+Interactive courses support named private documents, inherited availability, staff-only sections,
+YouTube players and tables with free column titles and optional cells. Documents persist in the
+`documents_data` volume. Trusted course editors upload files without antivirus scanning; size,
+format, quota and access checks remain enforced. See the
+[document operations guide](docs/lesson-documents.md) for quotas, deletion, backups and verification.
+See the [security audit](docs/security-audit.md) for verified controls and remaining risks.
+The authorized amendment of migration `0005_lessons` is for the fresh baseline; installations
+already at 0005 need a separate schema transition before running the updated application.
 
 ## Contributing
 
@@ -125,4 +144,4 @@ Sophikron is free software distributed under the
 
 ---
 
-*Built for teachers, by contributors to open education.*
+_Built for teachers, by contributors to open education._

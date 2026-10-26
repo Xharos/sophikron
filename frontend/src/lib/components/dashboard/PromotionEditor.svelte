@@ -4,6 +4,7 @@
 	import type { Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
+	import ColorPicker from '../ColorPicker.svelte';
 	let {
 		promotion,
 		onclose,
@@ -64,24 +65,7 @@
 				required
 			/>
 		</div>
-		<div class="field">
-			<label class="label" for="promo-color">Couleur</label>
-			<div class="color-picker">
-				<input id="promo-color" type="color" bind:value={color} aria-label="Choisir une couleur" />
-				<input
-					class="input"
-					aria-label="Code couleur hexadécimal"
-					bind:value={color}
-					pattern={'#[0-9A-Fa-f]{6}'}
-					maxlength="7"
-					required
-				/><span
-					class="color-preview"
-					style={`background: ${/^#[0-9a-f]{6}$/i.test(color) ? color : '#4361EE'}`}
-					aria-hidden="true"
-				></span>
-			</div>
-		</div>
+		<ColorPicker id="promo-color" bind:value={color} disabled={busy} />
 		<div class="dialog-actions">
 			<button class="button is-light" type="button" onclick={onclose} disabled={busy}
 				>Annuler</button

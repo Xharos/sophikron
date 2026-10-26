@@ -3,6 +3,7 @@ import { building } from '$app/env';
 import { api, configuration } from '#lib/server/api';
 import { BackendError, sessionCookie, validateOrigin } from '#lib/server/backend';
 import type { Account } from '#lib/types';
+import { themedHtml, themeCookie } from '#lib/theme';
 
 /** Reject forged writes before making any backend request; keep identities request-scoped. */
 export const handle: Handle = async ({ event, resolve }) => {
@@ -14,6 +15,29 @@ export const handle: Handle = async ({ event, resolve }) => {
 			!publicStatic || !['GET', 'HEAD'].includes(event.request.method) ? configuration() : null;
 		if (config) {
 			validateOrigin(event.request, config.origin);
+			if (
+				!['GET', 'HEAD'].includes(event.request.method) &&
+				event.url.pathname !== '/lessons/upload'
+			) {
+				const length = event.request.headers.get('content-length');
+				if (length && (!/^\d{1,8}$/.test(length) || Number(length) > 16384))
+					throw new BackendError(413, 'Demande trop volumineuse.');
+				let size = 0;
+				const stream = event.request.body?.pipeThrough(
+					new TransformStream<Uint8Array, Uint8Array>({
+						transform(chunk, controller) {
+							size += chunk.byteLength;
+							if (size > 16384) throw new BackendError(413, 'Demande trop volumineuse.');
+							controller.enqueue(chunk);
+						}
+					})
+				);
+				if (stream)
+					event = {
+						...event,
+						request: new Request(event.request, { body: stream, duplex: 'half' } as RequestInit)
+					};
+			}
 			if (!publicStatic && event.cookies.get(sessionCookie(config))) {
 				event.locals.user = await api<Account>(event, '/auth/me');
 			}
@@ -30,7 +54,9 @@ export const handle: Handle = async ({ event, resolve }) => {
 			});
 		}
 	}
-	const response = await resolve(event);
+	const response = await resolve(event, {
+		transformPageChunk: ({ html }) => themedHtml(html, event.cookies.get(themeCookie))
+	});
 	if (!publicStatic) {
 		response.headers.set('Cache-Control', 'private, no-store');
 		response.headers.set('Vary', 'Cookie');

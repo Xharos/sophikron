@@ -1,20 +1,35 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { goto } from '$app/navigation';
 	import Icon from '#lib/components/Icon.svelte';
 	import Overview from '#lib/components/dashboard/Overview.svelte';
+	import SubjectsPanel from '#lib/components/dashboard/SubjectsPanel.svelte';
+	import TeachingTeamPanel from '#lib/components/dashboard/TeachingTeamPanel.svelte';
+	import SitePanel from '#lib/components/dashboard/SitePanel.svelte';
 	import PromotionsPanel from '#lib/components/dashboard/PromotionsPanel.svelte';
 	import AccountsPanel from '#lib/components/dashboard/AccountsPanel.svelte';
+	import StatisticsPanel from '#lib/components/statistics/StatisticsPanel.svelte';
 	import type { PageProps } from './$types';
 	import type { Promotion } from '#lib/types';
+	import type { Subject } from '#lib/site';
 	let { data }: PageProps = $props();
 	let initialPromotion = $state<Promotion | undefined>(
 		untrack(() => data.initialPromotion ?? undefined)
 	);
 	let editPromotion = $state(untrack(() => data.editPromotion));
+	let initialSubject = $state<Subject | undefined>();
 	let section = $state(
 		untrack(() =>
-			['overview', 'promotions', 'accounts'].includes(data.section)
+			[
+				'overview',
+				'promotions',
+				'accounts',
+				'subjects',
+				'team',
+				'configuration',
+				'statistics'
+			].includes(data.section)
 				? data.section
 				: data.administrator
 					? 'overview'
@@ -26,7 +41,15 @@
 		editPromotion = data.editPromotion;
 		section = data.initialPromotion
 			? 'promotions'
-			: ['overview', 'promotions', 'accounts'].includes(data.section)
+			: [
+						'overview',
+						'promotions',
+						'accounts',
+						'subjects',
+						'team',
+						'configuration',
+						'statistics'
+				  ].includes(data.section)
 				? data.section
 				: data.administrator
 					? 'overview'
@@ -37,11 +60,15 @@
 			? [
 					{ id: 'overview', name: 'Vue d’ensemble', icon: 'overview' as const },
 					{ id: 'promotions', name: 'Promotions', icon: 'promotions' as const },
-					{ id: 'accounts', name: 'Comptes', icon: 'accounts' as const }
+					{ id: 'accounts', name: 'Comptes', icon: 'accounts' as const },
+					{ id: 'subjects', name: 'Matières', icon: 'book' as const },
+					{ id: 'team', name: 'Équipe enseignante', icon: 'teacher' as const },
+					{ id: 'configuration', name: 'Configuration', icon: 'edit' as const }
 				]
 			: [
 					{ id: 'promotions', name: 'Mes promotions', icon: 'promotions' as const },
-					{ id: 'accounts', name: 'Mes élèves', icon: 'student' as const }
+					{ id: 'accounts', name: 'Mes élèves', icon: 'student' as const },
+					{ id: 'statistics', name: 'Mes statistiques', icon: 'overview' as const }
 				]
 	);
 	function navigate(value: string): void {
@@ -51,8 +78,13 @@
 		url.searchParams.delete('create');
 		url.searchParams.delete('promotion');
 		url.searchParams.delete('edit');
+		if (value === 'promotions' && initialPromotion)
+			url.searchParams.set('promotion', String(initialPromotion.id));
 		editPromotion = false;
-		window.history.replaceState(window.history.state, '', url);
+		void goto(resolve(`/dashboard?${url.searchParams}`), {
+			replace: true,
+			reset: false
+		});
 	}
 </script>
 
@@ -101,12 +133,11 @@
 					: 'Retrouvez vos élèves et accompagnez leurs progrès.'}
 			</p>
 		</header>
-		{#if section === 'overview' && data.administrator}<Overview
-				onpromotions={(promotion) => {
-					initialPromotion = promotion;
-					navigate('promotions');
-				}}
-			/>
+		{#if section === 'overview' && data.administrator}<Overview />
+		{:else if section === 'statistics'}<StatisticsPanel />
+		{:else if section === 'subjects' && data.administrator}<SubjectsPanel {initialSubject} />
+		{:else if section === 'team' && data.administrator}<TeachingTeamPanel />
+		{:else if section === 'configuration' && data.administrator}<SitePanel />
 		{:else if section === 'promotions'}<PromotionsPanel
 				administrator={data.administrator}
 				currentUserId={data.user!.id}

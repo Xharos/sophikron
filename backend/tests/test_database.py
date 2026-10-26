@@ -2,9 +2,11 @@
 
 import asyncio
 from collections.abc import Callable
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from alembic.script import ScriptDirectory
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -97,3 +99,19 @@ def test_migration_helper_refuses_unsafe_targets(
         with pytest.raises(pytest.fail.Exception, match="Integration tests require"):
             run_alembic("downgrade", "base")
         execute.assert_not_called()
+
+
+def test_feature_migration_chain() -> None:
+    """Keep exactly five ordered, independently named feature revisions."""
+    scripts = ScriptDirectory(str(Path(__file__).resolve().parents[1] / "alembic"))
+    expected = [
+        "0001_authentication",
+        "0002_configuration",
+        "0003_promotions",
+        "0004_subjects",
+        "0005_lessons",
+    ]
+    revisions = list(reversed(list(scripts.walk_revisions())))
+    assert [revision.revision for revision in revisions] == expected
+    assert scripts.get_heads() == [expected[-1]]
+    assert [revision.down_revision for revision in revisions] == [None, *expected[:-1]]

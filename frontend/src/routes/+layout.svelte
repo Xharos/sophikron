@@ -16,4 +16,4 @@
 <a class="skip-link" href="#main-content">Aller au contenu</a>
 <Header user={data.user} establishmentName={data.establishmentName} />
 <main id="main-content" tabindex="-1">{@render children()}</main>
-<Footer establishmentName={data.establishmentName} />
+<Footer establishmentName={data.establishmentName} themePreference={data.themePreference} />

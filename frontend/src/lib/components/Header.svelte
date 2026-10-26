@@ -46,7 +46,10 @@
 					<a
 						class="navbar-item"
 						href={resolve('/lessons')}
-						aria-current={page.url.pathname === '/lessons' ? 'page' : undefined}
+						aria-current={page.url.pathname === '/lessons' ||
+						page.url.pathname.startsWith('/lessons/')
+							? 'page'
+							: undefined}
 						onclick={() => (expanded = false)}>Cours</a
 					>
 					{#if canAccess(user, 'staff')}

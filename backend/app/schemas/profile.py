@@ -135,6 +135,16 @@ class AdminProfileUpdate(SchoolProfile):
     last_name: str | None = Field(default=None, min_length=1, max_length=100)
     email: str | None = Field(default=None, min_length=3, max_length=254)
     roles: RoleCodes | None = None
+    subject_ids: list[Annotated[int, Field(gt=0)]] | None = Field(default=None, max_length=100)
+    acknowledge_course_impact: bool = False
+
+    @field_validator("subject_ids")
+    @classmethod
+    def unique_subjects(cls, value: list[int] | None) -> list[int]:
+        """Require an explicit unique assignment when the field is supplied."""
+        if value is None or len(value) != len(set(value)):
+            raise ValueError("Invalid subject assignments")
+        return value
 
     @field_validator("roles", mode="before")
     @classmethod
@@ -196,3 +206,4 @@ class FullProfile(BaseModel):
     promotions: list[PromotionBadge]
     can_edit_all: bool
     can_edit_orientation: bool
+    subject_ids: list[int] = Field(default_factory=list)

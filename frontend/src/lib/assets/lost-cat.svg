@@ -1,0 +1,97 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="560" height="360" viewBox="0 0 560 360" fill="none" role="img" aria-labelledby="title desc">
+  <title id="title">Le chat n’y est pour rien. Enfin, presque.</title>
+  <desc id="desc">Un chat tricolore assis se lèche la patte avant droite, regarde le visiteur, puis le panneau 404 cassé à ses pieds, et reprend sa toilette. Animation de douze secondes sur fond transparent.</desc>
+  <defs>
+    <path id="head-shape" d="M180 137c-4-15-2-43 5-57 3-5 8-4 13 0l23 20c17-6 39-6 56 0l22-21c5-4 10-3 12 3 6 18 7 39 2 56 10 15 12 31 4 44-11 19-37 29-65 29-33 0-59-11-70-29-9-14-9-29-2-45Z"/>
+    <clipPath id="head-clip"><use href="#head-shape"/></clipPath>
+  </defs>
+  <style>
+    .head { transform-origin: 250px 205px; animation: head-turn 12s ease-in-out infinite; }
+    .paw-shape { animation: paw-rest 12s ease-in-out infinite; }
+    .paw-toes { animation: toes-rest 12s ease-in-out infinite; }
+    .face { animation: glance 12s ease-in-out infinite; }
+    .closed-eyes, .licking { animation: grooming 12s steps(1,end) infinite; }
+    .open-eyes { animation: watching 12s steps(1,end) infinite; }
+    .tongue { transform-origin: 248px 185px; animation: lick .65s ease-in-out infinite; }
+    .closed-eyes, .licking { opacity: 0; }
+    @keyframes head-turn {
+      0%,26%,78%,100% { transform: translate(-3px,3px) rotate(-12deg); }
+      33%,48% { transform: translate(0,0) rotate(0); }
+      56%,68% { transform: translate(5px,5px) rotate(12deg); }
+    }
+    @keyframes paw-rest {
+      0%,26%,78%,100% {
+        d: path('M218 246 C204 238 196 224 203 214 L217 195 C223 187 234 188 239 194 C244 201 241 210 235 216 L231 221 L241 231');
+      }
+      33%,68% {
+        d: path('M222 227 C222 245 222 267 220 282 L216 284 C205 286 207 299 220 301 C229 303 241 301 242 294 L242 279 L243 246');
+      }
+    }
+    @keyframes toes-rest {
+      0%,26%,78%,100% { d: path('M221 198 L226 202 M226 194 L231 198'); }
+      33%,68% { d: path('M219 294 L219 300 M226 295 L226 301'); }
+    }
+    @keyframes glance {
+      0%,48%,78%,100% { transform: translate(0,0); }
+      56%,68% { transform: translate(6px,4px); }
+    }
+    @keyframes grooming { 0%,25%,78%,100% { opacity: 1; } 26%,77% { opacity: 0; } }
+    @keyframes watching { 0%,25%,78%,100% { opacity: 0; } 26%,77% { opacity: 1; } }
+    @keyframes lick { 0%,100% { transform: scaleY(.15); } 45%,65% { transform: scaleY(1); } }
+    @media (prefers-reduced-motion: reduce) {
+      .head, .paw-shape, .paw-toes, .face, .closed-eyes, .open-eyes, .licking, .tongue { animation: none; }
+    }
+  </style>
+  <g stroke="#44342F" stroke-linecap="round" stroke-linejoin="round">
+    <ellipse cx="277" cy="311" rx="168" ry="7" fill="#8999AE" stroke="none" opacity=".14"/>
+    <!-- The fallen post and two halves of the broken sign. -->
+    <path d="m337 307 49-13m11-3 42-11" stroke="#A98B72" stroke-width="8"/>
+    <path d="m330 267 65-4-7 14 9 10-12 10 5 14-56 4Z" fill="#DCE4EF" stroke-width="3"/>
+    <path d="m406 268 53 10-8 41-56-10 10-12-7-11 13-7Z" fill="#DCE4EF" stroke-width="3"/>
+    <g stroke="#506485" stroke-width="3.5">
+      <path d="m350 279-10 17h18m-5-17v28"/>
+      <ellipse cx="373" cy="292" rx="8" ry="13"/>
+      <path d="m432 285-12 15 18 3m-3-18-4 27"/>
+    </g>
+    <path d="m396 321 8 4-7 5Z" fill="#DCE4EF" stroke-width="2"/>
+    <!-- Tail and soft, uncomplicated body. -->
+    <path d="M209 290c-33 17-72 14-78-5-5-14 7-24 17-16" stroke="#44342F" stroke-width="24"/>
+    <path d="M209 290c-33 17-72 14-78-5-5-14 7-24 17-16" stroke="#D28C59" stroke-width="18"/>
+    <path d="M214 175c-19 20-27 48-31 73-5 31-2 48 18 55 19 6 35 1 46-2 17 5 39 8 52-2 18-14 13-38 5-64-6-22-15-46-32-59Z" fill="#F6EEE4" stroke-width="3.5"/>
+    <path d="M206 213c-11 22-22 49-17 67 3 12 12 18 26 18 9-14 13-30 8-49-3-15-7-27-17-36Z" fill="#D28C59" stroke="none"/>
+    <path d="M278 183c14 12 24 32 28 52-20 0-35-12-39-27-2-9 1-17 11-25Z" fill="#44342F" stroke="none"/>
+    <path d="M263 222c-1 20 4 45 6 61-9 1-13 5-12 11 1 8 31 11 34 0 2-8-4-29-7-46" fill="#F6EEE4" stroke-width="3"/>
+    <path d="m273 292 0 7m7-6 0 5" stroke-width="1.7"/>
+    <g class="head">
+      <use href="#head-shape" fill="#F6EEE4" stroke-width="3.5"/>
+      <g clip-path="url(#head-clip)" stroke="none">
+        <path d="M167 77h66c-2 29-12 40-29 50-11 7-25 7-36 5Z" fill="#D28C59"/>
+        <path d="M278 73h45l9 71c-14 4-33-2-42-14-10-13-13-27-12-57Z" fill="#44342F"/>
+      </g>
+      <path d="m188 88 4 29 18-12Z" fill="#E6A5A0" stroke="none"/>
+      <path d="m302 89-18 17 20 11Z" fill="#E6A5A0" stroke="none"/>
+      <g class="face">
+        <g class="closed-eyes" fill="none" stroke-width="5">
+          <path d="M218 155q8-8 16-1m32 0q8-8 16-1"/>
+        </g>
+        <g class="open-eyes" stroke="none" fill="#44342F">
+          <ellipse cx="227" cy="154" rx="3.2" ry="4.5"/>
+          <ellipse cx="274" cy="154" rx="3.2" ry="4.5"/>
+        </g>
+        <path d="m246 170 7 0-3.5 4Z" fill="#D89999" stroke="none"/>
+        <path d="M249.5 174v5m0 0q-4 5-8 1m8-1q4 5 8 1" stroke-width="1.8"/>
+      </g>
+      <path d="m207 170-25-3m25 11-24 3m109-11 25-4m-24 12 23 2" stroke-width="1.7"/>
+    </g>
+    <!-- Anatomical right forepaw, in front of the cheek on the viewer's left. -->
+    <g class="paw">
+      <path class="paw-shape" d="M222 227 C222 245 222 267 220 282 L216 284 C205 286 207 299 220 301 C229 303 241 301 242 294 L242 279 L243 246" fill="#F6EEE4" stroke-width="3"/>
+      <path class="paw-toes" d="M219 294 L219 300 M226 295 L226 301" stroke-width="1.5"/>
+    </g>
+    <g class="head">
+      <g class="licking" stroke="none">
+        <path class="tongue" d="M245 184c-1 5-6 12-11 13-5 0-6-4-2-7l9-7Z" fill="#DE999F"/>
+      </g>
+    </g>
+  </g>
+</svg>

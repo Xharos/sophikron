@@ -131,8 +131,10 @@
 		{#if administrator}<div class="select">
 				<select aria-label="Filtrer par rôle" bind:value={role} onchange={() => (offset = 0)}
 					><option value="">Tous les rôles</option><option value="user">Élèves</option><option
-						value="teacher">Professeurs</option
-					><option value="admin">Administrateurs</option></select
+						value={promotionId ? 'teaching' : 'teacher'}>Professeurs</option
+					>{#if !promotionId}<option value="kholleur">Khôlleurs</option><option value="admin"
+							>Administrateurs</option
+						>{/if}</select
 				>
 			</div>
 			<div class="select">
@@ -181,7 +183,9 @@
 			busy={loading}
 			onchange={(value) => (offset = value)}
 		/>{:else if total > 0}<p class="help mt-3">
-			Les {total} meilleures correspondances sont affichées.
+			{total === 1 ? 'La' : 'Les'}
+			{total} meilleure{total === 1 ? '' : 's'} correspondance{total === 1 ? '' : 's'}
+			{total === 1 ? 'est affichée' : 'sont affichées'}.
 		</p>{/if}
 </section>
 {#if create}<AccountCreator

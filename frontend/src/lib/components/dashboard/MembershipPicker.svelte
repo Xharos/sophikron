@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { command, read, statusLabels } from '#lib/dashboard';
-	import type { DirectoryUser, Page, Promotion } from '#lib/types';
+	import { command, promotionCandidates, statusLabels } from '#lib/dashboard';
+	import type { DirectoryUser, Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
 	let {
@@ -10,7 +10,7 @@
 		onsaved
 	}: { promotion: Promotion; onclose: () => void; onsaved: () => void } = $props();
 	let query = $state('');
-	let role = $state('user');
+	let role = $state<'user' | 'teaching'>('user');
 	let users = $state<DirectoryUser[]>([]);
 	let selected = $state<number[]>([]);
 	let loading = $state(true);
@@ -30,17 +30,8 @@
 				loading = true;
 				message = '';
 				try {
-					if (q.trim().length >= 2)
-						users = await read<DirectoryUser[]>(
-							'search',
-							{ q, role: r, limit: 20 },
-							controller.signal
-						);
-					else if (!q.trim())
-						users = (
-							await read<Page<DirectoryUser>>('users', { role: r, limit: 20 }, controller.signal)
-						).items;
-					else users = [];
+					const candidates = await promotionCandidates(r, q, controller.signal, promotion.id);
+					if (!controller.signal.aborted) users = candidates;
 				} catch (cause) {
 					if (!controller.signal.aborted) message = (cause as Error).message;
 				} finally {
@@ -86,9 +77,7 @@
 		</div>
 		<div class="select">
 			<select aria-label="Type de compte" bind:value={role}
-				><option value="user">Élèves</option><option value="teacher">Professeurs</option><option
-					value="admin">Administrateurs</option
-				><option value="">Tous les comptes</option></select
+				><option value="user">Élèves</option><option value="teaching">Enseignants</option></select
 			>
 		</div>
 	</div>
@@ -106,7 +95,9 @@
 			{#if users.length === 0}<p class="empty-state">Aucun compte trouvé.</p>{/if}{/if}
 	</div>
 	<p class="help mt-3">
-		{selected.length} compte(s) sélectionné(s). Les affectations existantes seront conservées.
+		{selected.length} compte{selected.length === 1 ? '' : 's'} sélectionné{selected.length === 1
+			? ''
+			: 's'}. Les affectations existantes seront conservées.
 	</p>
 	<div class="dialog-actions">
 		<button class="button is-light" disabled={busy} onclick={onclose}>Annuler</button><button

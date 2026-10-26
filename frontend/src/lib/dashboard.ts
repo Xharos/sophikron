@@ -1,10 +1,14 @@
-import type { Page, Promotion } from './types';
-export { roleLabels } from './roles';
+import type { DirectoryUser, Page, Promotion } from './types';
+import type { Subject } from './site';
+import { loginDestination } from './loginRedirect.ts';
+export { roleLabels } from './roles.ts';
 
 /** Same-origin dashboard transport; credentials and keys remain in server code. */
 async function responseData<T>(response: Response): Promise<T> {
 	if (response.status === 401) {
-		window.location.assign('/login');
+		window.location.assign(
+			loginDestination(window.location.pathname + window.location.search + window.location.hash)
+		);
 		throw new Error('Votre session a expiré.');
 	}
 	let body: unknown;
@@ -42,6 +46,30 @@ export async function command<T>(name: string, payload: Record<string, unknown> 
 	);
 }
 
+/** Use backend category filtering so combined teaching roles share one result limit and ranking. */
+export async function promotionCandidates(
+	category: 'user' | 'teaching',
+	query: string,
+	signal?: AbortSignal,
+	excludePromotionId?: number
+): Promise<DirectoryUser[]> {
+	const q = query.trim();
+	if (q.length === 1) return [];
+	if (q.length >= 2)
+		return read<DirectoryUser[]>(
+			'search',
+			{ q, role: category, limit: 20, exclude_promotion_id: excludePromotionId },
+			signal
+		);
+	return (
+		await read<Page<DirectoryUser>>(
+			'users',
+			{ role: category, limit: 20, exclude_promotion_id: excludePromotionId },
+			signal
+		)
+	).items;
+}
+
 export async function activePromotions(): Promise<Promotion[]> {
 	const items: Promotion[] = [];
 	let offset = 0;
@@ -52,6 +80,21 @@ export async function activePromotions(): Promise<Promotion[]> {
 		total = page.total;
 		offset += 100;
 		if (page.items.length === 0) break;
+	}
+	return items;
+}
+
+/** Load every available subject for administrator assignment forms. */
+export async function activeSubjects(): Promise<Subject[]> {
+	const items: Subject[] = [];
+	let offset = 0,
+		total = 1;
+	while (offset < total) {
+		const page = await read<Page<Subject>>('subjects', { is_active: true, offset, limit: 100 });
+		items.push(...page.items);
+		total = page.total;
+		offset += 100;
+		if (!page.items.length) break;
 	}
 	return items;
 }

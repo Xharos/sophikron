@@ -13,7 +13,15 @@ from sqlalchemy.exc import DBAPIError, IntegrityError
 
 from app.core.config import DatabaseSettings
 from app.core.database import Database
-from app.models import ActivityEvent, Promotion, Role, User, UserPromotion, UserRole
+from app.models import (
+    ActivityEvent,
+    Promotion,
+    PromotionAccountBlock,
+    Role,
+    User,
+    UserPromotion,
+    UserRole,
+)
 from tests.test_auth_postgres import PASSWORD, Harness
 
 pytestmark = [
@@ -49,6 +57,9 @@ async def clear_promotions(ids: list[int]) -> None:
     )
     try:
         async with database.sessions.begin() as session:
+            await session.execute(
+                delete(PromotionAccountBlock).where(PromotionAccountBlock.promotion_id.in_(ids))
+            )
             await session.execute(delete(UserPromotion).where(UserPromotion.promotion_id.in_(ids)))
             await session.execute(delete(Promotion).where(Promotion.id.in_(ids)))
     finally:
@@ -72,7 +83,7 @@ async def test_promotion_memberships_and_archive(auth_case: Harness) -> None:
             )
         ).status_code == 409
         ids = []
-        for role in ("user", "teacher", "admin"):
+        for role in ("user", "teacher", "kholleur"):
             user_id, _ = await case.create(role, activate=False)
             ids.append(user_id)
             path = f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}"
@@ -110,6 +121,431 @@ async def test_promotion_memberships_and_archive(auth_case: Harness) -> None:
         }
     finally:
         await clear_promotions([promotion_id])
+
+
+@pytest.mark.asyncio
+async def test_promotion_role_eligibility_and_teaching_filter(auth_case: Harness) -> None:
+    """Enforce all assignment paths and page the union of teaching roles without duplicates."""
+    case = auth_case
+    promotion_id = await make_promotion(case)
+    try:
+        ids = []
+        for index, roles in enumerate(
+            [
+                ["user"],
+                ["teacher"],
+                ["kholleur"],
+                ["teacher", "kholleur"],
+                ["admin", "teacher"],
+                ["admin", "kholleur"],
+                ["admin", "teacher", "kholleur"],
+            ]
+        ):
+            response = await case.client.post(
+                "/api/v1/admin/users",
+                json={
+                    "first_name": "Camille",
+                    "last_name": "Martin",
+                    "email": f"{case.prefix}-eligible-{index}@example.org",
+                    "roles": roles,
+                    "promotion_ids": [promotion_id],
+                },
+            )
+            assert response.status_code == 201, response.text
+            user_id = response.json()["id"]
+            case.ids.append(user_id)
+            ids.append(user_id)
+            link = f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}"
+            assert (await case.client.delete(link)).status_code == 204
+            assert (await case.client.put(link)).status_code == 204
+        path = f"/api/v1/admin/promotions/{promotion_id}/users"
+        assert (await case.client.post(path, json={"user_ids": ids})).status_code == 204
+        assert (await case.client.get(path)).json()["total"] == 7
+        for root, params in [
+            (path, {}),
+            ("/api/v1/admin/users", {"promotion_id": promotion_id}),
+        ]:
+            paged = []
+            for offset in [0, 2, 4]:
+                response = await case.client.get(
+                    root,
+                    params={
+                        **params,
+                        "role": "teaching",
+                        "offset": offset,
+                        "limit": 2,
+                    },
+                )
+                assert response.status_code == 200, response.text
+                assert response.json()["total"] == 6
+                paged.extend(item["id"] for item in response.json()["items"])
+            assert paged == ids[1:]
+        searched = await case.client.get(
+            "/api/v1/admin/users/search",
+            params={
+                "q": "Camille",
+                "role": "teaching",
+                "promotion_id": promotion_id,
+            },
+        )
+        assert searched.status_code == 200, searched.text
+        assert {item["id"] for item in searched.json()} == set(ids[1:])
+
+        admin_id, _ = await case.create("admin", activate=False)
+        pupil_id, _ = await case.create(activate=False)
+        assert (
+            await case.client.put(f"/api/v1/admin/users/{admin_id}/promotions/{promotion_id}")
+        ).status_code == 422
+        assert (
+            await case.client.post(
+                path,
+                json={
+                    "user_ids": [pupil_id, admin_id],
+                },
+            )
+        ).status_code == 422
+        assert (await case.client.get(path)).json()["total"] == 7
+        assert (await case.client.get(f"/api/v1/admin/users/{pupil_id}/promotions")).json()[
+            "total"
+        ] == 0
+        rejected = await case.client.post(
+            "/api/v1/admin/users",
+            json={
+                "first_name": "Camille",
+                "last_name": "Martin",
+                "email": f"{case.prefix}-rejected@example.org",
+                "roles": ["admin"],
+                "promotion_ids": [promotion_id],
+            },
+        )
+        assert rejected.status_code == 422
+        # The failed creation must not reserve the email or leave a partial account.
+        accepted = await case.client.post(
+            "/api/v1/admin/users",
+            json={
+                "first_name": "Camille",
+                "last_name": "Martin",
+                "email": f"{case.prefix}-rejected@example.org",
+                "roles": ["admin"],
+            },
+        )
+        assert accepted.status_code == 201, accepted.text
+        case.ids.append(accepted.json()["id"])
+        async with case.database.sessions() as session:
+            assert not list(
+                await session.scalars(
+                    select(ActivityEvent).where(
+                        ActivityEvent.event_type == "promotion.member_added",
+                        ActivityEvent.resource_id == promotion_id,
+                        ActivityEvent.subject_user_id.in_([admin_id, pupil_id]),
+                    )
+                )
+            )
+    finally:
+        await clear_promotions([promotion_id])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "roles", [["user"], ["teacher"], ["kholleur"], ["admin", "teacher", "kholleur"]]
+)
+async def test_promotion_candidates_exclude_members(auth_case: Harness, roles: list[str]) -> None:
+    """Exclude current members before pagination/ranking while retaining other promotion members.
+
+    Parameters
+    ----------
+    auth_case
+        Authenticated administrator and isolated PostgreSQL identities.
+    roles
+        Pupil or combined teaching grants for candidate accounts.
+    """
+    case = auth_case
+    promotion_id = await make_promotion(case, "TARGET")
+    other_id = await make_promotion(case, "OTHER")
+    ids = []
+    category = "user" if roles == ["user"] else "teaching"
+    try:
+        for index in range(3):
+            response = await case.client.post(
+                "/api/v1/admin/users",
+                json={
+                    "first_name": "Camille",
+                    "last_name": "Exclusion",
+                    "email": f"{case.prefix}-exclude-{index}@example.org",
+                    "roles": roles,
+                    "promotion_ids": [promotion_id]
+                    if index == 0
+                    else [other_id]
+                    if index == 1
+                    else [],
+                },
+            )
+            assert response.status_code == 201, response.text
+            user_id = response.json()["id"]
+            ids.append(user_id)
+            case.ids.append(user_id)
+        params = {"role": category, "exclude_promotion_id": promotion_id}
+        for offset, expected_id in enumerate(ids[1:]):
+            response = await case.client.get(
+                "/api/v1/admin/users", params={**params, "limit": 1, "offset": offset}
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["total"] == 2
+            assert [item["id"] for item in response.json()["items"]] == [expected_id]
+        for limit in [1, 20]:
+            response = await case.client.get(
+                "/api/v1/admin/users/search", params={**params, "q": "Exclusion", "limit": limit}
+            )
+            assert response.status_code == 200, response.text
+            assert len(response.json()) == min(2, limit)
+            assert {item["id"] for item in response.json()} <= set(ids[1:])
+        link = f"/api/v1/admin/users/{ids[0]}/promotions/{promotion_id}"
+        assert (await case.client.delete(link)).status_code == 204
+        response = await case.client.get("/api/v1/admin/users", params=params)
+        assert {item["id"] for item in response.json()["items"]} == set(ids)
+        assert (await case.client.put(link)).status_code == 204
+        response = await case.client.get(
+            "/api/v1/admin/users/search", params={**params, "q": "Exclusion"}
+        )
+        assert {item["id"] for item in response.json()} == set(ids[1:])
+        for root, query in [
+            ("/api/v1/admin/users", {}),
+            ("/api/v1/admin/users/search", {"q": "Exclusion"}),
+        ]:
+            for value, expected_status in [(0, 422), (9223372036854775807, 404)]:
+                response = await case.client.get(
+                    root, params={**query, "exclude_promotion_id": value}
+                )
+                assert response.status_code == expected_status, response.text
+        await case.client.post("/api/v1/auth/logout")
+        denied = await case.client.get("/api/v1/admin/users", params=params)
+        assert denied.status_code == 401
+    finally:
+        await clear_promotions([promotion_id, other_id])
+
+
+@pytest.mark.asyncio
+async def test_losing_promotion_eligibility_removes_memberships_atomically(
+    auth_case: Harness,
+) -> None:
+    """Remove active/archived memberships only on eligibility loss, with rollback and audit."""
+    case = auth_case
+    promotions = [await make_promotion(case, name) for name in ("ACTIVE", "ARCHIVED")]
+    user_id, _ = await case.create("teacher", activate=False)
+    try:
+        for promotion_id in promotions:
+            assert (
+                await case.client.put(f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}")
+            ).status_code == 204
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/promotions/{promotions[1]}", json={"is_active": False}
+            )
+        ).status_code == 200
+        path = f"/api/v1/admin/users/{user_id}/profile"
+        for version, roles in enumerate(
+            [
+                ["admin", "teacher", "kholleur"],
+                ["admin", "kholleur"],
+                ["user"],
+            ]
+        ):
+            response = await case.client.patch(
+                path, json={"expected_version": version, "roles": roles}
+            )
+            assert response.status_code == 200, response.text
+            assert len(response.json()["promotions"]) == 2
+        email = (await case.client.get(f"/api/v1/admin/users/{case.administrator}")).json()["email"]
+        rejected = await case.client.patch(
+            path,
+            json={
+                "expected_version": 3,
+                "roles": ["admin"],
+                "email": email,
+            },
+        )
+        assert rejected.status_code == 409
+        current = (await case.client.get(path)).json()
+        assert current["roles"] == ["user"] and len(current["promotions"]) == 2
+        assert (
+            await case.client.patch(
+                path,
+                json={
+                    "expected_version": 2,
+                    "roles": ["admin"],
+                },
+            )
+        ).status_code == 409
+        accepted = await case.client.patch(path, json={"expected_version": 3, "roles": ["admin"]})
+        assert accepted.status_code == 200, accepted.text
+        assert accepted.json()["promotions"] == []
+        assert accepted.json()["profile_version"] == 4
+        async with case.database.sessions() as session:
+            removed = list(
+                await session.scalars(
+                    select(ActivityEvent).where(
+                        ActivityEvent.event_type == "promotion.member_removed",
+                        ActivityEvent.subject_user_id == user_id,
+                    )
+                )
+            )
+            assert {item.resource_id for item in removed} == set(promotions)
+            assert all(item.data == {"reason": "role_removed"} for item in removed)
+            assert all(item.subject_role == "user" for item in removed)
+        restored = await case.client.patch(
+            path, json={"expected_version": 4, "roles": ["kholleur"]}
+        )
+        assert restored.status_code == 200 and restored.json()["promotions"] == []
+    finally:
+        await clear_promotions(promotions)
+
+
+@pytest.mark.asyncio
+async def test_promotion_student_blocks_preserve_independent_causes(auth_case: Harness) -> None:
+    """Revoke sessions and restore only pupils free of manual and other promotion blocks."""
+    case = auth_case
+    promotions = [await make_promotion(case, label) for label in ("FIRST", "SECOND")]
+    students = [await case.create() for _ in range(3)]
+    pending, _ = await case.create(activate=False)
+    staff = [await case.create(role) for role in ("teacher", "kholleur", "admin")]
+    try:
+        for promotion_id in promotions:
+            for user_id in [item[0] for item in students + staff[:2]] + [pending]:
+                response = await case.client.put(
+                    f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}"
+                )
+                assert response.status_code == 204, response.text
+        first = f"/api/v1/admin/promotions/{promotions[0]}"
+        second = f"/api/v1/admin/promotions/{promotions[1]}"
+        regular, manual_before, manual_after = [item[0] for item in students]
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{manual_before}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        # Default archive keeps every account's previous state.
+        assert (await case.client.patch(first, json={"is_active": False})).status_code == 200
+        async with case.database.sessions() as session:
+            assert (await session.get(User, regular)).status == "active"
+        assert (await case.client.patch(first, json={"is_active": True})).status_code == 200
+        assert (await case.client.patch(first, json={"archive_students": True})).status_code == 422
+        assert (
+            await case.client.patch(
+                first,
+                json={
+                    "is_active": False,
+                    "archive_students": True,
+                },
+            )
+        ).status_code == 409
+        assert (await case.client.get(first)).json()["is_active"] is True
+        preview = (await case.client.get(first + "/archive-impact")).json()
+        assert preview["student_count"] == 4 and preview["accounts_to_disable"] == 3
+        logged = await case.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": students[0][1],
+                "password": PASSWORD,
+            },
+        )
+        assert logged.status_code == 200
+        token = case.client.cookies.get(case.app.state.auth_settings.cookie_name)
+        case.as_admin()
+        archive = {"is_active": False, "archive_students": True, "acknowledge_student_impact": True}
+        assert (await case.client.patch(first, json=archive)).status_code == 200
+        case.client.cookies.clear()
+        case.client.cookies.set(case.app.state.auth_settings.cookie_name, token)
+        assert (await case.client.get("/api/v1/auth/me")).status_code == 401
+        disabled = await case.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": students[0][1],
+                "password": PASSWORD,
+            },
+        )
+        unknown = await case.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": "missing-account",
+                "password": PASSWORD,
+            },
+        )
+        assert disabled.status_code == unknown.status_code == 401
+        assert disabled.json() == unknown.json()
+        case.as_admin()
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{regular}/archive", json={"archived": False}
+            )
+        ).status_code == 409
+        assert (await case.client.patch(second, json=archive)).status_code == 200
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{manual_after}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        # A later membership removal must not lose the recorded cause or restoration.
+        assert (
+            await case.client.delete(f"/api/v1/admin/users/{pending}/promotions/{promotions[0]}")
+        ).status_code == 204
+        assert (await case.client.patch(first, json={"is_active": True})).status_code == 409
+        restore = {"is_active": True, "acknowledge_student_impact": True}
+        assert (await case.client.patch(first, json=restore)).status_code == 200
+        async with case.database.sessions() as session:
+            assert (await session.get(User, regular)).status == "disabled"
+            for user_id, _ in staff:
+                assert (await session.get(User, user_id)).status == "active"
+        preview = (await case.client.get(second + "/archive-impact")).json()
+        assert preview["accounts_to_restore"] == 2
+        assert preview["accounts_remaining_disabled"] == 2
+        assert (await case.client.patch(second, json=restore)).status_code == 200
+        async with case.database.sessions() as session:
+            assert (await session.get(User, regular)).status == "active"
+            assert (await session.get(User, pending)).status == "pending_activation"
+            for user_id in (manual_before, manual_after):
+                user = await session.get(User, user_id)
+                assert user.status == "disabled" and user.manually_archived
+            assert not list(await session.scalars(select(PromotionAccountBlock)))
+        events = (
+            await case.client.get("/api/v1/admin/events", params={"subject_user_id": regular})
+        ).json()["items"]
+        automatic = [event for event in events if event["event_type"] == "user.archived"]
+        assert len(automatic) == 1
+        assert automatic[0]["data"]["promotion_id"] == promotions[0]
+        assert automatic[0]["data"]["promotion"]["identifier"] == "FIRST"
+        case.client.cookies.clear()
+        case.client.cookies.set(case.app.state.auth_settings.cookie_name, token)
+        assert (await case.client.get("/api/v1/auth/me")).status_code == 401
+        assert (
+            await case.client.post(
+                "/api/v1/auth/login",
+                json={
+                    "identifier": students[0][1],
+                    "password": PASSWORD,
+                },
+            )
+        ).status_code == 200
+    finally:
+        await clear_promotions(promotions)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("role", ["user", "teacher", "kholleur"])
+async def test_promotion_impact_and_team_are_admin_only(auth_case: Harness, role: str) -> None:
+    """Deny staff directory and account archival previews to every non-admin role."""
+    case = auth_case
+    _, username = await case.create(role)
+    assert (
+        await case.client.post(
+            "/api/v1/auth/login",
+            json={
+                "identifier": username,
+                "password": PASSWORD,
+            },
+        )
+    ).status_code == 200
+    for path in ("/api/v1/admin/team", "/api/v1/admin/promotions/1/archive-impact"):
+        assert (await case.client.get(path)).status_code == 403
 
 
 @pytest.mark.asyncio
@@ -209,6 +645,22 @@ async def test_database_role_constraints_and_journal_permissions(auth_case: Harn
         with pytest.raises(IntegrityError):
             async with session.begin():
                 role_id = await session.scalar(select(Role.id).where(Role.code == "teacher"))
+                session.add(UserRole(user_id=user_id, role_id=role_id))
+    staff_id, _ = await case.create("teacher", activate=False)
+    async with case.database.sessions.begin() as session:
+        for code in ("kholleur", "admin"):
+            role_id = await session.scalar(select(Role.id).where(Role.code == code))
+            session.add(UserRole(user_id=staff_id, role_id=role_id))
+    async with case.database.sessions() as session:
+        with pytest.raises(IntegrityError):
+            async with session.begin():
+                role_id = await session.scalar(select(Role.id).where(Role.code == "user"))
+                session.add(UserRole(user_id=staff_id, role_id=role_id))
+    # The exclusive pupil role must also reject the newly combinable kholleur role.
+    async with case.database.sessions() as session:
+        with pytest.raises(IntegrityError):
+            async with session.begin():
+                role_id = await session.scalar(select(Role.id).where(Role.code == "kholleur"))
                 session.add(UserRole(user_id=user_id, role_id=role_id))
     for statement in (
         "DELETE FROM sophikron.activity_events",

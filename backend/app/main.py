@@ -1,10 +1,12 @@
 """FastAPI application lifecycle and infrastructure endpoints."""
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from typing import Annotated
 
+import anyio
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -15,9 +17,11 @@ from app.api.router import router
 from app.core.auth_config import AuthSettings
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_database
+from app.core.documents import DocumentSettings
 from app.core.http import AuthRequestMiddleware, ConfiguredCORSMiddleware, SearchAccessLogFilter
 from app.core.security import IdentityCipher, PasswordCapacityError, PasswordSecurity
 from app.services.auth import AuthService
+from app.services.document_storage import DocumentStorage, document_maintenance
 from app.services.errors import INVALID_REQUEST, AuthError
 from app.services.mail import DisabledMailer, InvitationMailer, SmtpMailer
 from app.services.search import NameSearchCache
@@ -71,12 +75,26 @@ def create_app(
         application.state.passwords = passwords
         application.state.mailer = delivery
         application.state.name_search_cache = NameSearchCache()
+        documents = DocumentSettings()
+        application.state.document_settings = documents
+        application.state.document_download_slots = anyio.Semaphore(
+            documents.max_concurrent_downloads, max_value=documents.max_concurrent_downloads
+        )
+        maintenance = None
         try:
             async with database.sessions() as session:
                 service = AuthService(session, authentication, cipher, passwords, delivery)
                 await service.initialize_installation()
+            if documents.maintenance_enabled:
+                maintenance = asyncio.create_task(
+                    document_maintenance(database, DocumentStorage(documents))
+                )
             yield
         finally:
+            if maintenance is not None:
+                maintenance.cancel()
+                with suppress(asyncio.CancelledError):
+                    await maintenance
             application.state.name_search_cache.clear()
             await database.close()
             del application.state.database

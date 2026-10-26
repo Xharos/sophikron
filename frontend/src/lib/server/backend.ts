@@ -94,7 +94,12 @@ export async function requestBackend<T>(
 		throw new BackendError(405, 'Cette opération exige une soumission de formulaire.');
 	}
 	const [pathname] = path.split('?');
-	if (!/^\/(auth|admin|teaching)\/[a-zA-Z0-9/-]+$/.test(pathname) || path.includes('#')) {
+	if (
+		!/^\/(?:(?:auth|admin|teaching)\/[a-zA-Z0-9/-]+|lessons(?:\/[a-zA-Z0-9/-]+)?|site)$/.test(
+			pathname
+		) ||
+		path.includes('#')
+	) {
 		throw new BackendError(500, 'Chemin de service invalide.');
 	}
 	const address = event.getClientAddress().replace(/^::ffff:/, '');

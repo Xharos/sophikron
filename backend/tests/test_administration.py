@@ -8,6 +8,7 @@ from pydantic import ValidationError
 
 from app.core.http import SearchAccessLogFilter
 from app.core.identity import normalize_name, username_prefix
+from app.core.roles import can_join_promotion
 from app.models import Promotion
 from app.schemas.administration import PromotionCreate, PromotionUpdate
 from app.schemas.auth import CreateUserRequest
@@ -42,7 +43,19 @@ def test_invalid_names(name: str) -> None:
         normalize_name(name)
 
 
-@pytest.mark.parametrize("roles", [["user"], ["teacher"], ["admin"], ["teacher", "admin"]])
+@pytest.mark.parametrize(
+    "roles",
+    [
+        ["user"],
+        ["kholleur"],
+        ["teacher"],
+        ["admin"],
+        ["teacher", "admin"],
+        ["kholleur", "teacher"],
+        ["kholleur", "admin"],
+        ["kholleur", "teacher", "admin"],
+    ],
+)
 def test_allowed_roles(roles: list[str]) -> None:
     """Keep administrator-only accounts valid without implying teacher permissions."""
     data = CreateUserRequest(
@@ -58,12 +71,49 @@ def test_default_student_role() -> None:
 
 
 @pytest.mark.parametrize(
+    "roles,expected",
+    [
+        (["user"], True),
+        (["teacher"], True),
+        (["kholleur"], True),
+        (["teacher", "kholleur"], True),
+        (["admin", "teacher"], True),
+        (["admin", "kholleur"], True),
+        (["admin", "teacher", "kholleur"], True),
+        (["admin"], False),
+        ([], False),
+        (["unknown"], False),
+    ],
+)
+def test_promotion_role_eligibility(roles: list[str], expected: bool) -> None:
+    """Require an explicit eligible role independently of administrator priority."""
+    assert can_join_promotion(roles) is expected
+
+
+@pytest.mark.asyncio
+async def test_admin_only_creation_rejects_promotions_before_writes() -> None:
+    """Reject ineligible creation before reserving an ID or inserting any account."""
+    service = object.__new__(AuthService)
+    data = CreateUserRequest(
+        first_name="Camille",
+        last_name="Martin",
+        email="camille@example.org",
+        roles=["admin"],
+        promotion_ids=[1],
+    )
+    with pytest.raises(AuthError) as failure:
+        await service._create(data)
+    assert failure.value.status == 422
+
+
+@pytest.mark.parametrize(
     "roles",
     [
         [],
         ["student"],
         ["user", "teacher"],
         ["user", "admin"],
+        ["user", "kholleur"],
         ["user", "teacher", "admin"],
         ["teacher", "teacher"],
     ],

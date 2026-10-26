@@ -65,6 +65,11 @@ authorization. Using a separate Compose project creates an independent local vol
 
 ## Roles and runtime secrets
 
+The five feature revisions also own reversible account archival: authentication defines
+`users.manually_archived`; promotions defines `promotion_account_blocks`, a separate association with
+composite `(user_id, promotion_id)` primary key and an index on promotion ID. Causes survive membership
+changes until the responsible promotion is reactivated. No sixth migration is needed for this fresh baseline.
+
 | Role | Purpose | Secret available to |
 | --- | --- | --- |
 | `postgres` | Initial provisioning and cluster administration | PostgreSQL container |
@@ -154,8 +159,9 @@ Add future model imports in `app/models/__init__.py` so Alembic sees them throug
 Metadata uses the explicit `sophikron` schema and stable constraint names. Name check constraints.
 Connections use `search_path=pg_catalog`; qualify application tables explicitly in handwritten SQL.
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
-Its explicitly reconstructed test-only history contains 0001 users/authentication/permissions,
-0002 promotions/memberships and 0003 activity events. All autonomous IDs are bigint identities;
+Its explicitly reconstructed fresh-install history contains five features in dependency order:
+authentication (including the journal), configuration (including calendars), promotions, subjects,
+and lessons. All autonomous IDs are bigint identities;
 associations use composite keys. See [migration requirements](administration.md#migrations-and-verification)
 before using these revisions; older populated/stamped development databases are incompatible.
 

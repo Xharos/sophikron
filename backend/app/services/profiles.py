@@ -4,11 +4,14 @@ import json
 from datetime import date
 
 from pydantic import ValidationError
-from sqlalchemy import delete, select
+from sqlalchemy import delete, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import aliased
 
+from app.core.roles import can_join_promotion
 from app.models import Promotion, User, UserPromotion, UserRole
+from app.models.lessons import Lesson, LessonCollaborator
+from app.models.site import Subject, TeacherSubject
 from app.schemas.administration import PromotionBadge
 from app.schemas.profile import (
     PRIVATE_PROFILE_FIELDS,
@@ -17,9 +20,13 @@ from app.schemas.profile import (
     OrientationUpdate,
     SchoolProfile,
 )
-from app.services.activity import forget_role_snapshot, record_event
+from app.services.activity import forget_role_snapshot, record_event, record_subject_changes
 from app.services.auth import AuthService, UserContext
 from app.services.communes import validate_commune
+from app.services.course_rights import (
+    course_impact,
+    require_impact_acknowledgement,
+)
 from app.services.errors import AuthError
 from app.services.teaching import TeachingService
 
@@ -101,6 +108,13 @@ class ProfileService:
                 for promotion in promotions
             ],
             can_edit_all=can_edit_all,
+            subject_ids=list(
+                await self.db.scalars(
+                    select(TeacherSubject.subject_id).where(TeacherSubject.user_id == user.id)
+                )
+            )
+            if owner or can_edit_all
+            else [],
             can_edit_orientation=not owner
             and (can_edit_all or "orientation.manage" in permissions),
         )
@@ -144,6 +158,27 @@ class ProfileService:
             subject_user_id=user.id,
             data={"previous_roles": list(previous), "roles": sorted(roles)},
         )
+        if not can_join_promotion(roles):
+            promotions = list(
+                await self.db.scalars(
+                    select(Promotion)
+                    .join(UserPromotion)
+                    .where(UserPromotion.user_id == user.id)
+                    .order_by(Promotion.id)
+                )
+            )
+            await self.db.execute(delete(UserPromotion).where(UserPromotion.user_id == user.id))
+            for promotion in promotions:
+                await record_event(
+                    self.db,
+                    "promotion.member_removed",
+                    actor.id,
+                    subject_user_id=user.id,
+                    resource_type="promotion",
+                    resource_id=promotion.id,
+                    data={"reason": "role_removed"},
+                    promotion=promotion,
+                )
         await self.db.execute(delete(UserRole).where(UserRole.user_id == user.id))
         self.db.add_all([UserRole(user_id=user.id, role_id=role.id) for role in records])
         forget_role_snapshot(self.db, user.id)
@@ -156,6 +191,8 @@ class ProfileService:
         values = data.model_dump(mode="json", exclude_unset=True)
         version = values.pop("expected_version")
         roles = values.pop("roles", None)
+        subject_ids = values.pop("subject_ids", None)
+        acknowledged = values.pop("acknowledge_course_impact", False)
         location_fields = {"city", "postal_code", "commune_code"}
         if location_fields.intersection(values):
             if not location_fields.issubset(values):
@@ -181,9 +218,82 @@ class ProfileService:
                     raise AuthError(
                         409, "Cette fiche a été modifiée. Rechargez-la avant d’enregistrer."
                     )
+                previous_roles = set(await self.auth.repo.roles(user.id))
+                next_roles = set(roles) if roles is not None else previous_roles
+                old_subjects = set(
+                    await self.db.scalars(
+                        select(TeacherSubject.subject_id).where(TeacherSubject.user_id == user.id)
+                    )
+                )
+                next_subjects = set(subject_ids) if subject_ids is not None else old_subjects
+                if not next_roles.intersection({"teacher", "kholleur"}):
+                    if subject_ids:
+                        raise AuthError(
+                            422, "Seul un enseignant ou un khôlleur peut recevoir des matières."
+                        )
+                    next_subjects = set()
+                if subject_ids and user.status == "disabled":
+                    raise AuthError(409, "Réactivez le compte avant de lui affecter des matières.")
+                if next_subjects:
+                    valid = set(
+                        await self.db.scalars(
+                            select(Subject.id).where(
+                                Subject.id.in_(next_subjects), Subject.is_active
+                            )
+                        )
+                    )
+                    if valid != next_subjects:
+                        raise AuthError(422, "Une matière est inconnue ou archivée.")
+                removed = old_subjects - next_subjects
+                if previous_roles != next_roles or removed:
+                    courses = await course_impact(self.db, user.id)
+                    impacted = []
+                    revoked_links = []
+                    for course in courses:
+                        had_teaching = (
+                            "teacher" in previous_roles and course.subject_id in old_subjects
+                        )
+                        has_teaching = (
+                            "teacher" in next_roles and course.subject_id in next_subjects
+                        )
+                        lost_reading = (
+                            "kholleur" in previous_roles
+                            and "kholleur" not in next_roles
+                            and not has_teaching
+                            and "admin" not in next_roles
+                        )
+                        if (had_teaching and not has_teaching) or lost_reading:
+                            impacted.append(course)
+                        if not has_teaching and "kholleur" not in next_roles:
+                            revoked_links.append(course.id)
+                    require_impact_acknowledgement(impacted, acknowledged)
+                    if impacted:
+                        await self.db.execute(
+                            update(Lesson)
+                            .where(Lesson.id.in_([item.id for item in impacted]))
+                            .values(version=Lesson.version + 1)
+                        )
+                    if revoked_links:
+                        await self.db.execute(
+                            delete(LessonCollaborator).where(
+                                LessonCollaborator.user_id == user.id,
+                                LessonCollaborator.lesson_id.in_(revoked_links),
+                            )
+                        )
                 roles_changed = (
                     await self.replace_roles(actor, user, roles) if roles is not None else False
                 )
+                subjects_changed = old_subjects != next_subjects
+                if subjects_changed:
+                    await self.db.execute(
+                        delete(TeacherSubject).where(TeacherSubject.user_id == user.id)
+                    )
+                    self.db.add_all(
+                        [
+                            TeacherSubject(user_id=user.id, subject_id=identifier)
+                            for identifier in next_subjects
+                        ]
+                    )
                 existing = self.decode(user).model_dump(mode="json")
                 candidate = {
                     **existing,
@@ -222,7 +332,7 @@ class ProfileService:
                         user.email_lookup = self.auth.cipher.lookup("email", value)
                         user.email_verified_at = None
                         await self.auth.repo.revoke_invitations(user.id, self.auth.clock())
-                if changed or roles_changed:
+                if changed or roles_changed or subjects_changed:
                     user.profile_version += 1
                     user.updated_at = self.auth.clock()
                 if changed:
@@ -232,6 +342,18 @@ class ProfileService:
                         actor.id,
                         subject_user_id=user.id,
                         data={"changed_fields": changed},
+                    )
+                if subjects_changed:
+                    await record_subject_changes(
+                        self.db,
+                        actor.id,
+                        user.id,
+                        added=next_subjects - old_subjects,
+                        removed=old_subjects - next_subjects,
+                        reason="role_removed"
+                        if previous_roles.intersection({"teacher", "kholleur"})
+                        and not next_roles.intersection({"teacher", "kholleur"})
+                        else "manual",
                     )
                 await self.db.flush()
                 return await self.present(actor, user)

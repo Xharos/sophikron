@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
 	eventDetails,
+	eventSubjects,
+	eventRoles,
 	highestRole,
 	messageParts,
 	roleTransitionLabel
@@ -41,6 +43,8 @@ test('messages preserve participant positions and leave unknown markup as litera
 
 test('combined role changes stay explicit even when their highest role remains administrator', () => {
 	assert.equal(highestRole(['teacher', 'admin']), 'admin');
+	assert.equal(highestRole(['kholleur']), 'kholleur');
+	assert.deepEqual(eventRoles(['kholleur', 'forged']), ['kholleur']);
 	assert.equal(highestRole([]), null);
 	assert.equal(
 		roleTransitionLabel('Marie', ['teacher', 'admin']),
@@ -72,4 +76,148 @@ test('profile messages list changed fields without exposing copied personal valu
 		eventDetails(event('invitation.issued', { purpose: 'reset', delivery: 'manual' })),
 		['Invitation à réinitialiser le mot de passe', 'Lien à remettre manuellement']
 	);
+});
+
+test('course events expose link tokens and useful scheduling facts without body content', () => {
+	assert.deepEqual(
+		messageParts('{actor} a modifié {lesson}.').map((part) => part.kind),
+		['actor', 'text', 'lesson', 'text']
+	);
+	const details = eventDetails(
+		event('lesson.element_updated', {
+			element_kind: 'text',
+			element_title: 'Introduction',
+			changed_fields: ['body', 'schedule_mode'],
+			previous_period: { mode: 'inherit', starts_on: null, ends_on: null },
+			period: { mode: 'from', starts_on: '2026-09-01', ends_on: null },
+			body: 'PRIVATE-CONTENT'
+		})
+	);
+	assert.ok(details.includes('Texte : Introduction'));
+	assert.ok(details.includes('Champs modifiés : Contenu, Règle de disponibilité'));
+	assert.ok(details.some((detail) => detail.includes('2026-09-01')));
+	assert.ok(!details.join(' ').includes('PRIVATE-CONTENT'));
+});
+
+test('assignment deltas validate historical subject tags and retain automatic causes', () => {
+	const matter = { id: 12, name: 'Mathématiques', icon: 'calculator', color: '#123456' };
+	assert.deepEqual(eventSubjects([matter]), [matter]);
+	assert.deepEqual(
+		eventSubjects([
+			null,
+			{ ...matter, color: 'red' },
+			{ ...matter, icon: '<svg>' },
+			{ ...matter, id: -1 }
+		]),
+		[]
+	);
+	assert.deepEqual(eventDetails(event('user.subjects_updated', { reason: 'account_archived' })), [
+		'Retrait automatique lors de l’archivage du compte.'
+	]);
+	for (const type of [
+		'user.subjects_updated',
+		'subject.saved',
+		'calendar.saved',
+		'calendar.deleted',
+		'site.updated'
+	])
+		assert.deepEqual(eventDetails(event(type, {})), []);
+});
+test('site, subject and calendar details identify saved facts without copying text bodies', () => {
+	const site = eventDetails(
+		event('site.updated', {
+			changed_fields: ['name', 'home_text', 'holiday_color'],
+			previous_name: 'Avant',
+			name: 'Après',
+			home_text: 'PRIVATE-BODY'
+		})
+	);
+	assert.ok(site.includes('Nom du site : Avant → Après'));
+	assert.ok(site.some((line) => line.includes('Texte d’accueil, Couleur des vacances')));
+	assert.ok(!site.join(' ').includes('PRIVATE-BODY'));
+	const calendar = eventDetails(
+		event('calendar.deleted', {
+			entry_type: 'timeline',
+			action: 'deleted',
+			name: 'Deuxième année',
+			starts_on: '2026-09-01',
+			ends_on: '2027-08-31',
+			deleted_events: 2,
+			retained_events: 1
+		})
+	);
+	assert.ok(calendar.includes('Timeline : Deuxième année'));
+	assert.ok(calendar.includes('Action : Suppression'));
+	assert.ok(calendar.includes('2 événements exclusifs supprimés'));
+	assert.ok(calendar.includes('1 événement partagé conservé'));
+	assert.ok(
+		eventDetails(
+			event('subject.saved', { action: 'updated', changed_fields: ['name', 'color'] })
+		).includes('Champs modifiés : Nom, Couleur')
+	);
+});
+
+test('promotion account actions identify their cause and effective login changes', () => {
+	assert.deepEqual(eventDetails(event('promotion.member_removed', { reason: 'role_removed' })), [
+		'Retrait automatique : aucun rôle Élève, Enseignant ou Khôlleur conservé.'
+	]);
+	assert.deepEqual(eventDetails(event('promotion.member_removed', {})), []);
+	assert.deepEqual(eventDetails(event('promotion.member_removed', { reason: 'manual' })), []);
+	assert.deepEqual(
+		eventDetails(
+			event('user.archived', { promotion_id: 3, promotion: { year: 2026, identifier: 'PCSI' } })
+		),
+		['Via la promotion 2026 · PCSI']
+	);
+	assert.deepEqual(eventDetails(event('user.archived', {})), []);
+	assert.deepEqual(
+		eventDetails(event('promotion.reactivated', { student_blocks: 5, accounts_changed: 3 })),
+		['5 blocages élèves levés', '3 comptes réactivés']
+	);
+});
+
+test('activity counts use singular only for one, including adjective agreements', () => {
+	for (const count of [0, 1, 2]) {
+		const suffix = count === 1 ? '' : 's';
+		for (const [action, block, account] of [
+			['archived', 'ajouté', 'désactivé'],
+			['reactivated', 'levé', 'réactivé']
+		]) {
+			assert.deepEqual(
+				eventDetails(
+					event(`promotion.${action}`, { student_blocks: count, accounts_changed: count })
+				),
+				[
+					`${count} blocage${suffix} élèves ${block}${suffix}`,
+					`${count} compte${suffix} ${account}${suffix}`
+				]
+			);
+		}
+		assert.ok(
+			eventDetails(event('calendar.saved', { name: 'Année', timeline_count: count })).includes(
+				`${count} timeline${suffix} concernée${suffix}`
+			)
+		);
+		assert.ok(
+			eventDetails(event('lesson.element_deleted', { removed_count: count })).includes(
+				`${count} élément${suffix} supprimé${suffix}, enfants compris`
+			)
+		);
+		if (count > 0) {
+			assert.ok(
+				eventDetails(
+					event('subject.archived', { action: 'archived', removed_assignments: count })
+				).includes(`${count} affectation${suffix} retirée${suffix}`)
+			);
+			const calendar = eventDetails(
+				event('calendar.deleted', { name: 'Année', deleted_events: count, retained_events: count })
+			);
+			assert.ok(
+				calendar.includes(`${count} événement${suffix} exclusif${suffix} supprimé${suffix}`)
+			);
+			assert.ok(
+				calendar.includes(`${count} événement${suffix} partagé${suffix} conservé${suffix}`)
+			);
+		}
+	}
 });

@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { activePromotions, command } from '#lib/dashboard';
-	import { roleOptions, rolesForChoice } from '#lib/roles';
-	import RoleBadges from '../RoleBadges.svelte';
+	import { canJoinPromotion, roleSelectionError } from '#lib/roles';
+	import RoleSelector from '../RoleSelector.svelte';
 	import type { AccessInvitation, Promotion, User } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
@@ -16,7 +16,8 @@
 	let first = $state('');
 	let last = $state('');
 	let email = $state('');
-	let role = $state('user');
+	let roles = $state<string[]>(['user']);
+	const eligible = $derived(canJoinPromotion(roles));
 	let promotions = $state<Promotion[]>([]);
 	let selected = $state<number[]>(untrack(() => (promotionId ? [promotionId] : [])));
 	let promotionError = $state('');
@@ -33,6 +34,8 @@
 	});
 	async function create(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
+		message = roleSelectionError(roles);
+		if (message) return;
 		busy = true;
 		message = '';
 		try {
@@ -41,8 +44,8 @@
 					first_name: first,
 					last_name: last,
 					email,
-					roles: rolesForChoice(role),
-					promotion_ids: selected
+					roles,
+					promotion_ids: eligible ? selected : []
 				}
 			});
 			oncreated();
@@ -70,7 +73,7 @@
 		first = '';
 		last = '';
 		email = '';
-		role = 'user';
+		roles = ['user'];
 		message = '';
 	}
 </script>
@@ -136,30 +139,22 @@
 					required
 				/>
 			</div>
-			<div class="field">
-				<label class="label" for="new-role">Rôle</label>
-				<div class="select is-fullwidth">
-					<select id="new-role" bind:value={role}>
-						{#each roleOptions as option (option.value)}
-							<option value={option.value}>{option.label}</option>
-						{/each}</select
-					>
-				</div>
-				<p class="mt-2"><RoleBadges roles={rolesForChoice(role)} /></p>
-			</div>
+			<div class="field"><RoleSelector bind:selected={roles} disabled={busy} /></div>
 			<fieldset class="field">
 				<legend class="label">Promotions <span class="muted">· facultatif</span></legend>
 				{#if promotionError}<p class="notification is-warning is-light">{promotionError}</p>{/if}
-				<div class="promotion-checks">
-					{#each promotions as promotion (promotion.id)}<label class="checkbox"
-							><input type="checkbox" value={promotion.id} bind:group={selected} /><PromotionTag
-								{promotion}
-							/></label
-						>{/each}
-					{#if promotions.length === 0 && !promotionError}<p class="muted text-small">
-							Aucune promotion active disponible.
-						</p>{/if}
-				</div>
+				{#if !eligible}<p class="help">
+						L’affectation à une promotion nécessite le rôle Élève, Enseignant ou Khôlleur.
+					</p>{:else}<div class="promotion-checks">
+						{#each promotions as promotion (promotion.id)}<label class="checkbox"
+								><input type="checkbox" value={promotion.id} bind:group={selected} /><PromotionTag
+									{promotion}
+								/></label
+							>{/each}
+						{#if promotions.length === 0 && !promotionError}<p class="muted text-small">
+								Aucune promotion active disponible.
+							</p>{/if}
+					</div>{/if}
 			</fieldset>
 			<div class="dialog-actions">
 				<button class="button is-light" type="button" onclick={onclose} disabled={busy}

@@ -1,12 +1,12 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { api } from '#lib/server/api';
-import { confirmPassword, formFailure, textField } from '#lib/server/forms';
+import { confirmPassword, formFailure, requirePageAccess, textField } from '#lib/server/forms';
 import type { Actions, PageServerLoad } from './$types';
 import type { User } from '#lib/types';
 
-export const load: PageServerLoad = ({ locals }) => {
-	if (!locals.user) redirect(303, '/login');
-	if (!locals.user.is_bootstrap) redirect(303, '/');
+export const load: PageServerLoad = (event) => {
+	requirePageAccess(event);
+	if (!event.locals.user!.is_bootstrap) redirect(303, '/');
 };
 
 export const actions: Actions = {

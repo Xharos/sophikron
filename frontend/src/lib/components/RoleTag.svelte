@@ -36,6 +36,7 @@
 		class:role-student={role === 'user'}
 		class:role-teacher={role === 'teacher'}
 		class:role-admin={role === 'admin'}
+		class:role-kholleur={role === 'kholleur'}
 		href={resolve(`/dashboard/user?id=${userId}`)}
 		title={`Voir la fiche · ${title}`}
 	>
@@ -47,6 +48,7 @@
 		class:role-student={role === 'user'}
 		class:role-teacher={role === 'teacher'}
 		class:role-admin={role === 'admin'}
+		class:role-kholleur={role === 'kholleur'}
 		{title}
 	>
 		{@render content()}
@@ -62,24 +64,28 @@
 		border-radius: 999px;
 		font-size: 0.75rem;
 		font-weight: 600;
-		background: #edf1fa;
-		color: #334155;
+		background: var(--color-soft);
+		color: var(--color-ink);
 		vertical-align: middle;
 		text-decoration: none;
 		max-width: 100%;
 		overflow-wrap: anywhere;
 	}
 	.role-student {
-		background: #e8f1ff;
-		color: #174ea6;
+		background: var(--color-info-soft);
+		color: var(--color-info);
 	}
 	.role-teacher {
-		background: #e7f3ec;
-		color: #175c36;
+		background: var(--color-success-soft);
+		color: var(--color-success);
 	}
 	.role-admin {
-		background: #fdebec;
-		color: #a51d2d;
+		background: var(--color-danger-soft);
+		color: var(--color-danger);
+	}
+	.role-kholleur {
+		background: var(--color-violet-soft);
+		color: var(--color-violet);
 	}
 	a:hover {
 		text-decoration: underline;

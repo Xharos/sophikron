@@ -19,6 +19,9 @@ dependencies = [
     "email-validator>=2.3,<3",
     "anyio>=4,<5",
     "rapidfuzz>=3.14,<4",
+    "Pillow>=12,<14",
+    "pypdf>=6,<7",
+    "defusedxml>=0.7,<1",
 ]
 
 [project.optional-dependencies]

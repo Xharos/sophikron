@@ -16,6 +16,38 @@ const config = {
 	backendOrigin: 'http://backend:8000',
 	secure: true
 };
+
+test('the bridge permits course roots and element operations while refusing arbitrary service paths', async () => {
+	for (const [path, method] of [
+		['/lessons?q=maths', 'GET'],
+		['/lessons', 'POST'],
+		['/lessons/12', 'PUT'],
+		['/lessons/12/elements/34', 'DELETE'],
+		['/lessons/12/elements/34/move', 'POST'],
+		['/lessons/12/promotion-options?offset=0', 'GET']
+	] as const) {
+		await requestBackend(event().input, config, path, method, undefined, async (url) => {
+			assert.equal(url, `${config.backendOrigin}/api/v1${path}`);
+			return Response.json({ success: true });
+		});
+	}
+	for (const path of [
+		'/lessons/../admin/users',
+		'//evil.example',
+		'/lessons/12#secret',
+		'/unknown/path'
+	]) {
+		let called = false;
+		await assert.rejects(
+			requestBackend(event().input, config, path, 'GET', undefined, async () => {
+				called = true;
+				return Response.json({});
+			}),
+			{ status: 500 }
+		);
+		assert.equal(called, false);
+	}
+});
 function event(origin: string | null = config.origin, method = 'POST') {
 	const changes: { name: string; value?: string; options: Record<string, unknown> }[] = [];
 	const values = new Map([

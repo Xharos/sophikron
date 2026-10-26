@@ -29,8 +29,12 @@ class ActivityEvent(Base):
         CheckConstraint("schema_version > 0", name="schema_version"),
         CheckConstraint("jsonb_typeof(data) = 'object'", name="data_object"),
         CheckConstraint("octet_length(data::text) <= 4096", name="data_size"),
-        CheckConstraint("actor_role IN ('admin', 'teacher', 'user')", name="actor_role"),
-        CheckConstraint("subject_role IN ('admin', 'teacher', 'user')", name="subject_role"),
+        CheckConstraint(
+            "actor_role IN ('admin', 'teacher', 'kholleur', 'user')", name="actor_role"
+        ),
+        CheckConstraint(
+            "subject_role IN ('admin', 'teacher', 'kholleur', 'user')", name="subject_role"
+        ),
         CheckConstraint("actor_user_id IS NOT NULL OR actor_role IS NULL", name="actor_snapshot"),
         CheckConstraint(
             "subject_user_id IS NOT NULL OR subject_role IS NULL", name="subject_snapshot"

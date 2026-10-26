@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { command, read } from '#lib/dashboard';
-	import type { Page, Promotion } from '#lib/types';
+	import type { Page, Promotion, PromotionArchiveImpact } from '#lib/types';
 	import Icon from '../Icon.svelte';
 	import Pagination from '../Pagination.svelte';
 	import AccountsPanel from './AccountsPanel.svelte';
@@ -29,6 +29,9 @@
 	);
 	let adding = $state(false);
 	let confirmArchive = $state(false);
+	let archiveStudents = $state(false);
+	let impact = $state<PromotionArchiveImpact | null>(null);
+	let impactLoading = $state(false);
 	let loading = $state(true);
 	let busy = $state(false);
 	let message = $state('');
@@ -71,6 +74,27 @@
 			controller.abort();
 		};
 	});
+	async function openArchive(): Promise<void> {
+		if (confirmArchive) {
+			confirmArchive = false;
+			return;
+		}
+		if (!selected) return;
+		const id = selected.id;
+		archiveStudents = false;
+		impact = null;
+		message = '';
+		confirmArchive = true;
+		impactLoading = true;
+		try {
+			const result = await read<PromotionArchiveImpact>('promotionArchiveImpact', { id });
+			if (selected?.id === id) impact = result;
+		} catch (cause) {
+			message = (cause as Error).message;
+		} finally {
+			impactLoading = false;
+		}
+	}
 	async function archive(): Promise<void> {
 		if (!selected) return;
 		busy = true;
@@ -78,7 +102,11 @@
 		try {
 			selected = await command<Promotion>('updatePromotion', {
 				id: selected.id,
-				data: { is_active: !selected.is_active }
+				data: {
+					is_active: !selected.is_active,
+					archive_students: selected.is_active && archiveStudents,
+					acknowledge_student_impact: true
+				}
 			});
 			confirmArchive = false;
 			revision += 1;
@@ -126,15 +154,17 @@
 				>
 				<h3 class="title is-3">{selected.identifier}</h3>
 				<p class="muted">
-					{selected.student_count ?? 0} élève(s){#if administrator}
-						· {selected.member_count ?? 0} membre(s) au total{/if}
+					{selected.student_count ?? 0} élève{selected.student_count === 1
+						? ''
+						: 's'}{#if administrator}
+						· {selected.member_count ?? 0} membre{selected.member_count === 1 ? '' : 's'} au total{/if}
 				</p>
 			</div>
 			{#if administrator}<div class="profile-buttons">
 					<button class="button is-light" onclick={() => (editor = selected)}
 						><Icon name="edit" />Modifier</button
 					>
-					<button class="button is-light" onclick={() => (confirmArchive = !confirmArchive)}
+					<button class="button is-light" onclick={openArchive}
 						><Icon name={selected.is_active ? 'archive' : 'restore'} />{selected.is_active
 							? 'Archiver'
 							: 'Réactiver'}</button
@@ -147,18 +177,64 @@
 				</div>{/if}
 		</div>
 		{#if confirmArchive}<div class="confirmation-panel mt-4">
-				<p>
-					{selected.is_active
-						? 'Archiver cette promotion ? Ses membres seront conservés.'
-						: 'Réactiver cette promotion ? Vous pourrez à nouveau y ajouter des membres.'}
+				<p class="has-text-weight-semibold">
+					{selected.is_active ? 'Archiver cette promotion ?' : 'Réactiver cette promotion ?'}
 				</p>
+				{#if impactLoading}<p role="status" class="muted mt-2">
+						Vérification des comptes concernés…
+					</p>
+				{:else if impact}
+					{#if selected.is_active}
+						<p class="muted mt-2">
+							Les rattachements et les cours sont conservés. Sans cette option, les membres peuvent
+							toujours se connecter.
+						</p>
+						<label class="checkbox mt-3"
+							><input type="checkbox" bind:checked={archiveStudents} disabled={busy} /> Archiver
+							également {impact.student_count === 1 ? 'le' : 'les'}
+							{impact.student_count} compte{impact.student_count === 1 ? '' : 's'} élève{impact.student_count ===
+							1
+								? ''
+								: 's'} rattaché{impact.student_count === 1 ? '' : 's'}</label
+						>
+						{#if archiveStudents}<p class="notification is-warning is-light mt-3" role="alert">
+								Attention : cette action désactive la connexion de tous les élèves de cette
+								promotion, même s’ils appartiennent aussi à une autre promotion. {impact.accounts_to_disable}
+								compte{impact.accounts_to_disable === 1 ? '' : 's'}
+								{impact.accounts_to_disable === 1 ? 'va' : 'vont'} être désactivé{impact.accounts_to_disable ===
+								1
+									? ''
+									: 's'} ; les sessions seront fermées. Les professeurs, khôlleurs et administrateurs
+								restent actifs.
+							</p>{/if}
+					{:else}
+						<p class="notification is-warning is-light mt-3" role="alert">
+							Attention : la connexion sera rétablie pour {impact.accounts_to_restore} compte{impact.accounts_to_restore ===
+							1
+								? ''
+								: 's'} désactivé{impact.accounts_to_restore === 1 ? '' : 's'}
+							par cette promotion. {impact.accounts_remaining_disabled} compte{impact.accounts_remaining_disabled ===
+							1
+								? ''
+								: 's'}
+							{impact.accounts_remaining_disabled === 1 ? 'restera' : 'resteront'} désactivé{impact.accounts_remaining_disabled ===
+							1
+								? ''
+								: 's'}
+							en raison d’un archivage manuel ou d’une autre promotion archivée. Les anciens liens d’activation
+							et les anciennes sessions ne sont pas rétablis. Les comptes en attente d’activation nécessiteront
+							une nouvelle invitation.
+						</p>
+					{/if}
+				{/if}
 				<div class="buttons mt-3">
 					<button
 						class="button is-primary"
-						disabled={busy}
+						disabled={busy || impactLoading || !impact}
 						class:is-loading={busy}
 						onclick={archive}>Confirmer</button
-					><button class="button is-light" disabled={busy} onclick={() => (confirmArchive = false)}
+					>
+					<button class="button is-light" disabled={busy} onclick={() => (confirmArchive = false)}
 						>Annuler</button
 					>
 				</div>
@@ -204,7 +280,7 @@
 							/></span
 						>
 						<strong>{promotion.identifier}</strong><span class="muted text-small"
-							>{promotion.student_count ?? 0} élève(s) · {promotion.is_active
+							>{promotion.student_count ?? 0} élève{promotion.student_count === 1 ? '' : 's'} · {promotion.is_active
 								? 'Active'
 								: 'Archivée'}</span
 						></button
@@ -213,7 +289,7 @@
 		<Pagination {offset} limit={12} {total} busy={loading} onchange={(value) => (offset = value)} />
 	{/if}
 </section>
-{#if selected}{#key selected.id}<AccountsPanel
+{#if selected}{#key selected.id + ':' + revision}<AccountsPanel
 			{administrator}
 			{currentUserId}
 			promotionId={selected.id}

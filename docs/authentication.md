@@ -302,7 +302,7 @@ Role-only checks remain available for exceptional policies through `RequireRole`
 
 Every check requires an active account and valid session. Roles and permissions are loaded on each
 request; an administrator does not implicitly inherit teacher/user capabilities. Allowed roles are
-`user`, `teacher`, `admin`, or `teacher + admin`; `user` is incompatible with the other two.
+`user`, `kholleur`, `teacher`, `admin`, or `teacher + admin`; student and khôlleur roles stand alone.
 Sensitive services recheck actor capabilities inside their transaction. Protected routes inherit
 browser write protection; public write routes explicitly include `Depends(require_csrf)`.
 
@@ -433,12 +433,15 @@ automatic history deletion is implemented. See [activity journal](administration
 
 ## Reconstructed Alembic revisions
 
-The owner explicitly authorized rebuilding the test-only migration history with no retained volumes:
+The owner explicitly authorized rebuilding the baseline after deleting the local volumes.
+The migration chain is:
 
-- `0001_users` (`0001_authentication.py`): accounts, roles/permissions, sessions, invitations, setup
-  state and login-attempt protections. Manual invitations are included directly.
-- `0002_promotions`: catalogue and role-independent account memberships.
-- `0003_activity_events`: general journal replacing the former login-only table.
+1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
+   protection and the append-only activity journal.
+2. `0002_configuration`: public site settings, shared holiday color, timelines and events.
+3. `0003_promotions`: promotion catalogue and account memberships.
+4. `0004_subjects`: subject catalogue and account subject assignments.
+5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
 
 Use `alembic upgrade head` on a fresh database. These revisions do not upgrade older populated
 variants or the old `0001_database_baseline`; historical `adopt-empty-baseline` is removed. No database

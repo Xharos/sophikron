@@ -7,6 +7,8 @@ from starlette.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from app.core.documents import is_document_upload
+
 
 class SearchAccessLogFilter(logging.Filter):
     """Remove personal search text from Uvicorn's access-log URL argument."""
@@ -21,6 +23,10 @@ class SearchAccessLogFilter(logging.Filter):
                 "/api/v1/admin/communes",
             }:
                 record.args = (address, method, target.split("?", 1)[0], protocol, status)
+            elif isinstance(target, str) and target.split("?", 1)[0].endswith(
+                ("/teacher-options", "/responsible-options")
+            ):
+                record.args = (address, method, target.split("?", 1)[0], protocol, status)
         return True
 
 
@@ -34,12 +40,15 @@ class AuthRequestMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Buffer at most the configured bytes, including requests without Content-Length."""
         if scope["type"] != "http" or not scope["path"].startswith(
-            ("/api/v1/auth/", "/api/v1/admin/", "/api/v1/teaching/")
+            ("/api/v1/auth/", "/api/v1/admin/", "/api/v1/teaching/", "/api/v1/lessons")
         ):
             await self.app(scope, receive, send)
             return
         settings = scope["app"].state.auth_settings
         limit = settings.request_max_bytes
+        binary = is_document_upload(scope["path"], scope.get("method", ""))
+        if binary:
+            limit = scope["app"].state.document_settings.max_bytes
         lengths = [value for key, value in scope["headers"] if key.lower() == b"content-length"]
         status = None
         if lengths:
@@ -49,6 +58,10 @@ class AuthRequestMiddleware:
                 status = 413
         chunks: list[bytes] = []
         size = 0
+        if binary and status is None:
+            # The authenticated document service counts/limits the raw stream; do not buffer it.
+            await self.app(scope, receive, send)
+            return
         if status is None:
             try:
                 with anyio.fail_after(settings.request_body_timeout_seconds):

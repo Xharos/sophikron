@@ -18,6 +18,7 @@ from app.core.database import Database
 from app.models import AccountInvitation, User
 from tests.postgres import run_alembic
 from tests.test_auth_postgres import auth_case  # noqa: F401
+from tests.test_lessons_postgres import course  # noqa: F401
 
 
 @pytest.fixture(scope="session")
@@ -66,6 +67,8 @@ def auth_environment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         encoding="utf-8",
     )
     for name, value in {
+        "DOCUMENT_ROOT": str(tmp_path / "documents"),
+        "DOCUMENT_MAINTENANCE_ENABLED": "false",
         "AUTH_ENVIRONMENT": "test",
         "AUTH_KEYS_FILE": str(key_file),
         "AUTH_ALLOWED_ORIGINS": '["https://testserver"]',

@@ -70,6 +70,11 @@ export interface AccessInvitation {
 }
 
 export interface DashboardSummary {
+	active_subjects: number;
+	archived_subjects: number;
+	subject_teachers: number;
+	total_lessons: number;
+	kholleurs: number;
 	total_accounts: number;
 	pending_accounts: number;
 	active_accounts: number;
@@ -136,6 +141,7 @@ export interface SchoolProfile {
 	reference_adult: ReferenceAdult | null;
 }
 export interface FullProfile {
+	subject_ids: number[];
 	id: number;
 	username: string;
 	first_name: string;
@@ -154,4 +160,24 @@ export interface Commune {
 	code: string;
 	nom: string;
 	codesPostaux: string[];
+}
+
+export interface PromotionArchiveImpact {
+	student_count: number;
+	accounts_to_disable: number;
+	blocked_count: number;
+	accounts_to_restore: number;
+	accounts_remaining_disabled: number;
+}
+export interface TeachingTeam {
+	subjects: {
+		id: number;
+		name: string;
+		icon: import('./lessons').LessonIcon;
+		color: string;
+		members: { id: number; first_name: string; last_name: string; roles: string[] }[];
+	}[];
+	member_count: number;
+	teacher_count: number;
+	kholleur_count: number;
 }

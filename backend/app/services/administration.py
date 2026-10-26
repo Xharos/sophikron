@@ -8,20 +8,24 @@ from collections.abc import Sequence
 from datetime import datetime
 
 import anyio
-from sqlalchemy import Row, String, cast, func, or_, select, tuple_
+from sqlalchemy import Row, String, cast, delete, func, or_, select, tuple_
 from sqlalchemy.exc import IntegrityError
 
+from app.core.roles import PROMOTION_ROLES
 from app.models import (
     AccountInvitation,
     ActivityEvent,
+    Lesson,
     Permission,
     Promotion,
+    PromotionAccountBlock,
     Role,
     RolePermission,
     User,
     UserPromotion,
     UserRole,
 )
+from app.models.site import Subject, TeacherSubject
 from app.repositories.administration import AdministrationRepository
 from app.schemas.administration import (
     AccountArchive,
@@ -32,15 +36,19 @@ from app.schemas.administration import (
     EventTypeResponse,
     InvitationState,
     MembershipBatch,
+    PromotionArchiveImpact,
     PromotionCreate,
     PromotionPage,
     PromotionResponse,
     PromotionUpdate,
     SearchResult,
+    TeachingTeam,
+    TeamMember,
+    TeamSubject,
     UserPage,
 )
 from app.schemas.auth import UserResponse
-from app.services.activity import EVENTS, capture_roles, record_event
+from app.services.activity import EVENTS, capture_roles, record_event, record_subject_changes
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.search import rank_prepared_names
@@ -68,6 +76,26 @@ class AdministrationService:
         if user is None or user.is_bootstrap:
             raise AuthError(404, "Compte introuvable.")
         return user
+
+    async def _require_promotion_members(self, ids: set[int]) -> None:
+        """Reject an entire assignment unless every locked account has an eligible role.
+
+        Parameters
+        ----------
+        ids
+            Permanent account IDs locked by the enclosing lifecycle transaction.
+        """
+        eligible = set(
+            await self.db.scalars(
+                select(UserRole.user_id)
+                .join(Role)
+                .where(UserRole.user_id.in_(ids), Role.code.in_(PROMOTION_ROLES))
+            )
+        )
+        if eligible != ids:
+            raise AuthError(
+                422, "Seul un élève, un enseignant ou un khôlleur peut rejoindre une promotion."
+            )
 
     async def _promotion_profiles(self, promotions: list[Promotion]) -> list[PromotionResponse]:
         """Build response models with one grouped membership count query."""
@@ -137,9 +165,10 @@ class AdministrationService:
     async def update_promotion(
         self, actor: UserContext, promotion_id: int, data: PromotionUpdate
     ) -> PromotionResponse:
-        """Apply a partial update with archive/reactivation facts only on actual changes."""
+        """Update promotion state and independent pupil login blocks atomically."""
         try:
             async with self.db.begin():
+                await self.auth._lifecycle_lock()
                 await self.auth._actor(actor, permission="promotions.manage")
                 promotion = await self._promotion(promotion_id, lock=True)
                 previous = {
@@ -147,9 +176,21 @@ class AdministrationService:
                 }
                 changes = {
                     key: value
-                    for key, value in data.model_dump(exclude_unset=True).items()
+                    for key, value in data.model_dump(
+                        exclude_unset=True,
+                        exclude={"archive_students", "acknowledge_student_impact"},
+                    ).items()
                     if getattr(promotion, key) != value
                 }
+                if data.archive_students and (
+                    data.is_active is not False or not promotion.is_active
+                ):
+                    raise AuthError(
+                        422, "L’option élèves nécessite l’archivage d’une promotion active."
+                    )
+                counts = None
+                if "is_active" in changes:
+                    counts = await self._promotion_account_state(actor, promotion, data)
                 for key, value in changes.items():
                     setattr(promotion, key, value)
                 if changes:
@@ -178,11 +219,181 @@ class AdministrationService:
                             actor.id,
                             resource_type="promotion",
                             resource_id=promotion.id,
+                            data=counts,
                         )
                 await self.db.flush()
                 return (await self._promotion_profiles([promotion]))[0]
         except IntegrityError:
             raise AuthError(409, "Cette promotion existe déjà.") from None
+
+    async def promotion_archive_impact(
+        self, actor: UserContext, promotion_id: int
+    ) -> PromotionArchiveImpact:
+        """Preview both transitions without disclosing pupil identities."""
+        async with self.db.begin():
+            await self.auth._actor(actor, permission="promotions.manage")
+            await self._promotion(promotion_id)
+            students = await self.repo.promotion_students(promotion_id)
+            blocked = await self.repo.blocked_accounts(promotion_id)
+            causes = await self.repo.account_blocks([user.id for user in blocked])
+            restorable = sum(
+                user.status == "disabled"
+                and not user.manually_archived
+                and causes.get(user.id, set()) == {promotion_id}
+                for user in blocked
+            )
+            return PromotionArchiveImpact(
+                student_count=len(students),
+                accounts_to_disable=sum(user.status != "disabled" for user in students),
+                blocked_count=len(blocked),
+                accounts_to_restore=restorable,
+                accounts_remaining_disabled=sum(user.status == "disabled" for user in blocked)
+                - restorable,
+            )
+
+    async def _promotion_account_state(
+        self, actor: UserContext, promotion: Promotion, data: PromotionUpdate
+    ) -> dict[str, int]:
+        """Apply one promotion cause while preserving manual and other promotion blocks."""
+        archiving = data.is_active is False
+        accounts = (
+            await self.repo.promotion_students(promotion.id)
+            if archiving and data.archive_students
+            else await self.repo.blocked_accounts(promotion.id)
+            if not archiving
+            else []
+        )
+        if (data.archive_students or accounts) and not data.acknowledge_student_impact:
+            raise AuthError(
+                409, "Confirmez l’impact de cette opération sur la connexion des élèves."
+            )
+        causes = await self.repo.account_blocks([user.id for user in accounts])
+        changed = 0
+        now = self.auth.clock()
+        snapshot = {field: getattr(promotion, field) for field in ("identifier", "year", "color")}
+        for user in accounts:
+            existing = causes.get(user.id, set())
+            if archiving:
+                # A disabled account without an automatic cause must remain manually blocked.
+                if user.status == "disabled" and not existing:
+                    user.manually_archived = True
+                self.db.add(PromotionAccountBlock(user_id=user.id, promotion_id=promotion.id))
+                enable = False
+            else:
+                await self.db.execute(
+                    delete(PromotionAccountBlock).where(
+                        PromotionAccountBlock.user_id == user.id,
+                        PromotionAccountBlock.promotion_id == promotion.id,
+                    )
+                )
+                enable = not user.manually_archived and not (existing - {promotion.id})
+            if archiving or enable:
+                next_status = (
+                    "disabled"
+                    if archiving
+                    else "active"
+                    if user.password_hash is not None
+                    else "pending_activation"
+                )
+                if user.status != next_status:
+                    user.status = next_status
+                    user.archived_at = now if archiving else None
+                    user.updated_at = now
+                    user.profile_version += 1
+                    changed += 1
+                    await record_event(
+                        self.db,
+                        "user.archived" if archiving else "user.reactivated",
+                        actor.id,
+                        subject_user_id=user.id,
+                        data={"promotion_id": promotion.id, "promotion": snapshot},
+                    )
+            if archiving:
+                await self.auth.repo.revoke_sessions(user.id, now, "account_archived")
+                await self.auth.repo.revoke_invitations(user.id, now)
+        return {"student_blocks": len(accounts), "accounts_changed": changed}
+
+    async def teaching_team(self, actor: UserContext) -> TeachingTeam:
+        """Group active assigned staff by subject, sorting teachers before kholleurs."""
+        async with self.db.begin():
+            await self.auth._actor(actor, permission="users.manage")
+            subjects = list(
+                await self.db.scalars(
+                    select(Subject).where(Subject.is_active).order_by(Subject.name_key)
+                )
+            )
+            rows = (
+                await self.db.execute(
+                    select(TeacherSubject.subject_id, User)
+                    .join(User, User.id == TeacherSubject.user_id)
+                    .where(
+                        TeacherSubject.subject_id.in_([subject.id for subject in subjects]),
+                        User.status == "active",
+                        User.is_bootstrap.is_(False),
+                    )
+                )
+            ).all()
+            ids = {user.id for _, user in rows}
+            roles: dict[int, set[str]] = {}
+            for user_id, code in await self.db.execute(
+                select(UserRole.user_id, Role.code).join(Role).where(UserRole.user_id.in_(ids))
+            ):
+                roles.setdefault(user_id, set()).add(code)
+            members: dict[int, TeamMember] = {}
+            for _, user in rows:
+                grants = roles.get(user.id, set())
+                if not grants.intersection({"teacher", "kholleur"}) or user.id in members:
+                    continue
+                members[user.id] = TeamMember(
+                    id=user.id,
+                    first_name=self.auth.cipher.decrypt(
+                        user.id, "first_name", user.first_name_encrypted
+                    ),
+                    last_name=self.auth.cipher.decrypt(
+                        user.id, "last_name", user.last_name_encrypted
+                    ),
+                    roles=sorted(grants),
+                )
+
+            def order(member: TeamMember) -> tuple[int, str, str, int]:
+                """Order names independently of accents, with a stable identity tie-breaker."""
+                return (
+                    0 if "teacher" in member.roles else 1,
+                    unicodedata.normalize("NFKD", member.last_name.casefold())
+                    .encode("ascii", "ignore")
+                    .decode(),
+                    unicodedata.normalize("NFKD", member.first_name.casefold())
+                    .encode("ascii", "ignore")
+                    .decode(),
+                    member.id,
+                )
+
+            return TeachingTeam(
+                subjects=[
+                    TeamSubject(
+                        id=subject.id,
+                        name=subject.name,
+                        icon=subject.icon,
+                        color=subject.color,
+                        members=sorted(
+                            [
+                                members[user.id]
+                                for subject_id, user in rows
+                                if subject_id == subject.id and user.id in members
+                            ],
+                            key=order,
+                        ),
+                    )
+                    for subject in subjects
+                ],
+                member_count=len(members),
+                teacher_count=sum(
+                    "teacher" in members[user.id].roles for _, user in rows if user.id in members
+                ),
+                kholleur_count=sum(
+                    "kholleur" in members[user.id].roles for _, user in rows if user.id in members
+                ),
+            )
 
     async def promotions(
         self,
@@ -245,6 +456,8 @@ class AdministrationService:
             await self.auth._lifecycle_lock()
             await self.auth._actor(actor, permission="promotions.manage")
             await self._user(user_id, lock=True)
+            if add:
+                await self._require_promotion_members({user_id})
             promotion = await self._promotion(promotion_id, lock=True)
             membership = await self.db.get(UserPromotion, (user_id, promotion_id))
             if add and membership is None:
@@ -273,14 +486,20 @@ class AdministrationService:
         promotion_id: int | None,
         offset: int,
         limit: int,
+        exclude_promotion_id: int | None = None,
     ) -> UserPage:
         """Return a filtered stable page without loading or decrypting other accounts."""
         async with self.db.begin():
             await self.auth._actor(actor, permission="users.read")
             if promotion_id is not None:
                 await self._promotion(promotion_id)
+            if exclude_promotion_id is not None:
+                await self._promotion(exclude_promotion_id)
             statement = self.repo.users_statement(
-                role=role, status=status, promotion_id=promotion_id
+                role=role,
+                status=status,
+                promotion_id=promotion_id,
+                exclude_promotion_id=exclude_promotion_id,
             )
             total = await self.db.scalar(select(func.count()).select_from(statement.subquery()))
             users = list(
@@ -312,6 +531,7 @@ class AdministrationService:
             )
             if len(users) != len(ids):
                 raise AuthError(422, "Un compte sélectionné n’existe pas.")
+            await self._require_promotion_members(ids)
             promotion = await self._promotion(promotion_id, lock=True)
             if not promotion.is_active:
                 raise AuthError(409, "Cette promotion est inactive.")
@@ -398,6 +618,26 @@ class AdministrationService:
                 )
             ).one()
             return DashboardSummary(
+                active_subjects=await self.db.scalar(
+                    select(func.count()).select_from(Subject).where(Subject.is_active)
+                ),
+                archived_subjects=await self.db.scalar(
+                    select(func.count()).select_from(Subject).where(~Subject.is_active)
+                ),
+                subject_teachers=await self.db.scalar(
+                    select(func.count(func.distinct(TeacherSubject.user_id)))
+                    .join(User, User.id == TeacherSubject.user_id)
+                    .join(UserRole, UserRole.user_id == User.id)
+                    .join(Role)
+                    .where(Role.code == "teacher", User.status == "active")
+                ),
+                total_lessons=await self.db.scalar(select(func.count()).select_from(Lesson)),
+                kholleurs=await self.db.scalar(
+                    select(func.count())
+                    .select_from(UserRole)
+                    .join(Role)
+                    .where(Role.code == "kholleur")
+                ),
                 total_accounts=sum(counts.values()),
                 pending_accounts=counts.get("pending_activation", 0),
                 active_accounts=counts.get("active", 0),
@@ -414,8 +654,40 @@ class AdministrationService:
             user = await self._user(user_id, lock=True)
             if data.archived and user.id == actor.id:
                 raise AuthError(409, "Vous ne pouvez pas archiver votre propre compte.")
+            causes = await self.repo.account_blocks([user.id])
+            if not data.archived and causes.get(user.id):
+                raise AuthError(
+                    409, "Réactivez les promotions qui bloquent ce compte avant de le réactiver."
+                )
             if data.archived == (user.status == "disabled"):
-                return
+                if not data.archived or user.manually_archived:
+                    return
+            user.manually_archived = data.archived
+            if data.archived:
+                from app.services.course_rights import (
+                    course_impact,
+                    require_impact_acknowledgement,
+                    revoke_course_rights,
+                )
+
+                impacted = await course_impact(self.db, user.id)
+                require_impact_acknowledgement(impacted, data.acknowledge_course_impact)
+                assigned = set(
+                    await self.db.scalars(
+                        select(TeacherSubject.subject_id).where(TeacherSubject.user_id == user.id)
+                    )
+                )
+                await record_subject_changes(
+                    self.db,
+                    actor.id,
+                    user.id,
+                    added=set(),
+                    removed=assigned,
+                    reason="account_archived",
+                )
+                await revoke_course_rights(self.db, user.id)
+                if impacted or assigned:
+                    user.profile_version += 1
             now = self.auth.clock()
             user.status = (
                 "disabled"
@@ -442,14 +714,20 @@ class AdministrationService:
         status: str | None,
         promotion_id: int | None,
         limit: int,
+        exclude_promotion_id: int | None = None,
     ) -> list[SearchResult]:
         """Search authorized candidate names and usernames transiently in memory."""
         async with self.db.begin():
             await self.auth._actor(actor, permission="users.read")
             if promotion_id is not None:
                 await self._promotion(promotion_id)
+            if exclude_promotion_id is not None:
+                await self._promotion(exclude_promotion_id)
             statement = self.repo.users_statement(
-                role=role, status=status, promotion_id=promotion_id
+                role=role,
+                status=status,
+                promotion_id=promotion_id,
+                exclude_promotion_id=exclude_promotion_id,
             )
             rows = (
                 await self.db.execute(
@@ -636,6 +914,20 @@ class AdministrationService:
                     if not user.is_bootstrap
                     else "Compte d’installation"
                 )
+            lesson_ids = {
+                item.resource_id for item in events[:limit] if item.resource_type == "lesson"
+            }
+            lesson_labels = (
+                dict(
+                    (
+                        await self.db.execute(
+                            select(Lesson.id, Lesson.title).where(Lesson.id.in_(lesson_ids))
+                        )
+                    ).all()
+                )
+                if lesson_ids
+                else {}
+            )
             items = []
             for event in events[:limit]:
                 item = EventResponse.model_validate(event, from_attributes=True)
@@ -652,6 +944,10 @@ class AdministrationService:
                     if item.promotion_snapshot is not None
                     else None
                 )
+                if item.resource_type == "lesson":
+                    item.resource_label = lesson_labels.get(item.resource_id) or item.data.get(
+                        "lesson_title"
+                    )
                 items.append(item)
             next_cursor = None
             if len(events) > limit:

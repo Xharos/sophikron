@@ -13,11 +13,13 @@ from app.schemas.administration import (
     EventPage,
     EventTypeResponse,
     MembershipBatch,
+    PromotionArchiveImpact,
     PromotionCreate,
     PromotionPage,
     PromotionResponse,
     PromotionUpdate,
     SearchResult,
+    TeachingTeam,
     UserPage,
 )
 from app.services.administration import AdministrationService
@@ -27,7 +29,7 @@ router = APIRouter(prefix="/admin", tags=["Dashboard"])
 Offset = Annotated[int, Query(ge=0)]
 Limit = Annotated[int, Query(ge=1, le=100)]
 PositiveId = Annotated[int, Query(gt=0)]
-RoleFilter = Literal["user", "teacher", "admin"]
+RoleFilter = Literal["user", "kholleur", "teacher", "admin", "teaching"]
 StatusFilter = Literal["pending_activation", "active", "disabled"]
 
 
@@ -48,6 +50,22 @@ StatisticReader = Annotated[UserContext, Depends(RequirePermission("statistics.r
 async def summary(actor: StatisticReader, service: Service) -> DashboardSummary:
     """Read global statistics only with the explicit administrator capability."""
     return await service.summary(actor)
+
+
+@router.get("/team", response_model=TeachingTeam)
+async def teaching_team(
+    actor: Annotated[UserContext, Depends(RequirePermission("users.manage"))], service: Service
+) -> TeachingTeam:
+    """Read the administrator-only subject and teaching staff directory."""
+    return await service.teaching_team(actor)
+
+
+@router.get("/promotions/{promotion_id}/archive-impact", response_model=PromotionArchiveImpact)
+async def promotion_archive_impact(
+    promotion_id: int, actor: PromotionManager, service: Service
+) -> PromotionArchiveImpact:
+    """Preview pupil login changes before confirming a promotion state change."""
+    return await service.promotion_archive_impact(actor, promotion_id)
 
 
 @router.patch("/users/{user_id}/archive", status_code=204)
@@ -134,10 +152,17 @@ async def users(
     role: RoleFilter | None = None,
     status: StatusFilter | None = None,
     promotion_id: PositiveId | None = None,
+    exclude_promotion_id: PositiveId | None = None,
 ) -> UserPage:
     """List accounts ordered by integer ID with optional role, state and membership filters."""
     return await service.users(
-        actor, role=role, status=status, promotion_id=promotion_id, offset=offset, limit=limit
+        actor,
+        role=role,
+        status=status,
+        promotion_id=promotion_id,
+        exclude_promotion_id=exclude_promotion_id,
+        offset=offset,
+        limit=limit,
     )
 
 
@@ -150,10 +175,17 @@ async def search_users(
     role: RoleFilter | None = None,
     status: StatusFilter | None = None,
     promotion_id: PositiveId | None = None,
+    exclude_promotion_id: PositiveId | None = None,
 ) -> list[SearchResult]:
     """Find partial and approximate French names without persisting the query or plaintext index."""
     return await service.search(
-        actor, q, role=role, status=status, promotion_id=promotion_id, limit=limit
+        actor,
+        q,
+        role=role,
+        status=status,
+        promotion_id=promotion_id,
+        exclude_promotion_id=exclude_promotion_id,
+        limit=limit,
     )
 
 

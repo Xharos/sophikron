@@ -16,6 +16,7 @@ function user(roles: string[]): User {
 			(role) =>
 				({
 					user: ['user.access'],
+					kholleur: ['kholleur.access'],
 					teacher: ['teacher.access', 'teaching.read'],
 					admin: ['users.manage', 'users.read', 'statistics.read']
 				})[role] ?? []
@@ -34,6 +35,7 @@ test('anonymous visitors cannot access any account page', () => {
 test('page permissions distinguish students, teachers and administrators', () => {
 	for (const [roles, expected] of [
 		[['user'], [true, false, false]],
+		[['kholleur'], [true, false, false]],
 		[['teacher'], [true, true, false]],
 		[['admin'], [true, false, true]],
 		[
@@ -60,4 +62,5 @@ test('role labels alone never confer a permission and bootstrap cannot access ma
 	bootstrap.is_bootstrap = true;
 	assert.equal(canAccess(bootstrap, 'staff'), false);
 	assert.equal(canAccess(user(['teacher']), 'staff'), true);
+	assert.equal(canAccess(user(['kholleur']), 'staff'), false);
 });

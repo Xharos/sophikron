@@ -27,7 +27,10 @@ Do not run it on the same port as the Docker frontend. Native frontend calls to 
 retain the host/Docker-gateway IP for limits; per-client forwarded addresses are trusted only from
 the configured Docker BFF. The supported full proxy-chain verification uses the Docker frontend.
 
-Every successful login returns to `/`, whose main content is identical for guests and accounts.
+A protected page redirects anonymous visitors to `/login?next=…`. Successful login returns to that
+local path, preserving query parameters; direct logins default to `/`. External, malformed and cyclic
+login/logout destinations are rejected. Expired dashboard/course sessions retain their current page.
+Page authorization still runs after login. Homepage content is identical for guests and accounts.
 Only the header changes: guests see the logo and login button; accounts see their identity linked
 to `/me`, logout and permission-based navigation. `/lessons` requires authentication; `/dashboard`
 accepts permanent staff with administrator or teaching-directory capabilities. `/admin` redirects
@@ -81,7 +84,9 @@ Management uses dialogs/drawers rather than one route per action:
   complete student page. Unassigned students stay inaccessible through direct API calls.
 
 Teacher/admin accounts use the administrator workspace; admin alone gains no teacher permission.
-Future pedagogical statistics have an explicit empty state rather than fabricated numbers. Promotion
+Pedagogical statistics use scoped aggregate endpoints and shared interactive charts; see
+[statistics](statistics.md) for measurement and access rules. Unavailable history has an explicit
+empty state rather than fabricated numbers. Promotion
 rosters and student cards are reusable components intended for later enrichment.
 
 `ProfileEditor.svelte` saves one patch with `expected_version` and retains drafts on errors; stale

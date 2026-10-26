@@ -5,5 +5,5 @@
 		"paths": { "#lib/*": ["./src/lib/*"] },
 		"types": ["$app/types", "node"]
 	},
-	"include": ["src", "vite.config.ts"]
+	"include": ["src", "vite.config.ts", "tests/**/*.svelte"]
 }

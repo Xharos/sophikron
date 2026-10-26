@@ -2,12 +2,14 @@
 	import { onMount } from 'svelte';
 	import { resolve } from '$app/paths';
 	import { activePromotions, command, formatDate, read, statusLabels } from '#lib/dashboard';
+	import { canJoinPromotion } from '#lib/roles';
 	import type { AccessInvitation, AdminAccount, DirectoryUser, Page, Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
 	import RoleBadges from '../RoleBadges.svelte';
 	import PromotionTag from '../PromotionTag.svelte';
 	import InvitationResult from '../InvitationResult.svelte';
+	import type { CourseImpact } from '#lib/site';
 	let {
 		userId,
 		administrator,
@@ -30,6 +32,19 @@
 	let message = $state('');
 	let invitation = $state<AccessInvitation | null>(null);
 	let confirmation = $state<'archive' | 'invite' | null>(null);
+	let impacts = $state<CourseImpact[]>([]);
+	async function prepareArchive(): Promise<void> {
+		busy = true;
+		message = '';
+		try {
+			impacts = await read<CourseImpact[]>('courseImpact', { id: userId });
+			confirmation = 'archive';
+		} catch (cause) {
+			message = (cause as Error).message;
+		} finally {
+			busy = false;
+		}
+	}
 	const details = $derived(administrator && account ? (account as AdminAccount) : null);
 	const available = $derived(
 		choices.filter((item) => !memberships.some((member) => member.id === item.id))
@@ -84,7 +99,7 @@
 			if (confirmation === 'archive') {
 				await command('archiveAccount', {
 					id: userId,
-					data: { archived: account.status !== 'disabled' }
+					data: { archived: account.status !== 'disabled', acknowledge_course_impact: true }
 				});
 				invitation = null;
 				onchanged();
@@ -168,7 +183,9 @@
 						>{/if}
 				</div>{/each}
 			{#if memberships.length === 0}<p class="muted">Aucune promotion affectée.</p>{/if}
-			{#if administrator && available.length > 0}<div class="inline-form mt-4">
+			{#if administrator && account.roles && canJoinPromotion(account.roles) && available.length > 0}<div
+					class="inline-form mt-4"
+				>
 					<div class="select is-fullwidth">
 						<select aria-label="Promotion à ajouter" bind:value={selected} disabled={busy}>
 							<option value={0}>Ajouter une promotion…</option
@@ -200,7 +217,7 @@
 						class:is-danger={account.status !== 'disabled'}
 						class:is-light={account.status !== 'disabled'}
 						disabled={busy || currentUserId === userId}
-						onclick={() => (confirmation = 'archive')}
+						onclick={prepareArchive}
 						><Icon
 							name={account.status === 'disabled' ? 'restore' : 'archive'}
 						/>{account.status === 'disabled' ? 'Réactiver le compte' : 'Archiver le compte'}</button
@@ -222,6 +239,22 @@
 									: 'Ce compte ne pourra plus se connecter et ses sessions seront fermées. Ses informations seront conservées.'}
 						</p>
 						<div class="buttons mt-3">
+							{#if confirmation === 'archive' && account.status !== 'disabled' && impacts.length}<div
+									class="notification is-warning is-light"
+									role="alert"
+								>
+									<p>
+										<strong>Ce compte est associé à {impacts.length} cours.</strong> L’archivage supprimera
+										ses matières affectées et ses collaborations, et révoquera tous ses accès.
+									</p>
+									<ul>
+										{#each impacts as course (course.id)}<li>{course.title}</li>{/each}
+									</ul>
+									<p>
+										Réaffectez si nécessaire le responsable depuis les pages de cours. La
+										réactivation ne rétablira pas automatiquement ces affectations.
+									</p>
+								</div>{/if}
 							<button
 								class="button is-primary"
 								class:is-loading={busy}

@@ -30,6 +30,7 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 		'role',
 		'status',
 		'promotion_id',
+		'exclude_promotion_id',
 		'offset',
 		'limit',
 		'is_active',
@@ -43,6 +44,26 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	let path: string;
 	switch (resource) {
+		case 'team':
+			requireAccess(event, 'admin');
+			path = '/admin/team';
+			break;
+		case 'promotionArchiveImpact':
+			requireAccess(event, 'admin');
+			path = `/admin/promotions/${identifier(event.url.searchParams.get('id'))}/archive-impact`;
+			break;
+		case 'subjects':
+			requireAccess(event, 'admin');
+			path = '/admin/subjects';
+			break;
+		case 'site':
+			requireAccess(event, 'admin');
+			path = '/site';
+			break;
+		case 'courseImpact':
+			requireAccess(event, 'admin');
+			path = `/admin/users/${identifier(event.url.searchParams.get('id'))}/course-impact`;
+			break;
 		case 'summary':
 		case 'events':
 			requireAccess(event, 'admin');
@@ -98,6 +119,26 @@ export async function commandDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	requireAccess(event, 'admin');
 	switch (input.command) {
+		case 'saveSettings':
+			return api(event, '/admin/site', 'PUT', input.data);
+		case 'createSubject':
+			return api(event, '/admin/subjects', 'POST', input.data);
+		case 'updateSubject':
+			return api(event, `/admin/subjects/${identifier(input.id)}`, 'PUT', input.data);
+		case 'archiveSubject':
+			return api(event, `/admin/subjects/${identifier(input.id)}`, 'DELETE', input.data);
+		case 'createTimeline':
+			return api(event, '/admin/timelines', 'POST', input.data);
+		case 'updateTimeline':
+			return api(event, `/admin/timelines/${identifier(input.id)}`, 'PUT', input.data);
+		case 'deleteTimeline':
+			return api(event, `/admin/timelines/${identifier(input.id)}`, 'DELETE', input.data);
+		case 'createEvent':
+			return api(event, '/admin/timeline-events', 'POST', input.data);
+		case 'updateEvent':
+			return api(event, `/admin/timeline-events/${identifier(input.id)}`, 'PUT', input.data);
+		case 'deleteEvent':
+			return api(event, `/admin/timeline-events/${identifier(input.id)}`, 'DELETE', input.data);
 		case 'createUser':
 			return api(event, '/admin/users', 'POST', input.data);
 		case 'createPromotion':

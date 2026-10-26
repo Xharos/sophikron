@@ -130,7 +130,9 @@
 	</div>
 	<nav class="list-pagination" aria-label="Pagination du journal">
 		<p class="muted text-small" role="status" aria-live="polite">
-			Page {cursors.length} · {loading ? 'Chargement…' : `${events.items.length} événement(s)`}
+			Page {cursors.length} · {loading
+				? 'Chargement…'
+				: `${events.items.length} événement${events.items.length === 1 ? '' : 's'}`}
 		</p>
 		<div class="buttons mb-0">
 			<button
@@ -154,7 +156,7 @@
 		grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
 		gap: 1rem;
 		padding-bottom: 0.5rem;
-		border-bottom: 1px solid #eef0f3;
+		border-bottom: 1px solid var(--color-border);
 	}
 	.journal-filters .field {
 		min-width: 0;
@@ -164,8 +166,8 @@
 	}
 	.journal-count {
 		border-radius: 999px;
-		background: #edf1fa;
-		color: #40547c;
+		background: var(--color-soft);
+		color: var(--color-primary);
 		padding: 0.4rem 0.7rem;
 		white-space: nowrap;
 		font-size: 0.75rem;

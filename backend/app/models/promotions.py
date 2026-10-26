@@ -1,4 +1,4 @@
-"""Promotion catalogue and role-independent account memberships."""
+"""Promotion catalogue and pupil, teacher or khôlleur memberships."""
 
 from datetime import datetime
 
@@ -43,7 +43,7 @@ class Promotion(Base):
 
 
 class UserPromotion(Base):
-    """Associate any permanent account with any number of promotions."""
+    """Associate eligible permanent accounts with any number of promotions."""
 
     __tablename__ = "user_promotions"
 
@@ -57,3 +57,19 @@ class UserPromotion(Base):
         index=True,
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class PromotionAccountBlock(Base):
+    """Preserve each promotion's independent login block until its reactivation."""
+
+    __tablename__ = "promotion_account_blocks"
+
+    user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
+    )
+    promotion_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("sophikron.promotions.id", ondelete="RESTRICT"),
+        primary_key=True,
+        index=True,
+    )

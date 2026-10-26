@@ -81,6 +81,7 @@ class User(Base):
     is_bootstrap: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     bootstrap_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    manually_archived: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     profile_version: Mapped[int] = mapped_column(BigInteger, server_default="0")
     birth_date_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     city_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)

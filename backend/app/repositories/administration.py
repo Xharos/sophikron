@@ -3,7 +3,8 @@
 from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models import Promotion, Role, User, UserPromotion, UserRole
+from app.core.roles import TEACHING_ROLES
+from app.models import Promotion, PromotionAccountBlock, Role, User, UserPromotion, UserRole
 
 
 class AdministrationRepository:
@@ -29,6 +30,38 @@ class AdministrationRepository:
         )
         return dict(rows.all())
 
+    async def promotion_students(self, promotion_id: int) -> list[User]:
+        """Select only permanent pupils currently linked to this promotion."""
+        return list(
+            await self.db.scalars(
+                self.users_statement(role="user", status=None, promotion_id=promotion_id).order_by(
+                    User.id
+                )
+            )
+        )
+
+    async def blocked_accounts(self, promotion_id: int) -> list[User]:
+        """Find recorded blocks independently of later role or membership changes."""
+        return list(
+            await self.db.scalars(
+                select(User)
+                .join(PromotionAccountBlock)
+                .where(PromotionAccountBlock.promotion_id == promotion_id)
+                .order_by(User.id)
+            )
+        )
+
+    async def account_blocks(self, ids: list[int]) -> dict[int, set[int]]:
+        """Load all independent promotion causes for the affected accounts."""
+        blocks: dict[int, set[int]] = {}
+        for user_id, promotion_id in await self.db.execute(
+            select(PromotionAccountBlock.user_id, PromotionAccountBlock.promotion_id).where(
+                PromotionAccountBlock.user_id.in_(ids)
+            )
+        ):
+            blocks.setdefault(user_id, set()).add(promotion_id)
+        return blocks
+
     async def student_counts(self, ids: list[int]) -> dict[int, int]:
         """Count students separately from role-independent promotion memberships."""
         rows = await self.db.execute(
@@ -42,7 +75,11 @@ class AdministrationRepository:
 
     @staticmethod
     def users_statement(
-        *, role: str | None, status: str | None, promotion_id: int | None
+        *,
+        role: str | None,
+        status: str | None,
+        promotion_id: int | None,
+        exclude_promotion_id: int | None = None,
     ) -> Select[tuple[User]]:
         """Build account filters with EXISTS to avoid duplicate rows from multiple roles."""
         statement = select(User).where(User.is_bootstrap.is_(False))
@@ -52,13 +89,25 @@ class AdministrationRepository:
             statement = statement.where(
                 select(UserRole.user_id)
                 .join(Role)
-                .where(UserRole.user_id == User.id, Role.code == role)
+                .where(
+                    UserRole.user_id == User.id,
+                    Role.code.in_(TEACHING_ROLES) if role == "teaching" else Role.code == role,
+                )
                 .exists()
             )
         if promotion_id is not None:
             statement = statement.where(
                 select(UserPromotion.user_id)
                 .where(UserPromotion.user_id == User.id, UserPromotion.promotion_id == promotion_id)
+                .exists()
+            )
+        if exclude_promotion_id is not None:
+            statement = statement.where(
+                ~select(UserPromotion.user_id)
+                .where(
+                    UserPromotion.user_id == User.id,
+                    UserPromotion.promotion_id == exclude_promotion_id,
+                )
                 .exists()
             )
         return statement

@@ -13,8 +13,9 @@ without a stored plaintext index. Measurements motivated a per-worker bounded na
 (20,000 entries, 60-second logical TTL), validated against current selected ciphertext on every search.
 Permissions and candidate membership remain database-checked and are never cached.
 
-Separate permission grants from role names. `user` cannot coexist with `teacher` or `admin`;
-teacher/admin is allowed, as is admin alone without teacher permissions. Enforce incompatibilities
+Separate permission grants from role names. `user` cannot coexist with any other role;
+all nonempty combinations of `kholleur`, `teacher` and `admin` are allowed, with the union of their
+permissions. Admin alone has no teacher permissions. Enforce incompatibilities
 in services and PostgreSQL. Promotions accept all permanent account roles, including pending accounts.
 Archive/reactivate promotions and accounts; preserve memberships/history. Account archiving revokes
 sessions/invitations; self-archiving is forbidden. Restore pending/active from the presence of a password.

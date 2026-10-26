@@ -71,9 +71,21 @@ def test_invalid_profile_roles(roles: object) -> None:
         AdminProfileUpdate.model_validate({"expected_version": 0, "roles": roles})
 
 
-@pytest.mark.parametrize("roles", [["user"], ["teacher"], ["admin"], ["teacher", "admin"]])
+@pytest.mark.parametrize(
+    "roles",
+    [
+        ["user"],
+        ["kholleur"],
+        ["teacher"],
+        ["admin"],
+        ["teacher", "admin"],
+        ["kholleur", "teacher"],
+        ["kholleur", "admin"],
+        ["kholleur", "teacher", "admin"],
+    ],
+)
 def test_valid_profile_roles(roles: list[str]) -> None:
-    """Apply the same four role choices to profile edits as account creation."""
+    """Apply the same independent staff role choices to profile edits as account creation."""
     assert AdminProfileUpdate(expected_version=0, roles=roles).roles == roles
     assert "roles" not in AdminProfileUpdate(expected_version=0).model_dump(exclude_unset=True)
 

@@ -3,9 +3,11 @@ import { api } from '#lib/server/api';
 import { formFailure, textField } from '#lib/server/forms';
 import type { User } from '#lib/types';
 import type { Actions, PageServerLoad } from './$types';
+import { safeReturnTo } from '#lib/loginRedirect';
 
-export const load: PageServerLoad = ({ locals }) => {
-	if (locals.user) redirect(303, '/');
+export const load: PageServerLoad = ({ locals, url }) => {
+	if (locals.user)
+		redirect(303, locals.user.is_bootstrap ? '/setup' : safeReturnTo(url.searchParams.get('next')));
 };
 
 export const actions: Actions = {
@@ -19,6 +21,6 @@ export const actions: Actions = {
 		} catch (cause) {
 			return formFailure(event, cause);
 		}
-		redirect(303, '/');
+		redirect(303, safeReturnTo(event.url.searchParams.get('next')));
 	}
 };

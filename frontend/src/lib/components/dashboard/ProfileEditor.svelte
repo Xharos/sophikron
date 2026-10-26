@@ -1,20 +1,24 @@
 <script lang="ts">
-	import { tick, untrack } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { beforeNavigate, goto, invalidateAll } from '$app/navigation';
-	import { command, statusLabels } from '#lib/dashboard';
-	import { roleChoice, roleOptions, rolesForChoice, sameRoles } from '#lib/roles';
+	import { activeSubjects, command, read, statusLabels } from '#lib/dashboard';
+	import type { CourseImpact, Subject } from '#lib/site';
+	import { canJoinPromotion, roleSelectionError, sameRoles } from '#lib/roles';
+	import RoleSelector from '../RoleSelector.svelte';
 	import RoleBadges from '../RoleBadges.svelte';
 	import type { FullProfile, SchoolProfile } from '#lib/types';
 	import Icon from '../Icon.svelte';
 	import Modal from '../Modal.svelte';
 	import CommunePicker from '../CommunePicker.svelte';
+	import TagSelector from '../TagSelector.svelte';
 	let { profile, currentUserId }: { profile: FullProfile; currentUserId: number } = $props();
 	function draftFor(value: FullProfile) {
 		return {
 			first_name: value.first_name,
 			last_name: value.last_name,
 			email: value.email,
-			role: roleChoice(value.roles),
+			roles: [...value.roles],
+			subject_ids: [...(value.subject_ids ?? [])],
 			birth_date: value.profile.birth_date ?? '',
 			city: value.profile.city,
 			postal_code: value.profile.postal_code,
@@ -49,7 +53,21 @@
 	let saveFeedback = $state<HTMLParagraphElement>();
 	let leave = $state<(() => void) | null>(null);
 	let confirmRoles = $state(false);
-	const rolesChanged = $derived(!sameRoles(rolesForChoice(draft.role), current.roles));
+	let subjects = $state<Subject[]>([]);
+	let subjectsLoading = $state(false);
+	let impacts = $state<CourseImpact[]>([]);
+	onMount(async () => {
+		if (!profile.can_edit_all) return;
+		subjectsLoading = true;
+		try {
+			subjects = await activeSubjects();
+		} catch (cause) {
+			message = (cause as Error).message;
+		} finally {
+			subjectsLoading = false;
+		}
+	});
+	const rolesChanged = $derived(!sameRoles(draft.roles, current.roles));
 	let allowNavigation = false;
 	beforeNavigate((navigation) => {
 		if (allowNavigation || !dirty) return;
@@ -73,13 +91,42 @@
 	async function save(event: SubmitEvent): Promise<void> {
 		event.preventDefault();
 		if (busy) return;
-		if (current.can_edit_all && rolesChanged) {
-			confirmRoles = true;
-			return;
+		if (current.can_edit_all) {
+			message = roleSelectionError(draft.roles);
+			if (message) return;
+			const nextRoles = draft.roles;
+			const removed = current.subject_ids.filter((id) => !draft.subject_ids.includes(id));
+
+			if (rolesChanged || removed.length) {
+				busy = true;
+				message = '';
+				try {
+					const courses = await read<CourseImpact[]>('courseImpact', { id: current.id });
+					impacts = courses.filter((course) => {
+						const hadTeaching =
+							current.roles.includes('teacher') && current.subject_ids.includes(course.subject_id);
+						const hasTeaching =
+							nextRoles.includes('teacher') && draft.subject_ids.includes(course.subject_id);
+						return (
+							(hadTeaching && !hasTeaching) ||
+							(current.roles.includes('kholleur') &&
+								!nextRoles.includes('kholleur') &&
+								!hasTeaching &&
+								!nextRoles.includes('admin'))
+						);
+					});
+					confirmRoles = true;
+				} catch (cause) {
+					message = (cause as Error).message;
+				} finally {
+					busy = false;
+				}
+				return;
+			}
 		}
 		await persist();
 	}
-	async function persist(): Promise<void> {
+	async function persist(acknowledged = false): Promise<void> {
 		if (busy) return;
 		confirmRoles = false;
 		busy = true;
@@ -118,7 +165,13 @@
 							: null
 				};
 				changes = {};
-				if (rolesChanged) changes.roles = rolesForChoice(draft.role);
+				const nextSubjects = draft.roles.some((role) => ['teacher', 'kholleur'].includes(role))
+					? draft.subject_ids
+					: [];
+				if ([...nextSubjects].sort().join(',') !== [...current.subject_ids].sort().join(','))
+					changes.subject_ids = nextSubjects;
+				if (acknowledged) changes.acknowledge_course_impact = true;
+				if (rolesChanged) changes.roles = draft.roles;
 				for (const key of ['first_name', 'last_name', 'email'] as const)
 					if (draft[key] !== current[key]) changes[key] = draft[key];
 				for (const key of Object.keys(school) as (keyof SchoolProfile)[])
@@ -176,35 +229,36 @@
 		<section class="workspace-panel mb-5">
 			<h2 class="title is-5"><Icon name="admin" />Rôles et accès</h2>
 			<div class="field">
-				<label class="label" for="profile-role">Rôle du compte</label>
-				<div class="select is-fullwidth">
-					<select
-						id="profile-role"
-						bind:value={draft.role}
-						disabled={busy}
-						aria-describedby="profile-role-help"
-					>
-						{#each roleOptions as option (option.value)}
-							<option
-								value={option.value}
-								disabled={current.id === currentUserId && !option.roles.includes('admin')}
-								>{option.label}</option
-							>
-						{/each}
-					</select>
-				</div>
-				<p class="mt-3"><RoleBadges roles={rolesForChoice(draft.role)} /></p>
-				<p class="help" id="profile-role-help">
-					Élève est le rôle par défaut. Seul un administrateur peut modifier les rôles.
-				</p>
-				{#if current.id === currentUserId}
-					<p class="help">Vous ne pouvez pas retirer votre propre rôle Administrateur.</p>
-				{/if}
+				<RoleSelector
+					bind:selected={draft.roles}
+					disabled={busy}
+					preserveAdmin={current.id === currentUserId}
+				/>
 			</div>
 			{#if rolesChanged}
 				<p class="notification is-warning is-light" role="status">
 					Les accès de ce compte changeront après confirmation de l’enregistrement.
 				</p>
+			{/if}
+			{#if draft.roles.some((role) => ['teacher', 'kholleur'].includes(role))}
+				<div class="field">
+					{#if subjectsLoading}<p role="status">Chargement des matières…</p>{:else}<TagSelector
+							legend="Matières affectées"
+							options={subjects.map((subject) => ({
+								value: subject.id,
+								label: subject.name,
+								color: subject.color,
+								icon: subject.icon
+							}))}
+							bind:selected={draft.subject_ids}
+							disabled={busy || current.status === 'disabled'}
+						/>{/if}
+					<p class="help">
+						Sans matière, un enseignant ne peut pas créer de cours. Un khôlleur doit être ajouté
+						explicitement comme collaborateur pour consulter un cours : ses matières ne lui donnent
+						aucun accès automatique.
+					</p>
+				</div>
 			{/if}
 		</section>
 	{/if}
@@ -434,7 +488,7 @@
 	</footer>
 </form>
 {#if confirmRoles}
-	<Modal title="Confirmer le changement de rôle" onclose={() => (confirmRoles = false)}>
+	<Modal title="Confirmer le changement des accès" onclose={() => (confirmRoles = false)}>
 		<div class="notification is-warning is-light" role="alert">
 			<p>
 				<strong
@@ -443,16 +497,43 @@
 				>
 			</p>
 			<p class="mt-3">Rôles actuels : <RoleBadges roles={current.roles} /></p>
-			<p class="mt-3">Nouveaux rôles : <RoleBadges roles={rolesForChoice(draft.role)} /></p>
+			<p class="mt-3">Nouveaux rôles : <RoleBadges roles={draft.roles} /></p>
+			{#if rolesChanged && !canJoinPromotion(draft.roles) && current.promotions.length}
+				<p class="notification is-warning is-light mt-3">
+					Ce compte perd son éligibilité aux promotions. {current.promotions.length} affectation{current
+						.promotions.length === 1
+						? ''
+						: 's'} à une promotion {current.promotions.length === 1
+						? 'sera retirée'
+						: 'seront retirées'} automatiquement dès l’enregistrement, y compris pour les promotions archivées.
+				</p>
+			{/if}
 			<p class="mt-3">
 				Les droits associés seront appliqués dès l’enregistrement. Êtes-vous sûr de ce changement ?
 			</p>
+			{#if impacts.length}<p class="mt-3">
+					<strong
+						>Ce compte est associé à {impacts.length} cours concerné{impacts.length === 1
+							? ''
+							: 's'}. Il perdra les droits correspondants dès l’enregistrement.</strong
+					>
+				</p>
+				<ul class="mt-3">
+					{#each impacts as course (course.id)}<li>
+							{course.title} · {course.responsible ? 'responsable principal' : 'collaborateur'}
+						</li>{/each}
+				</ul>
+				<p class="mt-3">
+					Un administrateur peut nommer un nouveau responsable depuis chaque cours. Les affectations
+					retirées et les collaborations concernées devront être accordées à nouveau pour rétablir
+					les droits.
+				</p>{/if}
 		</div>
 		<div class="dialog-actions">
 			<button type="button" class="button is-light" onclick={() => (confirmRoles = false)}
 				>Annuler</button
 			>
-			<button type="button" class="button is-warning" onclick={persist}
+			<button type="button" class="button is-warning" onclick={() => persist(true)}
 				>Confirmer et enregistrer</button
 			>
 		</div>
