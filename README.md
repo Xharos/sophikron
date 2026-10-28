@@ -4,14 +4,6 @@
 
 Share teaching materials, publish educational pages and create interactive content.
 
-Private timetables at `/timetable` provide annual calendars, live diffusion, recurring dated events,
-full-screen group/student previews, custom option groups, lunch checks, annual hour totals and administrator-only archives.
-Rooms and academic-year labels have a shared catalogue; daily rules belong to each calendar. The
-permanent `prof` agenda provides independent annual availability and teaching-calendar overlays.
-Members generate a personal calendar subscription from
-`/me`; students use subscriptions without access to the timetable web interface. See
-[timetable documentation](docs/timetable.md) for migrations, automatic September archival, permissions and setup.
-
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />
@@ -130,6 +122,10 @@ The authorized amendment of migration `0005_lessons` is for the fresh baseline; 
 already at 0005 need a separate schema transition before running the updated application.
 
 ## Contributing
+
+Local test datasets can be generated with `script/seed_demo_data.py`; its central configuration
+controls cohort sizes, staff, groups and annual timetables. See the [demo data guide](script/README.md)
+for dry runs and separate test scenarios.
 
 Contributions are welcome. Please read the [contribution guidelines](docs/CONTRIBUTING.md) before submitting a pull
 request.

@@ -204,5 +204,6 @@ backend/run_tests.py provides the existing isolated PostgreSQL/Docker workflow a
 checks. Unit tests cover holiday cycles, exceptions, exact durations, lunch, annual makeups and
 audience weighting. PostgreSQL tests cover actual API rights, live feeds, archive restoration,
 uniqueness, stale writes, immutable settings, matching-year availability and bounded feed queries.
-The demo script script/creer_donnees_test.py creates accounts/subjects/groups only; it does not need
-to populate or publish timetables and is not run by this refactor.
+The modular local demo entry point is `script/seed_demo_data.py`. Its configurable scenario creates
+accounts, subjects, groups and annual calendars, including the weekly PTSI timetable. A dry run
+validates the scenario before login. See [script instructions](../script/README.md).

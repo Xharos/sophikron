@@ -89,7 +89,8 @@ jobs:
         run: python -m pytest -q -m integration
 
       - name: Stop verification services
-        if: always()
+        # Earlier failures can skip secret preparation; Compose down also needs this path.
+        if: ${{ always() && env.SOPHIKRON_SECRETS_DIRECTORY != '' }}
         working-directory: .
         run: >-
           docker compose -f compose.yaml -f compose.local.yaml -p sophikron-ci down
