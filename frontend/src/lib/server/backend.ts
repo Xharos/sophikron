@@ -95,7 +95,7 @@ export async function requestBackend<T>(
 	}
 	const [pathname] = path.split('?');
 	if (
-		!/^\/(?:(?:auth|admin|teaching)\/[a-zA-Z0-9/-]+|promotion-groups\/(?:promotions(?:\/[1-9]\d*)?|[1-9]\d*(?:\/(?:halves|thirds|kholles)(?:\/preview)?)?)|lessons(?:\/[a-zA-Z0-9/-]+)?|site)$/.test(
+		!/^\/(?:(?:auth|admin|teaching|timetable)\/[a-zA-Z0-9/-]+|promotion-groups\/(?:promotions(?:\/[1-9]\d*)?|[1-9]\d*(?:\/(?:halves|thirds|kholles)(?:\/preview)?)?)|lessons(?:\/[a-zA-Z0-9/-]+)?|site)$/.test(
 			pathname
 		) ||
 		path.includes('#')

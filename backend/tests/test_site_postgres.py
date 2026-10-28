@@ -236,8 +236,78 @@ async def test_kholleur_reads_hidden_content_only_when_assigned_and_cannot_write
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("activate", [False, True], ids=["pending", "active"])
+async def test_subject_and_team_include_pending_assignments_without_archived_accounts(
+    auth_case: Harness, activate: bool
+) -> None:
+    """Keep seeded staff visible before activation without exposing archived assignments."""
+    case = auth_case
+    response = await case.client.post(
+        "/api/v1/admin/subjects", json={"name": f"Seeded staff {case.prefix}"}
+    )
+    assert response.status_code == 201, response.text
+    subject_id = response.json()["id"]
+    extra_subject_id = None
+    try:
+        response = await case.client.post(
+            "/api/v1/admin/subjects", json={"name": f"English staff {case.prefix}"}
+        )
+        assert response.status_code == 201, response.text
+        extra_subject_id = response.json()["id"]
+        identifiers = []
+        for index, roles in enumerate(
+            (["teacher"], ["kholleur"], ["teacher", "kholleur"], ["teacher"])
+        ):
+            identifier, _ = await case.create(roles[0], activate=activate)
+            identifiers.append(identifier)
+            current = await profile(case, identifier)
+            response = await case.client.patch(
+                f"/api/v1/admin/users/{identifier}/profile",
+                json={
+                    "expected_version": current["profile_version"],
+                    "roles": roles,
+                    "subject_ids": [subject_id] + ([extra_subject_id] if index != 2 else []),
+                },
+            )
+            assert response.status_code == 200, response.text
+        response = await case.client.patch(
+            f"/api/v1/admin/users/{identifiers[-1]}/archive", json={"archived": True}
+        )
+        assert response.status_code == 204, response.text
+        response = await case.client.get("/api/v1/admin/team")
+        assert response.status_code == 200, response.text
+        team = response.json()
+        group = next(item for item in team["subjects"] if item["id"] == subject_id)
+        assert {member["id"] for member in group["members"]} == set(identifiers[:3])
+        assert team["member_count"] == 3
+        assert team["teacher_count"] == team["kholleur_count"] == 2
+        response = await case.client.get("/api/v1/admin/subjects")
+        assert response.status_code == 200, response.text
+        subject = next(item for item in response.json()["items"] if item["id"] == subject_id)
+        assert subject["teacher_count"] == 3
+        english = next(item for item in response.json()["items"] if item["id"] == extra_subject_id)
+        assert english["teacher_count"] == 2
+        english_team = next(item for item in team["subjects"] if item["id"] == extra_subject_id)
+        assert {member["id"] for member in english_team["members"]} == set(identifiers[:2])
+        for identifier in identifiers[:3]:
+            account = await case.client.get(f"/api/v1/admin/users/{identifier}")
+            assert account.status_code == 200, account.text
+            assert account.json()["status"] == ("active" if activate else "pending_activation")
+    finally:
+        async with case.database.sessions.begin() as session:
+            await session.execute(
+                delete(TeacherSubject).where(
+                    TeacherSubject.subject_id.in_([subject_id, extra_subject_id])
+                )
+            )
+            await session.execute(
+                delete(Subject).where(Subject.id.in_([subject_id, extra_subject_id]))
+            )
+
+
+@pytest.mark.asyncio
 async def test_teaching_team_groups_sorts_and_counts_distinct_staff(course: CourseHarness) -> None:
-    """Count unique accounts separately from per-subject roles, omitting inactive staff."""
+    """Count unique people per role across subjects, omitting archived staff."""
     case = course.case
     reader_id, _ = await case.create("kholleur")
     disabled_id, _ = await case.create("teacher")
@@ -285,7 +355,7 @@ async def test_teaching_team_groups_sorts_and_counts_distinct_staff(course: Cour
         assert result.status_code == 200, result.text
         team = result.json()
         assert team["member_count"] == 3
-        assert team["teacher_count"] == 3 and team["kholleur_count"] == 3
+        assert team["teacher_count"] == 2 and team["kholleur_count"] == 2
         groups = {subject["id"]: subject for subject in team["subjects"]}
         assert [member["id"] for member in groups[course.state["subject_id"]]["members"]] == [
             course.collaborator_id,

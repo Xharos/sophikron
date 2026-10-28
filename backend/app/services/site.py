@@ -96,15 +96,15 @@ class SiteService:
             for row in rows:
                 teachers = (
                     await self.db.scalar(
-                        select(func.count())
+                        select(func.count(func.distinct(TeacherSubject.user_id)))
                         .select_from(TeacherSubject)
                         .join(User, User.id == TeacherSubject.user_id)
                         .join(UserRole, UserRole.user_id == User.id)
                         .join(Role)
                         .where(
                             TeacherSubject.subject_id == row.id,
-                            Role.code == "teacher",
-                            User.status == "active",
+                            Role.code.in_(["teacher", "kholleur"]),
+                            User.status.in_(["pending_activation", "active"]),
                         )
                     )
                     if not mine

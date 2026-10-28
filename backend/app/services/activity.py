@@ -474,6 +474,18 @@ for _code, _label, _icon, _message in (
     )
 
 
+for _code, _label in (
+    ("changed", "Emploi du temps modifié"),
+    ("published", "Emploi du temps publié"),
+):
+    EVENTS[f"timetable.{_code}"] = EventDefinition(
+        resource="timetable",
+        label=_label,
+        icon="clock",
+        message="{actor} a mis à jour un emploi du temps.",
+    )
+
+
 def highest_role(roles: Iterable[str]) -> str | None:
     """Return the highest supported grant, or no role for a system/unknown principal.
 

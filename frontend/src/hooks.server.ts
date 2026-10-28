@@ -9,7 +9,9 @@ import { themedHtml, themeCookie } from '#lib/theme';
 export const handle: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	if (building) return resolve(event);
-	const publicStatic = ['/sitemap.xml', '/robots.txt', '/health'].includes(event.url.pathname);
+	const publicStatic =
+		['/sitemap.xml', '/robots.txt', '/health'].includes(event.url.pathname) ||
+		event.url.pathname.startsWith('/calendar-feed/');
 	try {
 		const config =
 			!publicStatic || !['GET', 'HEAD'].includes(event.request.method) ? configuration() : null;
@@ -20,14 +22,15 @@ export const handle: Handle = async ({ event, resolve }) => {
 				event.url.pathname !== '/lessons/upload'
 			) {
 				const length = event.request.headers.get('content-length');
-				if (length && (!/^\d{1,8}$/.test(length) || Number(length) > 16384))
+				const bodyLimit = event.url.pathname === '/timetable/template' ? 262144 : 16384;
+				if (length && (!/^\d{1,8}$/.test(length) || Number(length) > bodyLimit))
 					throw new BackendError(413, 'Demande trop volumineuse.');
 				let size = 0;
 				const stream = event.request.body?.pipeThrough(
 					new TransformStream<Uint8Array, Uint8Array>({
 						transform(chunk, controller) {
 							size += chunk.byteLength;
-							if (size > 16384) throw new BackendError(413, 'Demande trop volumineuse.');
+							if (size > bodyLimit) throw new BackendError(413, 'Demande trop volumineuse.');
 							controller.enqueue(chunk);
 						}
 					})
@@ -65,6 +68,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 	response.headers.set('X-Content-Type-Options', 'nosniff');
 	// Native POST forms must retain their origin for SvelteKit's CSRF protection.
 	response.headers.set('Referrer-Policy', 'same-origin');
+	if (event.url.pathname.startsWith('/calendar-feed/'))
+		response.headers.set('Referrer-Policy', 'no-referrer');
 	response.headers.set('X-Frame-Options', 'DENY');
 	return response;
 };

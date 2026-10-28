@@ -9,6 +9,7 @@
 	import SchoolProfileView from '#lib/components/SchoolProfileView.svelte';
 	import Icon from '#lib/components/Icon.svelte';
 	import Modal from '#lib/components/Modal.svelte';
+	import CalendarSubscription from '#lib/components/CalendarSubscription.svelte';
 	import type { PageProps } from './$types';
 	let { data, form }: PageProps = $props();
 	let busy = $state(false);
@@ -64,6 +65,9 @@
 		</section>
 	{/if}
 	{#if data.profile}<SchoolProfileView account={data.profile} />{/if}
+	{#if data.calendarSubscription}<CalendarSubscription
+			exists={data.calendarSubscription.exists}
+		/>{/if}
 	<section class="workspace-panel account-activity">
 		<p class="eyebrow">Activité et sécurité</p>
 		<h2 class="title is-5"><Icon name="clock" />Les repères de votre compte</h2>

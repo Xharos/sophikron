@@ -22,6 +22,7 @@ dependencies = [
     "Pillow>=12,<14",
     "pypdf>=6,<7",
     "defusedxml>=0.7,<1",
+    "icalendar>=7.3,<8",
 ]
 
 [project.optional-dependencies]

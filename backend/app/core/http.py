@@ -17,6 +17,15 @@ class SearchAccessLogFilter(logging.Filter):
         """Preserve the access entry but omit search query strings from known URL arguments."""
         if isinstance(record.args, tuple) and len(record.args) == 5:
             address, method, target, protocol, status = record.args
+            if isinstance(target, str) and target.startswith("/api/v1/timetable/feed/"):
+                record.args = (
+                    address,
+                    method,
+                    "/api/v1/timetable/feed/[redacted].ics",
+                    protocol,
+                    status,
+                )
+                return True
             if isinstance(target, str) and target.split("?", 1)[0] in {
                 "/api/v1/admin/users/search",
                 "/api/v1/teaching/users/search",
@@ -40,12 +49,22 @@ class AuthRequestMiddleware:
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Buffer at most the configured bytes, including requests without Content-Length."""
         if scope["type"] != "http" or not scope["path"].startswith(
-            ("/api/v1/auth/", "/api/v1/admin/", "/api/v1/teaching/", "/api/v1/lessons")
+            (
+                "/api/v1/auth/",
+                "/api/v1/admin/",
+                "/api/v1/teaching/",
+                "/api/v1/lessons",
+                "/api/v1/timetable/",
+            )
         ):
             await self.app(scope, receive, send)
             return
         settings = scope["app"].state.auth_settings
         limit = settings.request_max_bytes
+        if scope["path"].startswith("/api/v1/timetable/years/") and scope["path"].endswith(
+            "/template"
+        ):
+            limit = max(limit, 262144)
         binary = is_document_upload(scope["path"], scope.get("method", ""))
         if binary:
             limit = scope["app"].state.document_settings.max_bytes

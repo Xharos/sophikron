@@ -32,8 +32,26 @@ from app.models.site import (
     TimelineEventBar,
 )
 from app.models.statistics import LoginStatistic
+from app.models.timetable import (
+    TeacherAvailability,
+    TimetableCalendar,
+    TimetableRoom,
+    TimetableSchoolYear,
+    TimetableSeries,
+    TimetableSubscription,
+    TimetableTemplateVersion,
+    TimetableYear,
+)
 
 __all__ = [
+    "TeacherAvailability",
+    "TimetableCalendar",
+    "TimetableRoom",
+    "TimetableSchoolYear",
+    "TimetableSeries",
+    "TimetableSubscription",
+    "TimetableTemplateVersion",
+    "TimetableYear",
     "SiteSettings",
     "Subject",
     "TeacherSubject",

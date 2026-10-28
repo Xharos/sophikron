@@ -8,6 +8,7 @@
 		drawer = false,
 		busy = false,
 		onclose,
+		actions,
 		children
 	}: {
 		title: string;
@@ -15,6 +16,7 @@
 		drawer?: boolean;
 		busy?: boolean;
 		onclose: () => void;
+		actions?: Snippet;
 		children: Snippet;
 	} = $props();
 	let dialog: HTMLDialogElement;
@@ -56,5 +58,15 @@
 			onclick={onclose}><Icon name="close" /></button
 		>
 	</header>
+	{#if actions}<div class="dialog-toolbar">{@render actions()}</div>{/if}
 	<div class="dialog-body">{@render children()}</div>
 </dialog>
+
+<style>
+	.dialog-toolbar {
+		flex-shrink: 0;
+		padding: 0.75rem 1.7rem;
+		border-bottom: var(--border-thin);
+		background: var(--color-surface);
+	}
+</style>

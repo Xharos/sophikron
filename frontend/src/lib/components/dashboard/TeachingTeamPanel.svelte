@@ -37,8 +37,8 @@
 			<p class="eyebrow">Équipe enseignante</p>
 			<h2 class="title is-4 mb-2">Les personnes derrière chaque matière.</h2>
 			<p class="muted text-small">
-				Comptes et matières actifs. Les professeurs précèdent les khôlleurs, puis sont classés par
-				nom.
+				Comptes non archivés, y compris en attente d’activation, affectés aux matières actives. Les
+				professeurs précèdent les khôlleurs, puis sont classés par nom.
 			</p>
 		</div>
 		<button class="button is-light" disabled={loading} onclick={load}
@@ -55,8 +55,8 @@
 			>
 		</p>
 		<p class="help mb-4">
-			Les membres sont des comptes uniques. Les professeurs et les khôlleurs sont comptés par
-			matière ; une personne ayant les deux rôles apparaît dans les deux catégories.
+			Chaque personne est comptée une seule fois par rôle, même si elle enseigne plusieurs matières.
+			Une personne ayant les deux rôles figure dans les deux catégories.
 		</p>
 		{#if subjects.length === 0}<p class="empty-state">Aucune matière à afficher.</p>
 		{:else}<div class="team-grid">

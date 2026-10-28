@@ -11,6 +11,7 @@ This directory contains the documentation for Sophikron.
 - `frontend-bff.md`: responsive administrator/teacher workspace, invitations, BFF security and deployment.
 - `site-administration.md`: subjects, public homepage/calendar, khôlleurs and course-right revocation.
 - `lessons.md`: course pages, inherited availability, collaborators, promotion access and audit events.
+- `timetable.md`: whole-class timetables, annual settings, publication and personal ICS subscriptions.
 - `lesson-documents.md`: private files, validation, quotas, disk cleanup, backup and restore.
 - `lesson-resources-audit.md`: historical audit preceding document/table implementation.
 - `security-audit.md`: security review, antivirus removal, verified controls and remaining risks.

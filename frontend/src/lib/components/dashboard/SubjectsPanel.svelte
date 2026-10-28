@@ -80,7 +80,10 @@
 		<div>
 			<p class="eyebrow">Matières</p>
 			<h2 class="title is-4 mb-2">Vos enseignements, au même endroit.</h2>
-			<p class="muted text-small">Créez, organisez et retrouvez vos matières.</p>
+			<p class="muted text-small">
+				Créez, organisez et retrouvez vos matières. Le compteur d’enseignants regroupe les
+				professeurs et les khôlleurs uniques affectés à chaque matière.
+			</p>
 		</div>
 		<button class="button is-primary" onclick={() => (editor = 'new')}
 			><Icon name="plus" />Nouvelle matière</button

@@ -184,15 +184,21 @@ as accounts awaiting activation.
 ## Teaching team
 
 The administrator-only `/dashboard?tab=team` reads `GET /admin/team`. Every active subject has a
-colored block, including subjects without staff. Only active, assigned teachers and kholleurs appear.
+colored block, including subjects without staff. Assigned teachers and kholleurs appear when active
+or awaiting activation; archived accounts remain excluded. Administrative assignment visibility is
+independent of login eligibility: showing pending accounts never activates them or grants access.
+The subject catalogue's `teacher_count` counts unique assigned teachers and kholleurs, including
+active and pending accounts and excluding archived accounts. A person with both roles counts once
+per subject, so one teacher plus one separate kholleur is displayed as two teaching staff.
 The page shows teachers first, then kholleurs, sorted within each role by accent-insensitive family
 name, given name and ID. Each name links to the full profile inside the badge for that teaching role,
 even when the account is also an administrator. A person with both staff roles appears twice per
 subject: once as a teacher and once as a kholleur. There is no subject search bar.
 No emails or private profile fields are returned. The API retains one member per subject with all
 explicit roles; the page expands teaching roles for display. `member_count` counts unique displayed
-accounts across all subjects. `teacher_count` and `kholleur_count` count occurrences per subject,
-independently: a dual-role account contributes to both totals for each assigned active subject.
+accounts across all subjects. `teacher_count` and `kholleur_count` count unique people in each role
+across all subjects. A dual-role account contributes once to each role total, regardless of how
+many subjects it teaches; the sum of role totals can therefore exceed `member_count`.
 Assignments are maintained in the administrator profile editor for either staff role.
 They do not add course collaborations or confer automatic course access.
 

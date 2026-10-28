@@ -330,7 +330,7 @@ class AdministrationService:
         return {"student_blocks": len(accounts), "accounts_changed": changed}
 
     async def teaching_team(self, actor: UserContext) -> TeachingTeam:
-        """Group active assigned staff by subject, sorting teachers before kholleurs."""
+        """Group non-archived assigned staff, including accounts awaiting activation."""
         async with self.db.begin():
             await self.auth._actor(actor, permission="users.manage")
             subjects = list(
@@ -344,7 +344,7 @@ class AdministrationService:
                     .join(User, User.id == TeacherSubject.user_id)
                     .where(
                         TeacherSubject.subject_id.in_([subject.id for subject in subjects]),
-                        User.status == "active",
+                        User.status.in_(["pending_activation", "active"]),
                         User.is_bootstrap.is_(False),
                     )
                 )
@@ -403,12 +403,8 @@ class AdministrationService:
                     for subject in subjects
                 ],
                 member_count=len(members),
-                teacher_count=sum(
-                    "teacher" in members[user.id].roles for _, user in rows if user.id in members
-                ),
-                kholleur_count=sum(
-                    "kholleur" in members[user.id].roles for _, user in rows if user.id in members
-                ),
+                teacher_count=sum("teacher" in member.roles for member in members.values()),
+                kholleur_count=sum("kholleur" in member.roles for member in members.values()),
             )
 
     async def promotions(

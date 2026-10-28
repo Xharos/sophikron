@@ -111,6 +111,11 @@ def test_feature_migration_chain() -> None:
         "0004_subjects",
         "0005_lessons",
         "0006_promotion_groups",
+        "0007_timetable",
+        "0008_timetable_workspace",
+        "0009_timetable_instants",
+        "0010_timetable_optional_fields",
+        "0011_teacher_availability",
     ]
     revisions = list(reversed(list(scripts.walk_revisions())))
     assert [revision.revision for revision in revisions] == expected

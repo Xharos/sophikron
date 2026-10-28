@@ -55,6 +55,15 @@
 					{#if canAccess(user, 'staff')}
 						<a
 							class="navbar-item"
+							href={resolve('/timetable')}
+							aria-current={page.url.pathname === '/timetable' ||
+							page.url.pathname.startsWith('/timetable/')
+								? 'page'
+								: undefined}
+							onclick={() => (expanded = false)}>Emploi du temps</a
+						>
+						<a
+							class="navbar-item"
 							href={resolve('/dashboard')}
 							aria-current={page.url.pathname === '/dashboard' ? 'page' : undefined}
 							onclick={() => (expanded = false)}

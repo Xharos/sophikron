@@ -2,16 +2,19 @@
 	import { resolve } from '$app/paths';
 	import { roleLabels } from '#lib/roles';
 	import Icon from './Icon.svelte';
+	import { themeAccent } from '#lib/colors';
 	let {
 		role,
 		label,
 		userId,
-		historical = false
+		historical = false,
+		color
 	}: {
 		role: string | null;
 		label?: string;
 		userId?: number;
 		historical?: boolean;
+		color?: string;
 	} = $props();
 	const roleLabel = $derived(role ? (roleLabels[role] ?? role) : 'Rôle non renseigné');
 	const title = $derived(`${roleLabel}${historical ? ' au moment de l’action' : ''}`);
@@ -28,7 +31,9 @@
 					: 'profile'}
 		size={14}
 	/>
-	{label ?? roleLabel}
+	<span class="role-name" style:color={color ? themeAccent(color) : undefined}
+		>{label ?? roleLabel}</span
+	>
 {/snippet}
 {#if userId}
 	<a
