@@ -10,6 +10,8 @@ import {
 	mondayOf,
 	shiftTimetableDate,
 	timetableClock,
+	timetableBackgrounds,
+	timetableHolidayLabel,
 	timetableTree,
 	nodeReceives,
 	teachingHours,
@@ -17,7 +19,7 @@ import {
 	resizedTimetableSlots,
 	orderedTimetableTeachers,
 	timetableAudienceLabel,
-	timetableConflicts,
+	timetableConflictDetails,
 	type TimetableMember,
 	type TimetableGroup,
 	type TimetableEvent
@@ -39,6 +41,85 @@ test('session text identifies whole classes, half groups, thirds and kholle grou
 	);
 	assert.equal(timetableAudienceLabel({ target_kind: 'student' }), 'Séance individuelle');
 	assert.equal(timetableAudienceLabel({ audience_label: 'Demi-groupe A' }), 'Demi-groupe A');
+});
+
+test('holidays include both boundary dates and retain entered labels', () => {
+	const settings = {
+		...defaultTimetableSettings(2026),
+		holidays: [{ name: 'Toussaint', start: '2026-10-17', end: '2026-11-01' }]
+	};
+	assert.equal(timetableHolidayLabel(settings, '2026-10-16'), null);
+	assert.equal(timetableHolidayLabel(settings, '2026-10-17'), 'Vacances · Toussaint');
+	assert.equal(timetableHolidayLabel(settings, '2026-11-01'), 'Vacances · Toussaint');
+	assert.equal(timetableHolidayLabel(settings, '2026-11-02'), null);
+	assert.equal(timetableHolidayLabel({ ...settings, end: '2026-10-18' }, '2026-10-19'), null);
+});
+
+test('holiday backgrounds cover the whole grid day and replace pauses and self', () => {
+	const settings = {
+		...defaultTimetableSettings(2026),
+		holidays: [{ name: 'Ascension', start: '2027-05-06', end: '2027-05-07' }]
+	};
+	const backgrounds = timetableBackgrounds(settings, '2027-05-05');
+	for (const day of ['2027-05-06', '2027-05-07']) {
+		const items = backgrounds.filter((item) => item.start.startsWith(day));
+		assert.equal(items.length, 1);
+		assert.equal(items[0].title, 'Vacances · Ascension');
+		assert.equal(items[0].start, `${day}T08:00:00`);
+		assert.equal(items[0].end, `${day}T19:00:00`);
+		assert.equal(items[0].display, 'background');
+		assert.equal(items[0].editable, false);
+		assert.deepEqual(items[0].classNames, ['timetable-holiday']);
+	}
+	assert.deepEqual(
+		backgrounds.filter((item) => item.start.startsWith('2027-05-05')).map((item) => item.title),
+		['Pause', 'Pause', 'Self ouvert · cours autorisés']
+	);
+});
+
+test('full vacation weeks render one background per visible day including optional Saturday', () => {
+	const settings = {
+		...defaultTimetableSettings(2026),
+		holidays: [{ name: 'Toussaint', start: '2026-10-17', end: '2026-11-01' }]
+	};
+	assert.equal(timetableBackgrounds(settings, '2026-10-21').length, 5);
+	const saturday = timetableBackgrounds({ ...settings, saturday: true }, '2026-10-21');
+	assert.equal(saturday.length, 6);
+	assert.equal(saturday[5].start, '2026-10-24T08:00:00');
+	assert.ok(saturday.every((item) => item.title === 'Vacances · Toussaint'));
+	assert.ok(
+		timetableBackgrounds(settings, '2026-11-02').every((item) => !item.id.startsWith('holiday-'))
+	);
+});
+
+test('undated weekly patterns retain recess without painting dated holidays or self', () => {
+	const settings = {
+		...defaultTimetableSettings(2026),
+		holidays: [{ name: 'Toussaint', start: '2026-10-17', end: '2026-11-01' }]
+	};
+	const backgrounds = timetableBackgrounds(settings, '2026-10-21', { dateless: true });
+	assert.equal(backgrounds.length, 10);
+	assert.ok(backgrounds.every((item) => item.title === 'Pause'));
+	assert.ok(
+		timetableBackgrounds(settings, '2026-11-02', { showLunch: false }).every(
+			(item) => !item.id.startsWith('self-')
+		)
+	);
+});
+
+test('overlapping holiday periods share a single daily background with all labels', () => {
+	const settings = {
+		...defaultTimetableSettings(2026),
+		holidays: [
+			{ name: 'Toussaint', start: '2026-10-17', end: '2026-11-01' },
+			{ name: 'Fermeture', start: '2026-10-21', end: '2026-10-21' }
+		]
+	};
+	const day = timetableBackgrounds(settings, '2026-10-21').filter((item) =>
+		item.start.startsWith('2026-10-21')
+	);
+	assert.equal(day.length, 1);
+	assert.equal(day[0].title, 'Vacances · Toussaint · Fermeture');
 });
 
 test('exact half-session seconds survive display and parsing', () => {
@@ -296,19 +377,24 @@ test('live conflicts allow two half groups in one room but keep teacher and whol
 		teacher_id: 2,
 		target_number: 2
 	});
-	assert.deepEqual(timetableConflicts([first, second]), []);
-	assert.ok(timetableConflicts([first, { ...second, teacher_id: 1 }])[0].includes('enseignant'));
+	assert.deepEqual(timetableConflictDetails([first, second]), []);
 	assert.ok(
-		timetableConflicts([first, { ...second, target_kind: 'promotion', target_number: null }]).some(
-			(warning) => warning.includes('salle')
+		timetableConflictDetails([first, { ...second, teacher_id: 1 }])[0].message.includes(
+			'enseignant'
 		)
 	);
 	assert.ok(
-		timetableConflicts([
+		timetableConflictDetails([
+			first,
+			{ ...second, target_kind: 'promotion', target_number: null }
+		]).some((warning) => warning.message.includes('salle'))
+	);
+	assert.ok(
+		timetableConflictDetails([
 			first,
 			second,
 			{ ...second, id: 'c', title: 'Autre promotion', promotion_id: 2, teacher_id: 3 }
-		]).some((warning) => warning.includes('salle'))
+		]).some((warning) => warning.message.includes('salle'))
 	);
 });
 
@@ -359,9 +445,9 @@ test('overlapping named audiences retain their names and report actual shared pu
 		target_number: 11,
 		room_id: null
 	});
-	assert.ok(timetableConflicts([first, second], custom).length > 0);
+	assert.ok(timetableConflictDetails([first, second], custom).length > 0);
 	assert.deepEqual(
-		timetableConflicts([first, second], [custom[0], { ...custom[1], student_ids: [2] }]),
+		timetableConflictDetails([first, second], [custom[0], { ...custom[1], student_ids: [2] }]),
 		[]
 	);
 });

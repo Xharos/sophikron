@@ -222,19 +222,6 @@ def occurrences(document: YearDocument) -> list[dict]:
     return sorted(result, key=lambda item: (item["start"], item["id"]))
 
 
-def cycle_warnings(document: YearDocument) -> list[str]:
-    """Report incomplete teaching cycles without dropping or changing any occurrence."""
-    count = len(teaching_weeks(document.settings))
-    return [
-        f"{count} semaines de cours : cycle de {interval} semaines incomplet en fin d’année. "
-        "Vérifiez la dernière semaine et les exceptions."
-        for interval in sorted(
-            {series.interval for series in document.series if series.interval > 1}
-        )
-        if count % interval
-    ]
-
-
 def apply_event_change(
     document: YearDocument,
     series_id: str | None,

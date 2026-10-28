@@ -237,9 +237,101 @@ def test_custom_audiences_affect_meals_and_hours_without_partition_imbalance() -
     custom = [{"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": [1]}]
     sessions = [event("2026-09-07", "12:00:00", "14:00:00", target_kind="custom", target_number=50)]
     totals, issues = annual_diagnostics(sessions, grid(), roster(), custom, 10, date(2026, 9, 1))
-    assert totals[0]["course"] == 1
+    assert totals[0]["course"] == 2
+    assert totals[0]["weekly"]["course"] == 0.5
     assert [issue["code"] for issue in issues] == ["lunch-2026-09-07"]
     assert "1 élève" in issues[0]["message"]
+
+
+@pytest.mark.parametrize("subject_id", [1, 99])
+def test_custom_only_subject_counts_hours_for_its_option_pupils(subject_id: int) -> None:
+    """Count a weekly option for its participants, independently of the full class size or name."""
+    pupils = [
+        {"id": identifier, "roles": ["user"], "promotion_ids": [10]} for identifier in range(1, 46)
+    ]
+    custom = [
+        {"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": list(range(1, 11))}
+    ]
+    sessions = [
+        event(
+            day,
+            "08:00:00",
+            "09:00:00",
+            subject_id=subject_id,
+            target_kind="custom",
+            target_number=50,
+        )
+        for day in ("2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28")
+    ]
+    totals, _ = annual_diagnostics(sessions, grid(), pupils, custom, 10, date(2026, 9, 1))
+    assert totals[0]["course"] == totals[0]["total"] == 4
+    assert totals[0]["weekly"]["course"] == totals[0]["weekly"]["total"] == 1
+
+
+def test_option_pupils_are_the_union_of_referenced_custom_groups() -> None:
+    """Count overlapping pupils once and exclude unrelated or out-of-roster memberships."""
+    custom = [
+        {"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": [1, 999]},
+        {"promotion_id": 10, "kind": "custom", "number": 51, "student_ids": [1, 2]},
+        {"promotion_id": 10, "kind": "custom", "number": 52, "student_ids": [3]},
+    ]
+    pupils = [*roster(), {"id": 3, "roles": ["user"], "promotion_ids": [10]}]
+    sessions = [
+        event("2026-09-07", "08:00:00", "09:00:00", target_kind="custom", target_number=50),
+        event("2026-09-14", "08:00:00", "09:00:00", target_kind="custom", target_number=51),
+    ]
+    totals, _ = annual_diagnostics(sessions, grid(), pupils, custom, 10, date(2026, 9, 1))
+    assert totals[0]["total"] == 1.5
+    assert totals[0]["weekly"]["total"] == 0.375
+
+
+@pytest.mark.parametrize(
+    "kind,number,user", [("promotion", None, None), ("halves", 1, None), ("student", None, 2)]
+)
+def test_mixed_subjects_keep_class_weighting(
+    kind: str, number: int | None, user: int | None
+) -> None:
+    """Treat an extra custom-group session as a supplement when the subject has other audiences."""
+    custom = [{"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": [1]}]
+    sessions = [
+        event("2026-09-07", "08:00:00", "09:00:00", target_kind="custom", target_number=50),
+        event(
+            "2026-09-14",
+            "08:00:00",
+            "09:00:00",
+            target_kind=kind,
+            target_number=number,
+            target_user_id=user,
+        ),
+    ]
+    totals, _ = annual_diagnostics(
+        sessions, grid(), roster(), [*groups(), *custom], 10, date(2026, 9, 1)
+    )
+    assert totals[0]["total"] == (1.5 if kind == "promotion" else 1)
+
+
+def test_hidden_common_blocks_prevent_option_classification() -> None:
+    """Keep the full-class scope when a retained common session is hidden."""
+    custom = [{"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": [1]}]
+    blocks = [
+        series(interval=0, target_kind="custom", target_number=50, duration_slots=2),
+        series(starts_on=date(2026, 9, 8), interval=0, duration_slots=2),
+    ]
+    calendar = grid(holidays=[{"start": "2026-09-08", "end": "2026-09-08"}])
+    events = occurrences(YearDocument(settings=calendar, series=blocks))
+    assert len(events) == 1
+    totals, _ = annual_diagnostics(events, calendar, roster(), custom, 10, date(2026, 9, 1), blocks)
+    assert totals[0]["total"] == 0.5
+    assert totals[0]["weekly"]["total"] == 0.125
+
+
+def test_missing_option_pupils_keep_zero_hours_and_a_warning() -> None:
+    """Do not invent optional teaching hours when its custom audience is no longer in the roster."""
+    custom = [{"promotion_id": 10, "kind": "custom", "number": 50, "student_ids": [999]}]
+    sessions = [event("2026-09-07", "08:00:00", "09:00:00", target_kind="custom", target_number=50)]
+    totals, issues = annual_diagnostics(sessions, grid(), roster(), custom, 10, date(2026, 9, 1))
+    assert totals[0]["total"] == totals[0]["weekly"]["total"] == 0
+    assert [issue["code"] for issue in issues] == ["missing-custom-50"]
 
 
 def test_cycle_information_is_attached_to_the_related_balance_issue() -> None:

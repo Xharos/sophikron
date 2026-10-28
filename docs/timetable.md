@@ -40,6 +40,11 @@ removed. Alternations and annual totals are recomputed from the effective settin
 
 ## Dated sessions and recurrence
 
+Dated grids show each holiday as a noninteractive red-tinted background covering the visible
+day, labelled with the configured holiday name. Recess and self backgrounds are hidden on those
+days. These backgrounds are not sessions and never contribute hours. Undated weekly availability
+patterns keep their usual backgrounds without applying dated holidays.
+
 There is no weekly-template editor, version activation, draft snapshot or publication operation.
 Create an event once, weekly, every two teaching weeks or every three teaching weeks, optionally
 bounded by an end date. Complete holiday weeks suspend recurrence cycles; partial teaching weeks
@@ -106,6 +111,13 @@ The Hours panel switches between annual totals and weekly means per subject and 
 It uses all actual retained occurrences, including cancellations, replacements and later makeups.
 The denominator is every week with at least one teaching day, including partial weeks. With a roster,
 totals use the average pupil's actual audience membership; without one, halves/thirds use 1/2 and 1/3.
+For a named subject whose retained blocks target custom groups exclusively, totals instead use the
+average participating pupil: the denominator is the union of current pupils in its referenced custom
+groups, counting overlapping memberships once. Other custom groups and pupils outside the promotion
+are excluded. The rule applies to annual totals and weekly means, without relying on subject names.
+A subject mixing custom and other audiences keeps the full-class denominator. Hidden retained blocks
+also determine that classification. With a roster, an empty option audience contributes zero hours
+and keeps the missing-recipient warning. Lunch and group-balance checks still use their actual audiences.
 Recess segments count only their actual teaching duration. A configured session of 55–65 minutes
 counts as one pedagogical hour; other durations use minutes / 60. Kholles are shown separately.
 Annual subject/type differences between halves or thirds and missing assigned groups produce warnings;
@@ -173,37 +185,48 @@ No eligible calendar returns a valid empty ICS; archived calendars never leak hi
 
 ## Migration and verification
 
-Revision `0013_custom_group_positions` adds bounded bubble positions to custom groups and arranges
-existing groups beside the full-class source. It preserves all names, memberships and sessions.
-Apply it using the normal migration-role `alembic upgrade head`.
+Apply the current history with the migration role before starting the application. Migration
+revisions, compatibility requirements and transition procedures are centralized in
+[database migrations](database.md#migrations).
 
-Revision `0012_timetable_audiences` is additive over the annual schema. It preserves existing calendars,
-accounts, subscriptions and sessions, adds named audiences and the global automatic archive policy,
-and detaches former occurrence replacements while retaining their original ICS identifiers.
-Use the normal migration-role `alembic upgrade head`; do not replay `0011` on an existing annual schema.
 The default enabled policy archives and stops all active calendars with an older academic label at
 September rollover. A background check runs every minute and timetable reads/feeds also catch up,
 including after downtime. A transactional year watermark serializes workers and lets manually restored
 calendars remain restored until the next rollover. Enabling the policy also catches up immediately.
-Only administrators can change it. Downgrading `0012` is refused while custom audiences are referenced
-by sessions, avoiding dangling recipient assignments.
+Only administrators can change it.
 
-Revision 0011_teacher_availability is intentionally rewritten with the owner's authorization.
-Applying it removes all timetable calendars, series, former template versions/publications, rooms,
-academic labels, availability patterns and subscription verifiers. Accounts, promotions, subjects,
-groups and other application data are retained. No database volume is reset.
-
-Fresh installations use the normal Alembic upgrade head. If the former version of 0011 is already
-applied, stop the application, use the migration role to stamp 0010_timetable_optional_fields, then
-upgrade head to replay the rewritten revision. This replay procedure is only for the former schema;
-never stamp a database that already uses the new annual schema. Downgrading restores schema shape,
-not discarded timetable data. Existing personal links must be regenerated after this reset.
-
-Run backend pytest and Ruff, frontend tests/check/lint/build, and the browser timetable scenario.
-backend/run_tests.py provides the existing isolated PostgreSQL/Docker workflow and migration metadata
-checks. Unit tests cover holiday cycles, exceptions, exact durations, lunch, annual makeups and
+See [release verification](CONTRIBUTING.md#verification-before-a-release) for the backend, frontend,
+PostgreSQL and browser commands. Unit tests cover holiday cycles, exceptions, exact durations, lunch, annual makeups and
 audience weighting. PostgreSQL tests cover actual API rights, live feeds, archive restoration,
 uniqueness, stale writes, immutable settings, matching-year availability and bounded feed queries.
-The modular local demo entry point is `script/seed_demo_data.py`. Its configurable scenario creates
-accounts, subjects, groups and annual calendars, including the weekly PTSI timetable. A dry run
-validates the scenario before login. See [script instructions](../script/README.md).
+
+## Local demo data
+
+Use `script/seed_demo_data.py` from the repository root with the configured Python environment:
+
+```sh
+python script/seed_demo_data.py --dry-run
+python script/seed_demo_data.py --email admin@example.org
+```
+
+The dry run validates and displays the scenario without login or API writes. A real run requires
+the local API, current migrations and a permanent administrator. `--email` overrides
+`SOPHIKRON_SEED_EMAIL`; an omitted email is prompted. `SOPHIKRON_SEED_PASSWORD` supplies the password
+for the current process, otherwise `getpass` prompts without displaying it. Credentials are never
+stored in the script. The administrator session is revoked on exit, including after seeding errors.
+
+`CONFIG` in the entry point is the scenario to review before execution. It overrides the reusable
+`Settings` defaults: in particular it enables one weekly German-option hour, uses physics 4 h course
++ 2 h TD + 2 h TP, English 2 h course and computer science 1 h course + 1 h TP. Those overrides take
+precedence over the historical scenario description in `script/README.md`. PTSI and PT each contain
+45 pupils by default; only the PTSI calendar is filled, and diffusion starts disabled. Zone C holiday
+exclusions and the optional summer cutoff are explicit configuration; no other holidays are inferred.
+
+`--classes`, `--students` and `--namespace` override a copy of `CONFIG`. Change the namespace when
+testing an incompatible roster or timetable. Compatible retries reuse the scenario; they never reset
+the database, send invitations or overwrite foreign data. Previously completed API operations remain
+after an error. The script uses the local HTTP API and its authorization rules, without direct SQL.
+
+The `script/demo_data/` modules separate transport (`client`), configuration, identities, catalogue,
+groups, pure weekly allocation (`planning`), calendar writes (`timetables`) and orchestration (`runner`).
+For validation commands, see [release verification](CONTRIBUTING.md#verification-before-a-release).

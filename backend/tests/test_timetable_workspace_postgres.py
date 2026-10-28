@@ -13,10 +13,12 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    Subject,
     TeacherAvailability,
     TimetableCalendar,
     TimetablePreferences,
     TimetableSchoolYear,
+    TimetableSeries,
     TimetableYear,
 )
 from app.services.timetable_engine import PARIS
@@ -766,6 +768,47 @@ async def test_named_groups_overlap_validate_roster_and_drive_personal_feeds(
     assert (
         await w.case.client.put(path + f"/{group['id']}", json={**body, "confirmed_live": True})
     ).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_option_hours_exclude_pupils_outside_its_custom_group(workspace: Workspace) -> None:
+    """Return annual and weekly option hours for participants through the actual board API."""
+    w = workspace
+    other_pupil, _ = await w.case.create()
+    w.case.as_admin()
+    response = await w.case.client.post(
+        f"/api/v1/admin/promotions/{w.promotion_id}/users", json={"user_ids": [other_pupil]}
+    )
+    assert response.status_code == 204, response.text
+    response = await w.case.client.post(
+        "/api/v1/admin/subjects", json={"name": f"German option {w.case.prefix}"}
+    )
+    assert response.status_code == 201, response.text
+    subject_id = response.json()["id"]
+    try:
+        response = await w.case.client.put(
+            f"/api/v1/promotion-groups/{w.promotion_id}/custom/0",
+            json={"name": "German", "student_ids": [w.pupil_id], "expected_revision": None},
+        )
+        assert response.status_code == 200, response.text
+        state = await w.add(
+            title="German option",
+            subject_id=subject_id,
+            target_kind="custom",
+            target_number=response.json()["id"],
+        )
+        annual = state["years"][0]
+        hours = next(row for row in annual["hours"] if row["subject_id"] == subject_id)
+        session_count = sum(event["subject_id"] == subject_id for event in state["events"])
+        assert session_count > 0
+        assert hours["course"] == hours["total"] == session_count
+        assert hours["weekly"]["total"] == pytest.approx(session_count / len(annual["weeks"]))
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(
+                delete(TimetableSeries).where(TimetableSeries.subject_id == subject_id)
+            )
+            await session.execute(delete(Subject).where(Subject.id == subject_id))
 
 
 @pytest.mark.asyncio

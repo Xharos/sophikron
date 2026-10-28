@@ -8,6 +8,8 @@
 		timetableAudienceLabel,
 		resizedTimetableSlots,
 		timetableClock,
+		timetableBackgrounds,
+		timetableHolidayLabel,
 		mondayOf,
 		shiftTimetableDate,
 		type TimetableEvent,
@@ -205,6 +207,8 @@
 			return x >= bounds.left && x < bounds.right && y >= bounds.top && y < bounds.bottom;
 		});
 		if (index < 0) return null;
+		const day = shiftTimetableDate(mondayOf(date), index);
+		if (!dateless && timetableHolidayLabel(settings, day)) return null;
 		const bounds = days[index].getBoundingClientRect();
 		const first = Math.floor(settings.day_start / 3600) * 3600;
 		const last = Math.ceil(settings.day_end / 3600) * 3600;
@@ -216,7 +220,7 @@
 		)
 			return null;
 		return {
-			day: shiftTimetableDate(mondayOf(date), index),
+			day,
 			slot: nearestSlot(seconds),
 			eventId:
 				target instanceof Element
@@ -357,20 +361,8 @@
 			};
 		});
 		const settings = years[0]?.settings;
-		const pauses = settings
-			? Array.from({ length: settings.saturday ? 6 : 5 }, (_, index) =>
-					shiftTimetableDate(mondayOf(date), index)
-				).flatMap((day) =>
-					settings.breaks.map((pause, index) => ({
-						id: `pause-${day}-${index}`,
-						title: 'Pause',
-						start: `${day}T${timetableClock(pause.start)}`,
-						end: `${day}T${timetableClock(pause.end)}`,
-						display: 'background' as const,
-						backgroundColor: 'var(--color-border)',
-						textColor: 'var(--color-ink)'
-					}))
-				)
+		const backgrounds = settings
+			? timetableBackgrounds(settings, date, { dateless, showLunch: years[0]?.id !== 0 })
 			: [];
 		const occupied = availabilityMode
 			? occupiedRanges.map((range, index) => {
@@ -386,21 +378,6 @@
 					};
 				})
 			: [];
-		const selfWindow =
-			settings && years[0]?.id !== 0 && !dateless
-				? Array.from({ length: settings.saturday ? 6 : 5 }, (_, index) => {
-						const day = shiftTimetableDate(mondayOf(date), index);
-						return {
-							id: `self-${day}`,
-							title: 'Self ouvert · cours autorisés',
-							start: `${day}T${timetableClock(settings.lunch_start ?? 43200)}`,
-							end: `${day}T${timetableClock(settings.lunch_end ?? 50400)}`,
-							display: 'background' as const,
-							backgroundColor: 'var(--color-success-soft)',
-							classNames: ['timetable-lunch']
-						};
-					})
-				: [];
 		return {
 			view: 'timeGridWeek',
 			date,
@@ -477,10 +454,12 @@
 			slotLabelFormat: (value) => {
 				return `${String(value.getHours()).padStart(2, '0')} h`;
 			},
-			events: [...displayed, ...pauses, ...occupied, ...selfWindow],
+			events: [...displayed, ...backgrounds, ...occupied],
 			dateClick: (info) => {
 				if (creationActive || Date.now() < suppressCreationClickUntil) return;
 				if (!editable || !(info.jsEvent instanceof MouseEvent)) return;
+				if (settings && !dateless && timetableHolidayLabel(settings, info.dateStr.slice(0, 10)))
+					return;
 				const bounds = info.dayEl.getBoundingClientRect();
 				const first = Math.floor((settings?.day_start ?? 28800) / 3600) * 3600;
 				const last = Math.ceil((settings?.day_end ?? 61200) / 3600) * 3600;
@@ -799,6 +778,18 @@
 	.timetable-grid :global(.ec-bg-event.timetable-lunch) {
 		background-image: none;
 		pointer-events: none;
+	}
+	.timetable-grid :global(.ec-bg-event.timetable-holiday) {
+		background-image: none;
+		opacity: 1;
+		pointer-events: none;
+		color: var(--color-danger);
+		padding: 0.5rem;
+	}
+	.timetable-grid :global(.ec-bg-event.timetable-holiday .ec-event-title) {
+		font-size: clamp(0.85rem, 1.5vw, 1.25rem);
+		font-weight: 700;
+		overflow-wrap: anywhere;
 	}
 	.timetable-grid :global(.ec-bg-event.timetable-occupied) {
 		opacity: 1;

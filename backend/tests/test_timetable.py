@@ -11,7 +11,6 @@ from app.schemas.timetable import BlockFields, SeriesData, YearDocument, YearSet
 from app.services.errors import AuthError
 from app.services.timetable_engine import (
     current_school_year,
-    cycle_warnings,
     daily_slots,
     occurrences,
     segments,
@@ -189,14 +188,6 @@ def test_local_times_survive_daylight_saving_change() -> None:
     after = next(item for item in events if item["source_date"] == "2026-10-26")
     assert before["start"] == "2026-10-19T08:00:00+02:00"
     assert after["start"] == "2026-10-26T08:00:00+01:00"
-
-
-def test_incomplete_cycles_warn_without_removing_sessions() -> None:
-    """Retain a ninth week's A session for manual balancing at the end of the year."""
-    document = YearDocument(settings=settings(), series=[series(interval=2)])
-    assert len(teaching_weeks(document.settings)) == 9
-    assert len(series_dates(document.series[0], document.settings)) == 5
-    assert cycle_warnings(document)
 
 
 @pytest.mark.parametrize(

@@ -19,6 +19,7 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
+from app.models import Promotion, PromotionGroup, PromotionPartition, TimetablePreferences
 from tests.postgres import run_alembic
 
 pytestmark = [
@@ -81,6 +82,78 @@ def test_migration_roundtrip(migrated_database: None) -> None:
     """Smoke-test migration rollback, reapplication and final metadata consistency."""
     run_alembic("downgrade", "base")
     run_alembic("upgrade", "head")
+    run_alembic("check")
+
+
+@pytest.mark.asyncio
+async def test_timetable_migration_roundtrip_preserves_partitions(
+    databases: tuple[Database, Database],
+) -> None:
+    """Rollback timetable storage without removing prior promotion and partition data."""
+    _, migration = databases
+    timetable_tables = {
+        "timetable_calendars",
+        "timetable_rooms",
+        "timetable_school_years",
+        "teacher_availability",
+        "timetable_years",
+        "timetable_series",
+        "timetable_subscriptions",
+        "promotion_custom_groups",
+        "promotion_custom_group_members",
+        "timetable_preferences",
+    }
+    async with migration.sessions.begin() as session:
+        promotion_id = await session.scalar(
+            Promotion.__table__.insert()
+            .values(year=2026, identifier=f"migration-{uuid4().hex}", color="#244BC1")
+            .returning(Promotion.id)
+        )
+        await session.execute(
+            PromotionPartition.__table__.insert().values(
+                promotion_id=promotion_id, kind="halves", revision=uuid4().hex, target_size=3
+            )
+        )
+        await session.execute(
+            PromotionGroup.__table__.insert().values(
+                promotion_id=promotion_id, kind="halves", number=1, x=123, y=456
+            )
+        )
+    try:
+        run_alembic("downgrade", "0006_promotion_groups")
+        async with migration.sessions() as session:
+            tables = set(
+                await session.scalars(
+                    text(
+                        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'sophikron'"
+                    )
+                )
+            )
+            assert timetable_tables.isdisjoint(tables)
+            assert {"promotion_partitions", "promotion_groups", "promotion_group_members"} <= tables
+            assert await session.scalar(select(Promotion.id).where(Promotion.id == promotion_id))
+            assert (
+                await session.execute(
+                    select(PromotionGroup.x, PromotionGroup.y).where(
+                        PromotionGroup.promotion_id == promotion_id
+                    )
+                )
+            ).one() == (123, 456)
+    finally:
+        run_alembic("upgrade", "head")
+        async with migration.sessions.begin() as session:
+            await session.execute(Promotion.__table__.delete().where(Promotion.id == promotion_id))
+    async with migration.sessions() as session:
+        tables = set(
+            await session.scalars(
+                text("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'sophikron'")
+            )
+        )
+        assert timetable_tables <= tables
+        assert "timetable_template_versions" not in tables
+        preference = await session.get(TimetablePreferences, 1)
+        assert preference is not None and preference.auto_archive
+        assert len(preference.revision) == 32
     run_alembic("check")
 
 

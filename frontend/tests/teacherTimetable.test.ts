@@ -8,8 +8,8 @@ import {
 	teacherCalendarHours
 } from '../src/lib/teacherTimetable.ts';
 import {
-	timetableConflicts,
-	teacherAvailabilityWarnings,
+	timetableConflictDetails,
+	teacherAvailabilityDetails,
 	type TimetableEvent
 } from '../src/lib/timetable.ts';
 
@@ -166,19 +166,19 @@ test('future warnings deduplicate stable recurring pairs and respect availabilit
 		event(day),
 		event(day, { id: `b-${day}`, series_id: 'b', conflict_key: 'pattern-b' })
 	]);
-	const conflicts = timetableConflicts(events, [], '2026-09-10');
+	const conflicts = timetableConflictDetails(events, [], '2026-09-10');
 	assert.equal(conflicts.length, 2); // One teacher conflict and one full-class conflict per recurring pair.
-	assert.match(conflicts[0], /2026-09-14/);
-	assert.deepEqual(timetableConflicts(events.slice(0, 2), [], '2026-09-10'), []);
+	assert.match(conflicts[0].message, /2026-09-14/);
+	assert.deepEqual(timetableConflictDetails(events.slice(0, 2), [], '2026-09-10'), []);
 	const pattern = [{ teacher_id: 2, school_year: 2026, ranges: [] }];
-	assert.equal(teacherAvailabilityWarnings(events, pattern, '2026-09-10').length, 2);
+	assert.equal(teacherAvailabilityDetails(events, pattern, '2026-09-10').length, 2);
 	assert.deepEqual(
-		teacherAvailabilityWarnings(
+		teacherAvailabilityDetails(
 			events,
 			[{ ...pattern[0], ranges: [{ weekday: 0, start: 28800, end: 32100 }] }],
 			'2026-09-10'
 		),
 		[]
 	);
-	assert.deepEqual(teacherAvailabilityWarnings(events, [], '2026-09-10'), []);
+	assert.deepEqual(teacherAvailabilityDetails(events, [], '2026-09-10'), []);
 });

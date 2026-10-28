@@ -160,12 +160,33 @@ Add future model imports in `app/models/__init__.py` so Alembic sees them throug
 Metadata uses the explicit `sophikron` schema and stable constraint names. Name check constraints.
 Connections use `search_path=pg_catalog`; qualify application tables explicitly in handwritten SQL.
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
-Its explicitly reconstructed fresh-install history contains five features in dependency order:
-authentication (including the journal), configuration (including calendars), promotions, subjects,
-and lessons. The additive sixth revision introduces promotion group partitions.
-All autonomous IDs are bigint identities;
-associations use composite keys. See [migration requirements](administration.md#migrations-and-verification)
-before using these revisions; older populated/stamped development databases are incompatible.
+The initial feature revisions are authentication (including the journal), public configuration,
+promotions, subjects, lessons and independent promotion group partitions (`0001` through `0006`).
+All autonomous IDs are bigint identities; associations use composite keys. This reconstructed
+baseline targets fresh installations and does not upgrade an older, differently stamped history.
+
+The history ends with a single timetable revision:
+
+| Revision | Schema responsibility |
+| --- | --- |
+| `0007_timetable` | Annual calendars, rooms, academic labels, availability, series, subscription verifiers, custom audiences and archive policy |
+
+It creates the final schema directly: one annual configuration per calendar, optional subject/teacher/
+room references, unique non-archived promotion assignments, named overlapping groups with bounded
+positions, and the singleton automatic archive preference enabled by default. Recurrences and their
+exceptions are compact JSON documents; no former weekly-version or publication tables are created.
+Upgrade adds these tables without resetting or converting data from earlier features.
+
+The timetable history was consolidated with the owner's authorization after deletion of the previous
+development databases. Fresh installations use `alembic upgrade head`. Databases at the unchanged
+`0006_promotion_groups` revision can also upgrade normally. This is not a transition for a database
+that already applied the former timetable history, even if it reports the old `0007_timetable` ID;
+do not stamp an existing schema to bypass that incompatibility.
+
+Downgrading to `0006_promotion_groups` drops all timetable tables and custom audiences, including
+their data. It preserves the six earlier features, standard promotion partitions and their rows.
+Reapplying `0007` recreates empty timetable storage and initializes its archive preference. After
+this consolidation, deployed revisions remain immutable; subsequent changes require new migrations.
 
 The migration service defaults to `alembic upgrade head`. Supply a full command to override it:
 

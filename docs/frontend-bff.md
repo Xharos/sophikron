@@ -174,22 +174,13 @@ retain its notices. No external fonts, analytics or consent banner
 are loaded. The common home remains SSR because the header depends on the session. Only `/` appears
 in the sitemap. Account routes have noindex metadata/headers; robots.txt is not an authorization boundary.
 
-From `frontend/`: `npm run check`, `npm run lint`, `npm test`, `npm run build`.
-Node 22.6+ (or Node 24) is needed for the built-in TypeScript test runner. Playwright is a development-only
-dependency for optional real-browser integration; it does not run in production or require a hosted service.
-From `backend/`: `python -m pytest -q`, `ruff check .`. `python run_tests.py` uses independent,
-temporary secrets and a disposable `sophikron_test` database, preserving the development stack.
+See [release verification](CONTRIBUTING.md#verification-before-a-release) for the shared commands,
+Node/browser requirements and disposable BFF journey options. Playwright is a development-only
+dependency; it does not run in production or require a hosted service.
 The BFF tests exercise cookie relay, CSRF rejection, replacement of forged IP headers, session
 expiry, page-role permissions and Retry-After. A native browser form regression test runs when a
 local Chrome/Edge/Chromium binary is available (or `BROWSER_EXECUTABLE` is set), using an isolated
 temporary profile; otherwise that browser-specific test is explicitly skipped. Backend integration
 tests exercise actual PostgreSQL invitation, archive, role/scope and account activity semantics.
-Set `BFF_INTEGRATION=1` when running `python run_tests.py` to additionally build the Docker frontend
-and run `frontend/tests/journey.mjs`: real HTTP setup, profiles, account/promotion creation, invitations,
-active-account reset, archiving, journal and teacher-scope checks. It only writes to the runner's
-disposable database and uses synthetic credentials. Add `BFF_BROWSER_INTEGRATION=1` to exercise the
-desktop/mobile UI, dialogs, consecutive account creation and teacher restrictions with Playwright.
-The default browser channel is installed Edge; `BFF_BROWSER_CHANNEL` can select another installed
-channel. No browser is downloaded automatically. Optional `BFF_SCREENSHOTS_DIRECTORY` captures the
-synthetic overview; do not enable screenshots on real identities/invitation dialogs. HTTP/browser
-journeys are guarded against running outside the disposable `sophikron_test` environment.
+The real BFF journey (`frontend/tests/journey.mjs`) covers HTTP setup, profiles,
+account/promotion creation, invitations, active-account reset, archiving, journal and teacher scope.

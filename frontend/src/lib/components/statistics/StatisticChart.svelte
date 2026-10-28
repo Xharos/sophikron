@@ -337,19 +337,25 @@
 		gap: 0.4rem;
 	}
 	.bar-list {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
+		display: grid;
+		grid-template-columns: fit-content(45%) minmax(40px, 1fr) max-content;
+		gap: 1rem 0.65rem;
 		margin: 0.8rem 0;
 	}
 	.bar-row {
 		display: grid;
-		grid-template-columns: minmax(60px, 1.1fr) minmax(40px, 1.5fr) auto;
-		gap: 0.65rem;
+		grid-column: 1 / -1;
+		grid-template-columns: subgrid;
 		align-items: center;
 		font-size: 0.73rem;
 	}
+	.bar-row b {
+		text-align: left;
+		white-space: nowrap;
+		font-variant-numeric: tabular-nums;
+	}
 	.bar-label {
+		text-align: left;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;

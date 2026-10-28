@@ -115,23 +115,10 @@ after the end and cover the full interval before its start.
 
 ## Fresh database and validation
 
-With explicit authorization after deletion of the local database, the baseline is organized into
-five feature revisions:
-
-1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
-   protection and the append-only activity journal.
-2. `0002_configuration`: public site settings, shared holiday color, timelines and events.
-3. `0003_promotions`: promotion catalogue, account memberships and independent pupil login blocks.
-4. `0004_subjects`: subject catalogue and account subject assignments.
-5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
-
-The holiday color is included directly in configuration. No standalone journal or holiday-color
-revision remains. This baseline targets fresh installations; it does not upgrade the previous
-revision chain. Rebuild images and run the existing migration service with `alembic upgrade head`.
-No development volume is deleted by the application or test launcher.
-
-Run backend `python -m pytest -q`, `ruff check .`, and `python run_tests.py` for disposable PostgreSQL
-coverage. Run frontend `npm test`, `npm run check`, `npm run lint` and `npm run build`.
+The public configuration revision includes holiday colors; subject ownership and assignments belong
+to the subject catalogue revision. The complete history and compatibility rules are maintained in
+[database migrations](database.md#migrations). Use the existing migration service before startup.
+See [release verification](CONTRIBUTING.md#verification-before-a-release) for the shared checks.
 
 ## Detailed journal entries
 

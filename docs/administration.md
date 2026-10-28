@@ -481,25 +481,11 @@ retention purge; define retention before production and use a privileged mainten
 
 ## Migrations and verification
 
-With explicit owner authorization after deletion of the local volumes, the fresh baseline has
-five initial feature revisions, followed by an additive group migration:
-
-1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
-   protection and the append-only activity journal.
-2. `0002_configuration`: public site settings, shared holiday color, timelines and events.
-3. `0003_promotions`: promotion catalogue and account memberships.
-4. `0004_subjects`: subject catalogue and account subject assignments.
-5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
-6. `0006_promotion_groups`: independent half/third/khôlle partitions and their pupil assignments.
-
-Use `alembic upgrade head` on a fresh database. This rewritten history does not upgrade databases
-stamped with the former revisions. No persistent volume is reset by the application or tests.
-
-Run `python -m pytest -q`, `ruff check .`, and the full disposable PostgreSQL suite using
-`python run_tests.py`, from `backend/` with the configured interpreter. Integration tests verify
+See [database migrations](database.md#migrations) for the complete feature history and compatibility
+rules, and [release verification](CONTRIBUTING.md#verification-before-a-release) for shared commands.
+The PostgreSQL integration tests verify
 atomic mutations, privileges, role incompatibility, membership concurrency, archive preservation,
-encryption, event pagination, search and existing authentication races. The test launcher reuses
-existing Compose files and synthetic secrets without reading/modifying the local `.env`.
+encryption, event pagination, search and existing authentication races.
 
 Subject-assignment, subject-catalogue, site-setting and calendar events now include bounded version-2
 metadata. Assignment deltas include historical public subject tags and automatic removal causes;

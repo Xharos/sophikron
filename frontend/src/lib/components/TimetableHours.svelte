@@ -58,6 +58,7 @@
 	/>
 {:else}<p role="status">Aucune séance dans ce calendrier.</p>{/if}
 <p class="help mt-3">
-	Si les groupes ont des volumes différents, le graphique présente leur moyenne. Consultez « Points
-	à vérifier » pour repérer les écarts.
+	Pour les matières réservées aux groupes personnalisés, la moyenne porte uniquement sur les élèves
+	de ces groupes. Pour les autres matières, elle porte sur la classe entière. Consultez « Points à
+	vérifier » pour repérer les écarts entre groupes.
 </p>

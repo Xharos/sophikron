@@ -58,7 +58,11 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 	const teachers = [
 		{ id: 2, name: 'Mme Test', subject_ids: [1], roles: ['teacher', 'kholleur'] }
 	];
-	const subjects = [{ id: 1, name: 'Mathématiques', color: '#244BC1' }],
+	const subjects = [
+			{ id: 1, name: 'Mathématiques', color: '#244BC1' },
+			{ id: 2, name: 'Allemand', color: '#2E8B57' },
+			{ id: 3, name: 'Sciences industrielles de l’ingénieur', color: '#A34E18' }
+		],
 		rooms = [{ id: 1, name: 'B402', revision }];
 	const tags = [
 		{ school_year: 2027, revision, used: false },
@@ -91,12 +95,30 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 					hours: [
 						{
 							subject_id: 1,
-							course: 2,
+							course: 15.78,
 							td: 0,
 							tp: 0,
 							kholle: 0,
-							total: 2,
-							weekly: { course: 1, td: 0, tp: 0, kholle: 0, total: 1 }
+							total: 15.78,
+							weekly: { course: 7.89, td: 0, tp: 0, kholle: 0, total: 7.89 }
+						},
+						{
+							subject_id: 2,
+							course: 4,
+							td: 0,
+							tp: 0,
+							kholle: 0,
+							total: 4,
+							weekly: { course: 2, td: 0, tp: 0, kholle: 0, total: 2 }
+						},
+						{
+							subject_id: 3,
+							course: 1,
+							td: 0,
+							tp: 0,
+							kholle: 0,
+							total: 1,
+							weekly: { course: 0.5, td: 0, tp: 0, kholle: 0, total: 0.5 }
 						}
 					]
 				}
@@ -573,6 +595,39 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		await page.mouse.up();
 		assert.equal(await page.getByRole('dialog').count(), 0);
 		await page.getByRole('button', { name: '▥ Heures', exact: true }).click();
+		for (const width of [1440, 390]) {
+			await page.setViewportSize({ width, height: 1000 });
+			for (const mode of ['Moyenne par semaine', 'Total sur l’année']) {
+				await page.getByRole('button', { name: mode, exact: true }).click();
+				const rows = await page.locator('.bar-row').evaluateAll((elements) =>
+					elements.map((element) => {
+						const label = element.querySelector('.bar-label').getBoundingClientRect();
+						const track = element.querySelector('.bar-track').getBoundingClientRect();
+						const value = element.querySelector('b').getBoundingClientRect();
+						return {
+							labelLeft: label.left,
+							labelRight: label.right,
+							trackLeft: track.left,
+							trackWidth: track.width,
+							valueLeft: value.left,
+							right: value.right,
+							text: element.querySelector('b').textContent
+						};
+					})
+				);
+				assert.equal(rows.length, 3);
+				for (const row of rows) {
+					assert.ok(Math.abs(row.trackLeft - rows[0].trackLeft) < 1);
+					assert.ok(Math.abs(row.trackWidth - rows[0].trackWidth) < 1);
+					assert.ok(Math.abs(row.valueLeft - rows[0].valueLeft) < 1);
+					assert.ok(row.labelLeft < row.labelRight && row.labelRight < row.trackLeft);
+					assert.ok(row.trackWidth >= 40 && row.right <= width);
+				}
+				assert.equal(rows[0].text, mode === 'Moyenne par semaine' ? '7,89 h' : '15,78 h');
+				assert.equal(rows[1].text, mode === 'Moyenne par semaine' ? '2 h' : '4 h');
+			}
+		}
+		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page.getByRole('button', { name: 'Total sur l’année', exact: true }).click();
 		assert.equal(
 			await page

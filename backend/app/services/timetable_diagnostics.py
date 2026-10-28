@@ -48,6 +48,8 @@ def annual_diagnostics(
         Authorized roster; absent promotions use symbolic halves and thirds for totals.
     today
         First date for actionable lunch diagnostics; totals include the complete year.
+    series
+        Complete calendar blocks, including hidden occurrences, for option detection.
 
     Returns
     -------
@@ -64,6 +66,32 @@ def annual_diagnostics(
         for group in groups
         if group["promotion_id"] == promotion_id
     }
+    audience_blocks = (
+        (
+            (block.subject_id, block.target_kind, block.target_number)
+            for source in series
+            for block in (source, *source.exceptions.values())
+            if block is not None
+        )
+        if series is not None
+        else (
+            (event["subject_id"], event.get("target_kind", "promotion"), event.get("target_number"))
+            for event in events
+        )
+    )
+    subject_audiences: dict[int, set[str]] = defaultdict(set)
+    option_pupils: dict[int, set[int]] = defaultdict(set)
+    for subject_id, kind, number in audience_blocks:
+        if subject_id is None:
+            continue
+        subject_audiences[subject_id].add(kind)
+        if kind == "custom":
+            option_pupils[subject_id].update(
+                pupils.intersection(partitions.get((kind, number), set()))
+            )
+    option_subjects = {
+        subject_id for subject_id, kinds in subject_audiences.items() if kinds == {"custom"}
+    }
     totals: dict[int | None, dict] = {}
     loads: dict[tuple, dict[int, float]] = defaultdict(lambda: defaultdict(float))
     bookings: dict[tuple[date, int], list[tuple[int, int]]] = defaultdict(list)
@@ -78,9 +106,15 @@ def annual_diagnostics(
         kind = event.get("target_kind", "promotion")
         if promotion_id is not None and kind != "promotion" and not audience:
             missing.add((kind, event.get("target_number")))
-        factor = (
-            len(audience) / len(pupils) if pupils else {"halves": 0.5, "thirds": 1 / 3}.get(kind, 1)
-        )
+        if pupils:
+            counted_pupils = (
+                option_pupils[event["subject_id"]]
+                if event["subject_id"] in option_subjects
+                else pupils
+            )
+            factor = len(audience) / len(counted_pupils) if counted_pupils else 0.0
+        else:
+            factor = {"halves": 0.5, "thirds": 1 / 3}.get(kind, 1)
         row = totals.setdefault(
             event["subject_id"],
             {

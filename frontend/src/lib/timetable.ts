@@ -377,15 +377,6 @@ function timetableAudiencesOverlap(
 	return firstIds && secondIds ? firstIds.some((id) => secondIds.includes(id)) : true;
 }
 
-/** Preview current conflicts; a room can accommodate two simultaneous half-class sessions. */
-export function timetableConflicts(
-	events: TimetableEvent[],
-	groups: TimetableGroup[] = [],
-	today?: string
-): string[] {
-	return timetableConflictDetails(events, groups, today).map((warning) => warning.message);
-}
-
 /** Keep stable event references alongside each deduplicated conflict for warning navigation. */
 export function timetableConflictDetails(
 	events: TimetableEvent[],
@@ -492,18 +483,6 @@ export interface AvailabilityRange {
 	end: number;
 }
 
-/** Check actual teaching segments, once per recurring teacher assignment. */
-export function teacherAvailabilityWarnings(
-	events: TimetableEvent[],
-	patterns: NonNullable<TimetableBoard['availability']>,
-	today?: string,
-	schoolYear?: number
-): string[] {
-	return teacherAvailabilityDetails(events, patterns, today, schoolYear).map(
-		(warning) => warning.message
-	);
-}
-
 /** Describe availability conflicts without losing the first affected occurrence's identity. */
 export function teacherAvailabilityDetails(
 	events: TimetableEvent[],
@@ -596,6 +575,75 @@ export function clockSeconds(value: string): number {
 	const [hour = 0, minute = 0, second = 0] = value.split(':').map(Number);
 	return hour * 3600 + minute * 60 + second;
 }
+/** Return holiday names on inclusive dates within the calendar's school year. */
+export function timetableHolidayLabel(settings: TimetableSettings, day: string): string | null {
+	if (day < settings.start || day > settings.end) return null;
+	const names = settings.holidays
+		.filter((holiday) => holiday.start <= day && day <= holiday.end)
+		.map((holiday) => holiday.name);
+	return names.length ? `Vacances · ${names.join(' · ')}` : null;
+}
+
+interface TimetableBackground {
+	id: string;
+	title: string;
+	start: string;
+	end: string;
+	display: 'background';
+	backgroundColor: string;
+	classNames: string[];
+	editable: false;
+}
+
+/** Paint holidays instead of recess and lunch, without creating timetable sessions. */
+export function timetableBackgrounds(
+	settings: TimetableSettings,
+	date: string,
+	{ dateless = false, showLunch = true }: { dateless?: boolean; showLunch?: boolean } = {}
+): TimetableBackground[] {
+	return Array.from({ length: settings.saturday ? 6 : 5 }, (_, index) =>
+		shiftTimetableDate(mondayOf(date), index)
+	).flatMap((day): TimetableBackground[] => {
+		const holiday = dateless ? null : timetableHolidayLabel(settings, day);
+		if (holiday) {
+			return [
+				{
+					id: `holiday-${day}`,
+					title: holiday,
+					start: `${day}T${timetableClock(Math.floor(settings.day_start / 3600) * 3600)}`,
+					end: `${day}T${timetableClock(Math.ceil(settings.day_end / 3600) * 3600)}`,
+					display: 'background',
+					backgroundColor: 'var(--color-danger-soft)',
+					classNames: ['timetable-holiday'],
+					editable: false
+				}
+			];
+		}
+		const backgrounds: TimetableBackground[] = settings.breaks.map((pause, index) => ({
+			id: `pause-${day}-${index}`,
+			title: 'Pause',
+			start: `${day}T${timetableClock(pause.start)}`,
+			end: `${day}T${timetableClock(pause.end)}`,
+			display: 'background',
+			backgroundColor: 'var(--color-border)',
+			classNames: [],
+			editable: false
+		}));
+		if (showLunch && !dateless)
+			backgrounds.push({
+				id: `self-${day}`,
+				title: 'Self ouvert · cours autorisés',
+				start: `${day}T${timetableClock(settings.lunch_start ?? 43200)}`,
+				end: `${day}T${timetableClock(settings.lunch_end ?? 50400)}`,
+				display: 'background',
+				backgroundColor: 'var(--color-success-soft)',
+				classNames: ['timetable-lunch'],
+				editable: false
+			});
+		return backgrounds;
+	});
+}
+
 export function defaultTimetableSettings(year: number): TimetableSettings {
 	return {
 		start: `${year}-09-01`,
