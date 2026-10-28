@@ -6,7 +6,7 @@ import type { RequestHandler } from './$types';
 export const GET: RequestHandler = async (event) => {
 	requirePageAccess(event, 'staff');
 	const query = new URLSearchParams();
-	for (const name of ['calendar_ids', 'school_year', 'draft']) {
+	for (const name of ['calendar_ids', 'school_year']) {
 		const value = event.url.searchParams.get(name);
 		if (value !== null) query.set(name, value);
 	}

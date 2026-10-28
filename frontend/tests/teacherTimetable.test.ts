@@ -4,55 +4,16 @@ import {
 	selectTeachers,
 	teacherColor,
 	teacherCalendarColor,
-	teacherSubjectHours
+	teacherSubjectHours,
+	teacherCalendarHours
 } from '../src/lib/teacherTimetable.ts';
 import {
 	timetableConflicts,
 	teacherAvailabilityWarnings,
-	futureTemplateEvents,
-	defaultTimetableSettings,
-	type WeeklyBlock,
-	type TimetableYear,
 	type TimetableEvent
 } from '../src/lib/timetable.ts';
 
-test('unsaved template checks use remaining school dates, holiday exclusions and actual cycle phases', () => {
-	const block: WeeklyBlock = {
-		key: 'a',
-		weekday: 0,
-		interval: 2,
-		phase: 1,
-		start_slot: 0,
-		duration_slots: 2,
-		teacher_id: 2,
-		subject_id: 1,
-		room_id: null,
-		kind: 'course',
-		title: 'Mathématiques'
-	};
-	const year: TimetableYear = {
-		id: 1,
-		calendar_id: 1,
-		school_year: 2026,
-		revision: null,
-		published_revision: null,
-		series: [],
-		slots: [
-			[28800, 30450],
-			[30450, 32100]
-		],
-		settings: { ...defaultTimetableSettings(2026), start: '2026-09-07', end: '2026-09-25' },
-		weeks: { '2026-09-07': 1, '2026-09-14': 2, '2026-09-21': 3 }
-	};
-	const projected = futureTemplateEvents([event('2026-09-07')], [block], year, '2026-09-08');
-	assert.equal(projected.length, 1);
-	assert.equal(projected[0].start, '2026-09-21T08:00:00');
-	assert.deepEqual(futureTemplateEvents([event('2026-09-07')], [block], year, '2026-09-22'), []);
-	year.settings.holidays = [{ name: 'Fermeture', start: '2026-09-21', end: '2026-09-21' }];
-	assert.deepEqual(futureTemplateEvents([event('2026-09-07')], [block], year, '2026-09-08'), []);
-});
-
-test('published teacher hours retain their own session length after common rules change', () => {
+test('teacher hours retain each annual calendar’s own session length', () => {
 	assert.equal(teacherSubjectHours([event('2026-09-07', { session_minutes: 55 })], 60)[0].total, 1);
 	assert.equal(
 		teacherSubjectHours(
@@ -65,6 +26,63 @@ test('published teacher hours retain their own session length after common rules
 			60
 		)[0].total,
 		1.2
+	);
+});
+
+test('teacher calendar rows retain types, actual durations and the weekly sum', () => {
+	const course = event('2026-09-07', { calendar_label: 'PTSI · 2026', session_minutes: 55 });
+	const option = event('2026-09-08', {
+		calendar_id: 2,
+		calendar_label: 'PT · 2026',
+		kind: 'kholle'
+	});
+	const rows = teacherCalendarHours([course, course, option], 60);
+	assert.equal(rows.length, 2);
+	assert.equal(rows.find((row) => row.calendarId === 1)?.course, 1);
+	assert.equal(rows.find((row) => row.calendarId === 2)?.kholle, 55 / 60);
+	assert.equal(
+		rows.reduce((sum, row) => sum + row.total, 0),
+		1 + 55 / 60
+	);
+});
+
+test('calendar and subject rows reconcile with subject subtotals and the overall total', () => {
+	const sessions = [
+		event('2026-09-07', { calendar_label: 'PTSI', session_minutes: 55 }),
+		event('2026-09-08', {
+			calendar_label: 'PTSI',
+			subject_id: 2,
+			kind: 'kholle',
+			session_minutes: 55
+		}),
+		event('2026-09-09', { calendar_id: 2, calendar_label: 'PT', kind: 'td', session_minutes: 55 }),
+		event('2026-09-10', {
+			calendar_id: 2,
+			calendar_label: 'PT',
+			subject_id: null,
+			kind: 'tp',
+			session_minutes: 55
+		})
+	];
+	sessions.push(sessions[0]);
+	const rows = teacherCalendarHours(sessions, 55);
+	assert.equal(rows.length, 4);
+	assert.equal(rows.find((row) => row.calendarId === 1 && row.subjectId === 1)?.course, 1);
+	assert.equal(rows.find((row) => row.calendarId === 1 && row.subjectId === 2)?.kholle, 1);
+	const totals = teacherSubjectHours(sessions, 55);
+	assert.equal(totals.find((row) => row.subjectId === 1)?.total, 2);
+	for (const total of totals)
+		for (const kind of ['course', 'td', 'tp', 'kholle', 'total'] as const) {
+			assert.equal(
+				rows
+					.filter((row) => row.subjectId === total.subjectId)
+					.reduce((sum, row) => sum + row[kind], 0),
+				total[kind]
+			);
+		}
+	assert.equal(
+		rows.reduce((sum, row) => sum + row.total, 0),
+		4
 	);
 });
 

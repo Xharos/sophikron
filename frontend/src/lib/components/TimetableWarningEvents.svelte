@@ -20,7 +20,7 @@
 </script>
 
 <ul class="warning-events">
-	{#each targets as target (target.templateKey ?? `${target.event.series_id}-${target.event.source_date}`)}
+	{#each targets as target (`${target.event.series_id}-${target.event.source_date}`)}
 		{@const event = target.event}
 		{@const teacher = catalog.teachers.find((item) => item.id === event.teacher_id)}
 		{@const roles = event.teacher_roles ?? teacher?.roles ?? []}

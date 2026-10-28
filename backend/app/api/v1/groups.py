@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, Query, Response
 from app.dependencies.auth import AuthenticatedUser, AuthServiceDependency
 from app.schemas.administration import PromotionPage, PromotionResponse
 from app.schemas.groups import (
+    CustomGroupSave,
+    CustomGroupVersion,
     GroupDraft,
     PartitionGenerate,
     PartitionKind,
@@ -15,6 +17,7 @@ from app.schemas.groups import (
     PartitionVersion,
     PromotionGroupsResponse,
 )
+from app.services.custom_groups import CustomGroupsService
 from app.services.groups import GroupsService
 
 router = APIRouter(prefix="/promotion-groups", tags=["Promotion groups"])
@@ -26,6 +29,38 @@ def groups_service(auth: AuthServiceDependency) -> GroupsService:
 
 
 Service = Annotated[GroupsService, Depends(groups_service)]
+
+
+@router.get("/{promotion_id}/custom/groups")
+async def custom_groups(
+    promotion_id: int, actor: AuthenticatedUser, auth: AuthServiceDependency
+) -> dict:
+    """List overlapping named audiences inside current staff scope."""
+    return await CustomGroupsService(auth).read_custom(actor, promotion_id)
+
+
+@router.put("/{promotion_id}/custom/{identifier}")
+async def save_custom_group(
+    promotion_id: int,
+    identifier: int,
+    data: CustomGroupSave,
+    actor: AuthenticatedUser,
+    auth: AuthServiceDependency,
+) -> dict:
+    """Create with identifier zero or update a named audience as administrator."""
+    return await CustomGroupsService(auth).save_custom(actor, promotion_id, identifier, data)
+
+
+@router.delete("/{promotion_id}/custom/{identifier}")
+async def delete_custom_group(
+    promotion_id: int,
+    identifier: int,
+    data: CustomGroupVersion,
+    actor: AuthenticatedUser,
+    auth: AuthServiceDependency,
+) -> dict:
+    """Remove a custom group from future choices without deleting assigned sessions."""
+    return await CustomGroupsService(auth).delete_custom(actor, promotion_id, identifier, data)
 
 
 @router.get("/promotions", response_model=PromotionPage)

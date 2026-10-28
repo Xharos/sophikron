@@ -7,21 +7,21 @@ from fastapi import APIRouter, Depends, Query, Response
 from app.dependencies.auth import AuthenticatedUser, AuthServiceDependency
 from app.schemas.teacher_availability import AvailabilitySave
 from app.schemas.timetable import (
+    CalendarRestore,
     CalendarSave,
-    CommonSettingsSave,
+    EventPreview,
     OccurrenceEdit,
+    PreferencesSave,
     RoomSave,
+    SchoolYearCreate,
     SeriesSave,
     SettingsSave,
-    TemplateSave,
     Version,
-    YearCreate,
 )
 from app.services.errors import AuthError
 from app.services.teacher_availability import TeacherAvailabilityService
 from app.services.timetable import TimetableService
 from app.services.timetable_configuration import TimetableConfigurationService
-from app.services.timetable_templates import TimetableTemplateService
 
 router = APIRouter(prefix="/timetable", tags=["Timetables"])
 
@@ -71,16 +71,32 @@ async def save_availability(
 
 @router.get("/configuration")
 async def configuration(actor: AuthenticatedUser, auth: AuthServiceDependency) -> dict:
-    """Read establishment rooms and shared annual settings as an administrator."""
+    """Read establishment rooms and immutable school-year labels as an administrator."""
     return await TimetableConfigurationService(auth).read(actor)
 
 
-@router.put("/configuration")
-async def save_configuration(
-    actor: AuthenticatedUser, auth: AuthServiceDependency, data: CommonSettingsSave
+@router.post("/school-years", status_code=201)
+async def create_school_year(
+    actor: AuthenticatedUser, auth: AuthServiceDependency, data: SchoolYearCreate
 ) -> dict:
-    """Replace one common annual configuration without changing any published snapshot."""
-    return await TimetableConfigurationService(auth).save(actor, data)
+    """Create an immutable academic label with administrator authorization."""
+    return await TimetableConfigurationService(auth).create_school_year(actor, data)
+
+
+@router.put("/preferences")
+async def preferences(
+    actor: AuthenticatedUser, auth: AuthServiceDependency, data: PreferencesSave
+) -> dict:
+    """Update the administrator-only annual archive policy."""
+    return await TimetableConfigurationService(auth).preferences(actor, data)
+
+
+@router.delete("/school-years/{school_year}")
+async def delete_school_year(
+    school_year: int, actor: AuthenticatedUser, auth: AuthServiceDependency, data: Version
+) -> dict:
+    """Remove a label only if it has never been used."""
+    return await TimetableConfigurationService(auth).delete_school_year(actor, school_year, data)
 
 
 @router.put("/rooms/{identifier}")
@@ -101,30 +117,20 @@ async def delete_room(
     )
 
 
-@router.delete("/calendars/{identifier}")
-async def delete_calendar(
+@router.post("/calendars/{identifier}/archive")
+async def archive_calendar(
     identifier: int, actor: AuthenticatedUser, auth: AuthServiceDependency, data: Version
 ) -> dict:
-    """Remove an agenda from active listings and personal exports after confirmation."""
-    return await TimetableConfigurationService(auth).delete_calendar(
-        actor, identifier, data.expected_revision
-    )
+    """Archive without deleting any calendar or occurrence."""
+    return await TimetableConfigurationService(auth).archive(actor, identifier, data)
 
 
-@router.get("/years/{identifier}/template")
-async def read_template(
-    identifier: int, actor: AuthenticatedUser, auth: AuthServiceDependency
+@router.post("/calendars/{identifier}/restore")
+async def restore_calendar(
+    identifier: int, actor: AuthenticatedUser, auth: AuthServiceDependency, data: CalendarRestore
 ) -> dict:
-    """Read the latest weekly organization and effective version history."""
-    return await TimetableTemplateService(auth).read(actor, identifier)
-
-
-@router.put("/years/{identifier}/template")
-async def save_template(
-    identifier: int, actor: AuthenticatedUser, auth: AuthServiceDependency, data: TemplateSave
-) -> dict:
-    """Append an effective weekly copy, preserving history and dated exceptions."""
-    return await TimetableTemplateService(auth).save(actor, identifier, data)
+    """Restore an archive without implicitly enabling its diffusion."""
+    return await TimetableConfigurationService(auth).restore(actor, identifier, data)
 
 
 @router.get("/catalog")
@@ -139,18 +145,17 @@ async def board(
     service: Service,
     calendar_ids: Annotated[str, Query(pattern=r"^[0-9,]{1,200}$")],
     school_year: Annotated[int | None, Query(ge=1900, le=9998)] = None,
-    draft: bool = False,
 ) -> dict:
     """Return selected agendas; students are denied even through direct API requests."""
     ids = list({int(item) for item in calendar_ids.split(",") if item})
     if not ids or len(ids) > 20:
         raise AuthError(422, "Sélectionnez entre un et vingt agendas.")
-    return await service.board(actor, ids, school_year, draft)
+    return await service.board(actor, ids, school_year)
 
 
 @router.post("/calendars", status_code=201)
 async def create_calendar(actor: AuthenticatedUser, service: Service, data: CalendarSave) -> dict:
-    """Create an administrator-owned reusable agenda."""
+    """Create an administrator-owned annual calendar."""
     return await service.save_calendar(actor, data, None)
 
 
@@ -168,20 +173,28 @@ async def create_room(actor: AuthenticatedUser, service: Service, data: RoomSave
     return await service.add_room(actor, data.name)
 
 
-@router.post("/calendars/{identifier}/years", status_code=201)
-async def create_year(
-    identifier: int, actor: AuthenticatedUser, service: Service, data: YearCreate
-) -> dict:
-    """Prepare an annual draft, optionally copying the previous recurring organization."""
-    return await service.create_year(actor, identifier, data)
-
-
 @router.put("/years/{identifier}/settings")
 async def settings(
     identifier: int, actor: AuthenticatedUser, service: Service, data: SettingsSave
 ) -> dict:
-    """Replace draft dates, daily hours, pauses, holidays and Saturday opening."""
+    """Change dates, holidays and Saturday opening; other daily rules are immutable."""
     return await service.save_settings(actor, identifier, data, data.settings)
+
+
+@router.post("/years/{identifier}/settings/preview")
+async def preview_settings(
+    identifier: int, actor: AuthenticatedUser, service: Service, data: SettingsSave
+) -> dict:
+    """Preview settings effects without changing the live calendar."""
+    return await service.preview_settings(actor, identifier, data, data.settings)
+
+
+@router.post("/years/{identifier}/preview")
+async def preview_event(
+    identifier: int, actor: AuthenticatedUser, service: Service, data: EventPreview
+) -> dict:
+    """Return actual potential annual hours and diagnostics without saving the proposed event."""
+    return await service.board(actor, [], None, preview_year=identifier, proposal=data)
 
 
 @router.post("/years/{identifier}/series", status_code=201)
@@ -204,14 +217,6 @@ async def edit_occurrence(
     return await service.edit_occurrence(actor, identifier, series_id, data)
 
 
-@router.post("/years/{identifier}/publish")
-async def publish(
-    identifier: int, actor: AuthenticatedUser, service: Service, data: Version
-) -> dict:
-    """Publish an atomic snapshot; subsequent draft edits keep serving this version."""
-    return await service.publish(actor, identifier, data)
-
-
 @router.get("/subscription")
 async def subscription_status(actor: AuthenticatedUser, service: Service) -> dict:
     """Return whether a subscription exists, never its original token."""
@@ -226,7 +231,7 @@ async def generate_subscription(actor: AuthenticatedUser, service: Service) -> d
 
 @router.get("/feed/{token}.ics", include_in_schema=False)
 async def feed(token: str, service: Service) -> Response:
-    """Serve current published events using a revocable token instead of browser cookies."""
+    """Serve currently broadcast events using a revocable token instead of browser cookies."""
     return Response(
         await service.feed(token),
         media_type="text/calendar; charset=utf-8",

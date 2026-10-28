@@ -3,6 +3,7 @@
 	import TimetableChoice from './TimetableChoice.svelte';
 	import {
 		blockKinds,
+		clockSeconds,
 		nearestTimetableSlot,
 		orderedTimetableTeachers,
 		timetableClock,
@@ -13,16 +14,11 @@
 	} from '#lib/timetable';
 	let {
 		block = $bindable(),
-		weekday = $bindable(0),
-		phase = $bindable(1),
-		scope = $bindable('one'),
 		year,
 		catalog,
 		groups,
 		promotionId,
-		templateMode,
 		existing,
-		occurrenceOnly = false,
 		busy,
 		message,
 		currentTeacherName = '',
@@ -32,16 +28,11 @@
 		onremove
 	}: {
 		block: TimetableBlock;
-		weekday?: number;
-		phase?: number;
-		scope?: 'one' | 'future';
 		year: TimetableYear;
 		catalog: TimetableCatalog;
 		groups: TimetableGroup[];
 		promotionId: number | null;
-		templateMode: boolean;
 		existing: boolean;
-		occurrenceOnly?: boolean;
 		busy: boolean;
 		message: string;
 		currentTeacherName?: string;
@@ -52,37 +43,84 @@
 	} = $props();
 	const formId = $props.id();
 	const kinds = $derived(
-		(Object.entries(blockKinds) as [TimetableBlock['kind'], string][])
-			.filter(([value]) => !templateMode || value !== 'kholle')
-			.map(([value, label]) => ({ value, label }))
+		(Object.entries(blockKinds) as [TimetableBlock['kind'], string][]).map(([value, label]) => ({
+			value,
+			label
+		}))
 	);
 	const kholleGroups = $derived(
 		groups.filter((group) => group.promotion_id === promotionId && group.kind === 'kholles')
 	);
 	const family = $derived(block.target_kind ?? 'promotion');
+	const customGroups = $derived(
+		groups.filter(
+			(group) =>
+				group.promotion_id === promotionId && group.kind === 'custom' && group.is_active !== false
+		)
+	);
 	const families = $derived([
 		{ value: 'promotion', label: 'Classe entière' },
 		{ value: 'halves', label: 'Demis A / B' },
 		{ value: 'thirds', label: 'Tiers X / Y / Z' },
-		...(!templateMode && promotionId !== null
-			? [{ value: 'kholles', label: 'Groupes de khôlle', disabled: !kholleGroups.length }]
+		...(promotionId !== null
+			? [
+					{ value: 'kholles', label: 'Groupes de khôlle', disabled: !kholleGroups.length },
+					{ value: 'custom', label: 'Groupes personnalisés', disabled: !customGroups.length }
+				]
 			: [])
 	]);
 	const recipients = $derived(
-		family === 'kholles'
-			? kholleGroups.map((group) => ({
+		family === 'custom'
+			? customGroups.map((group) => ({
 					value: group.number,
-					label: String(group.number).padStart(3, '0')
+					label: group.name ?? 'Groupe personnalisé'
 				}))
-			: Array.from({ length: family === 'halves' ? 2 : 3 }, (_, index) => ({
-					value: index + 1,
-					label: String.fromCharCode((family === 'halves' ? 65 : 88) + index)
-				}))
+			: family === 'kholles'
+				? kholleGroups.map((group) => ({
+						value: group.number,
+						label: String(group.number).padStart(3, '0')
+					}))
+				: Array.from({ length: family === 'halves' ? 2 : 3 }, (_, index) => ({
+						value: index + 1,
+						label: String.fromCharCode((family === 'halves' ? 65 : 88) + index)
+					}))
 	);
-	const days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
 	const selectedStart = $derived(
 		timetableClock(year.slots[block.start_slot]?.[0] ?? year.settings.day_start)
 	);
+	const freeTiming = $derived(block.start_time !== null && block.start_time !== undefined);
+	/** Toggle exact uninterrupted times without losing the selected starting hour. */
+	function chooseFreeTiming(enabled: boolean): void {
+		if (enabled) {
+			block.start_time = year.slots[block.start_slot]?.[0] ?? year.settings.day_start;
+			block.end_time = Math.min(
+				year.settings.day_end,
+				block.start_time + block.duration_slots * year.settings.session_minutes * 30
+			);
+		} else {
+			const duration = (block.end_time ?? 0) - (block.start_time ?? 0);
+			chooseStart(
+				nearestTimetableSlot(
+					timetableClock(block.start_time ?? year.settings.day_start),
+					year.slots
+				)
+			);
+			block.duration_slots = Math.max(
+				1,
+				Math.min(
+					year.slots.length - block.start_slot,
+					Math.round(duration / (year.settings.session_minutes * 30))
+				)
+			);
+			block.start_time = null;
+			block.end_time = null;
+		}
+	}
+	function chooseFreeStart(value: string): void {
+		const duration = (block.end_time ?? 0) - (block.start_time ?? 0);
+		block.start_time = clockSeconds(value);
+		block.end_time = block.start_time + duration;
+	}
 	const unavailableTeacher = $derived(
 		block.teacher_id !== null &&
 			!catalog.teachers.some((teacher) => teacher.id === block.teacher_id)
@@ -104,7 +142,13 @@
 	function chooseFamily(value: string): void {
 		block.target_kind = value as TimetableBlock['target_kind'];
 		block.target_number =
-			value === 'promotion' ? null : value === 'kholles' ? (kholleGroups[0]?.number ?? null) : 1;
+			value === 'promotion'
+				? null
+				: value === 'custom'
+					? (customGroups[0]?.number ?? null)
+					: value === 'kholles'
+						? (kholleGroups[0]?.number ?? null)
+						: 1;
 		block.target_user_id = null;
 	}
 	function chooseStart(slot: number): void {
@@ -118,8 +162,9 @@
 		<button
 			form={formId}
 			class="button is-primary"
-			disabled={busy || family === 'student' || (family === 'kholles' && !block.target_number)}
-			>Enregistrer</button
+			disabled={busy ||
+				family === 'student' ||
+				((family === 'kholles' || family === 'custom') && !block.target_number)}>Enregistrer</button
 		>
 	{/snippet}
 	{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
@@ -150,7 +195,7 @@
 			disabled={busy}
 		/>
 		<TimetableChoice
-			legend={templateMode ? 'Enseignant' : 'Enseignant ou khôlleur'}
+			legend="Enseignant ou khôlleur"
 			options={teachers.map((teacher) => ({
 				value: teacher.id,
 				label: teacher.name,
@@ -180,7 +225,7 @@
 			onchange={chooseFamily}
 			disabled={busy}
 		/>
-		{#if family === 'halves' || family === 'thirds' || family === 'kholles'}
+		{#if family === 'halves' || family === 'thirds' || family === 'kholles' || family === 'custom'}
 			<TimetableChoice
 				legend={family === 'kholles' ? 'Groupe de khôlle' : 'Groupe'}
 				options={recipients}
@@ -192,7 +237,7 @@
 		{#if family === 'student'}<p class="help has-text-warning mb-3">
 				Choisissez la classe ou un groupe pour remplacer l’ancien destinataire individuel.
 			</p>{/if}
-		{#if !templateMode && promotionId === null}<p class="help mb-3">
+		{#if promotionId === null}<p class="help mb-3">
 				Les groupes de khôlle seront proposés lorsqu’une promotion sera affectée.
 			</p>{/if}
 		<div class="field">
@@ -208,86 +253,127 @@
 					Obligatoire lorsqu’aucune matière n’est sélectionnée.
 				</p>{/if}
 		</div>
-		{#if templateMode}
-			<TimetableChoice
-				legend="Jour"
-				options={days
-					.slice(0, year.settings.saturday ? 6 : 5)
-					.map((label, value) => ({ value, label }))}
-				value={weekday}
-				onchange={(value) => (weekday = value)}
-				disabled={busy}
+
+		<div class="field">
+			<label class="label" for="block-date">Date</label>
+			<input
+				id="block-date"
+				class="input"
+				type="date"
+				bind:value={block.starts_on}
+				min={year.settings.start}
+				max={year.settings.end}
+				required
 			/>
-		{:else}
-			<div class="field">
-				<label class="label" for="block-date">Date</label>
-				<input
-					id="block-date"
-					class="input"
-					type="date"
-					bind:value={block.starts_on}
-					min={year.settings.start}
-					max={year.settings.end}
-					required
-				/>
-			</div>
-		{/if}
-		<div class="columns is-mobile">
-			<div class="column">
-				<label class="label" for="block-start">Début</label>
-				<div class="clock-control">
-					<button
-						type="button"
-						class="button is-light"
-						aria-label="Créneau précédent"
-						disabled={busy || block.start_slot === 0}
-						onclick={() => chooseStart(block.start_slot - 1)}>−</button
-					>
+		</div>
+
+		<label class="timing-switch mb-4"
+			><input
+				type="checkbox"
+				role="switch"
+				checked={freeTiming}
+				disabled={busy}
+				onchange={(event) => chooseFreeTiming(event.currentTarget.checked)}
+			/>
+			<span>Horaires libres</span></label
+		>
+		{#if freeTiming}<div class="columns is-mobile">
+				<div class="column">
+					<label class="label" for="free-start">Début libre</label>
 					<input
-						id="block-start"
+						id="free-start"
 						class="input"
 						type="time"
 						step="1"
-						value={selectedStart}
 						required
-						min={timetableClock(year.slots[0]?.[0] ?? year.settings.day_start)}
-						max={timetableClock(year.slots.at(-1)?.[0] ?? year.settings.day_end)}
-						onchange={(event) => {
-							chooseStart(nearestTimetableSlot(event.currentTarget.value, year.slots));
-							event.currentTarget.value = timetableClock(year.slots[block.start_slot][0]);
+						disabled={busy}
+						min={timetableClock(year.settings.day_start)}
+						max={timetableClock(year.settings.day_end)}
+						value={timetableClock(block.start_time ?? 0)}
+						oninput={(event) => chooseFreeStart(event.currentTarget.value)}
+					/>
+				</div>
+				<div class="column">
+					<label class="label" for="free-duration">Durée libre, en minutes</label>
+					<input
+						id="free-duration"
+						class="input"
+						type="number"
+						min="0.0166666667"
+						step="any"
+						required
+						disabled={busy}
+						max={(year.settings.day_end - (block.start_time ?? 0)) / 60}
+						value={((block.end_time ?? 0) - (block.start_time ?? 0)) / 60}
+						oninput={(event) => {
+							if (Number.isFinite(event.currentTarget.valueAsNumber))
+								block.end_time =
+									(block.start_time ?? 0) + Math.round(event.currentTarget.valueAsNumber * 60);
 						}}
 					/>
-					<button
-						type="button"
-						class="button is-light"
-						aria-label="Créneau suivant"
-						disabled={busy || block.start_slot >= year.slots.length - 1}
-						onclick={() => chooseStart(block.start_slot + 1)}>+</button
-					>
 				</div>
-				<p class="help">Ajusté au créneau le plus proche.</p>
 			</div>
-			<div class="column">
-				<label class="label" for="block-duration">Longueur, en séances</label>
-				<input
-					id="block-duration"
-					class="input"
-					type="number"
-					min="0.5"
-					step="0.5"
-					max={(year.slots.length - block.start_slot) / 2}
-					value={block.duration_slots / 2}
-					required
-					onchange={(event) =>
-						(block.duration_slots = Math.round(event.currentTarget.valueAsNumber * 2))}
-				/>
-				<p class="help">Une séance : {year.settings.session_minutes} minutes, hors pauses.</p>
+			<p class="help mb-4">
+				Heure et durée exactes, sans arrondi ni interruption aux pauses. Les contrôles de conflits
+				restent actifs.
+			</p>
+		{:else}<div class="columns is-mobile">
+				<div class="column">
+					<label class="label" for="block-start">Début</label>
+					<div class="clock-control">
+						<button
+							type="button"
+							class="button is-light"
+							aria-label="Créneau précédent"
+							disabled={busy || block.start_slot === 0}
+							onclick={() => chooseStart(block.start_slot - 1)}>−</button
+						>
+						<input
+							id="block-start"
+							class="input"
+							type="time"
+							step="1"
+							value={selectedStart}
+							required
+							min={timetableClock(year.slots[0]?.[0] ?? year.settings.day_start)}
+							max={timetableClock(year.slots.at(-1)?.[0] ?? year.settings.day_end)}
+							onchange={(event) => {
+								chooseStart(nearestTimetableSlot(event.currentTarget.value, year.slots));
+								event.currentTarget.value = timetableClock(year.slots[block.start_slot][0]);
+							}}
+						/>
+						<button
+							type="button"
+							class="button is-light"
+							aria-label="Créneau suivant"
+							disabled={busy || block.start_slot >= year.slots.length - 1}
+							onclick={() => chooseStart(block.start_slot + 1)}>+</button
+						>
+					</div>
+					<p class="help">Ajusté au créneau le plus proche.</p>
+				</div>
+				<div class="column">
+					<label class="label" for="block-duration">Longueur, en séances</label>
+					<input
+						id="block-duration"
+						class="input"
+						type="number"
+						min="0.5"
+						step="0.5"
+						max={(year.slots.length - block.start_slot) / 2}
+						value={block.duration_slots / 2}
+						required
+						onchange={(event) =>
+							(block.duration_slots = Math.round(event.currentTarget.valueAsNumber * 2))}
+					/>
+					<p class="help">Une séance : {year.settings.session_minutes} minutes, hors pauses.</p>
+				</div>
 			</div>
-		</div>
+		{/if}
 		<TimetableChoice
 			legend="Répétition"
 			options={[
-				...(!templateMode ? [{ value: 0, label: 'Une seule fois' }] : []),
+				{ value: 0, label: 'Une seule fois' },
 				{ value: 1, label: 'Chaque semaine' },
 				{ value: 2, label: 'Une semaine sur deux' },
 				{ value: 3, label: 'Une semaine sur trois' }
@@ -295,23 +381,11 @@
 			value={block.interval}
 			onchange={(value) => {
 				block.interval = value as TimetableBlock['interval'];
-				phase = Math.min(phase, Math.max(1, value));
 			}}
-			disabled={busy || (existing && !templateMode && scope === 'one')}
+			disabled={busy}
 		/>
-		{#if templateMode && block.interval > 1}
-			<TimetableChoice
-				legend="Semaine du cycle"
-				options={Array.from({ length: block.interval }, (_, index) => ({
-					value: index + 1,
-					label: block.interval === 2 ? (index === 0 ? 'A' : 'B') : String(index + 1)
-				}))}
-				value={phase}
-				onchange={(value) => (phase = value)}
-				disabled={busy}
-			/>
-		{/if}
-		{#if !templateMode && block.interval}
+
+		{#if block.interval}
 			<div class="field">
 				<label class="label" for="block-until">Jusqu’au</label>
 				<input
@@ -321,26 +395,11 @@
 					bind:value={block.until}
 					min={block.starts_on}
 					max={year.settings.end}
-					disabled={existing && scope === 'one'}
+					disabled={busy}
 				/>
 			</div>
 		{/if}
-		{#if occurrenceOnly}<p class="help mb-3">
-				Cette occurrence seulement sera modifiée. Pour modifier la semaine type, ouvrez son mode
-				d’édition.
-			</p>
-		{:else if existing && !templateMode}
-			<TimetableChoice
-				legend="Appliquer à"
-				options={[
-					{ value: 'one', label: 'Cette occurrence seulement' },
-					{ value: 'future', label: 'Celle-ci et les suivantes' }
-				]}
-				value={scope}
-				onchange={(value) => (scope = value as 'one' | 'future')}
-				disabled={busy}
-			/>
-		{/if}
+
 		{#if existing}<div class="buttons mt-5">
 				<button class="button is-danger is-light" type="button" disabled={busy} onclick={onremove}
 					>Supprimer</button
@@ -350,6 +409,43 @@
 </Modal>
 
 <style>
+	.timing-switch {
+		display: flex;
+		align-items: center;
+		gap: 0.75rem;
+		cursor: pointer;
+	}
+	.timing-switch input {
+		appearance: none;
+		flex-shrink: 0;
+		width: 2.5rem;
+		height: 1.4rem;
+		border-radius: 2rem;
+		background: var(--color-border);
+		position: relative;
+		cursor: pointer;
+	}
+	.timing-switch input::after {
+		content: '';
+		position: absolute;
+		width: 1rem;
+		height: 1rem;
+		top: 0.2rem;
+		left: 0.2rem;
+		background: var(--color-surface);
+		border-radius: 50%;
+		transition: transform 0.15s;
+	}
+	.timing-switch input:checked {
+		background: var(--color-primary);
+	}
+	.timing-switch input:checked::after {
+		transform: translateX(1.1rem);
+	}
+	.timing-switch input:focus-visible {
+		outline: 3px solid var(--color-primary);
+		outline-offset: 3px;
+	}
 	.clock-control {
 		display: flex;
 		gap: 0.25rem;

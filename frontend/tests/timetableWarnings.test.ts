@@ -4,21 +4,20 @@ import {
 	warningEventTarget,
 	warningEventWhen,
 	warningTeachingRole,
-	uniqueWarningTargets
+	uniqueWarningTargets,
+	diagnosticChanges,
+	timetableDiagnostics,
+	type DiagnosticEntry
 } from '../src/lib/timetableWarnings.ts';
 import {
 	timetableConflictDetails,
 	teacherAvailabilityDetails,
 	defaultTimetableSettings,
 	crossCalendarTeacherConflicts,
-	datedBlockEvents,
-	weeklyEvents,
-	futureTemplateEvents,
-	previewTemplateEvents,
 	type TeacherCommitment,
 	type TimetableEvent,
 	type TimetableYear,
-	type WeeklyBlock
+	type TimetableBoard
 } from '../src/lib/timetable.ts';
 
 const event: TimetableEvent = {
@@ -41,25 +40,85 @@ const event: TimetableEvent = {
 	calendar_id: 1,
 	promotion_id: 1
 };
-const block: WeeklyBlock = {
-	key: 'weekly-key',
-	weekday: 0,
-	phase: 1,
-	interval: 1,
-	start_slot: 0,
-	duration_slots: 2,
-	subject_id: 1,
-	teacher_id: 2,
-	room_id: null,
-	kind: 'td',
-	title: 'Maths'
-};
+
+test('confirmation diagnostics show only additions, resolutions and changed balance', () => {
+	const warning: DiagnosticEntry = {
+		code: 'lunch-2026-09-07',
+		severity: 'critical',
+		message: 'No lunch'
+	};
+	const balance: DiagnosticEntry = {
+		code: 'balance-1-tp-halves',
+		severity: 'warning',
+		message: 'A 1 / B 2'
+	};
+	const unchanged: DiagnosticEntry = {
+		code: 'promotion-1',
+		severity: 'warning',
+		message: 'Unassigned'
+	};
+	assert.deepEqual(
+		diagnosticChanges([warning, unchanged], [unchanged]).map((entry) => entry.change),
+		['removed']
+	);
+	assert.equal(diagnosticChanges([], [warning])[0].change, 'added');
+	const changes = diagnosticChanges(
+		[balance, unchanged],
+		[{ ...balance, message: 'A 2 / B 3' }, unchanged]
+	);
+	assert.equal(changes.length, 1);
+	assert.equal(changes[0].change, 'changed');
+	assert.equal(changes[0].previous?.message, balance.message);
+	assert.deepEqual(diagnosticChanges([unchanged], [unchanged]), []);
+});
+
+test('changing recurrence identifiers does not invent a new teacher conflict', () => {
+	const a: DiagnosticEntry = {
+		identity: 'availability-2:edited',
+		code: 'availability-2:' + 'a'.repeat(32),
+		severity: 'warning',
+		message: 'Unavailable',
+		events: [event]
+	};
+	const b = {
+		...a,
+		code: 'availability-2:' + 'b'.repeat(32),
+		events: [{ ...event, series_id: 'b'.repeat(32) }]
+	};
+	assert.deepEqual(diagnosticChanges([a], [b]), []);
+});
+
+test('a later occurrence preview reports relevant conflicts while hiding unrelated weeks', () => {
+	const second = {
+		...event,
+		id: 'second',
+		school_year: 2026,
+		source_date: '2026-09-14',
+		start: '2026-09-14T08:00:00+02:00',
+		end: '2026-09-14T08:55:00+02:00'
+	};
+	const board: TimetableBoard = {
+		years: [],
+		events: [{ ...event, school_year: 2026 }, second],
+		members: [],
+		warnings: [],
+		availability: [{ teacher_id: 2, school_year: 2026, ranges: [] }]
+	};
+	const entries = timetableDiagnostics(board, '2026-09-01', {
+		event: second,
+		block: null,
+		scope: 'future',
+		originalSeries: [event.series_id]
+	});
+	assert.equal(entries.length, 1);
+	assert.equal(entries[0].events?.[0].source_date, '2026-09-14');
+	assert.ok(!entries[0].message.includes('2026-09-07'));
+});
 const year: TimetableYear = {
 	id: 1,
 	calendar_id: 1,
 	school_year: 2026,
 	revision: null,
-	published_revision: null,
 	settings: defaultTimetableSettings(2026),
 	slots: [
 		[28800, 30450],
@@ -68,69 +127,22 @@ const year: TimetableYear = {
 	weeks: {},
 	series: [
 		{
-			...block,
+			start_slot: 0,
+			duration_slots: 2,
+			subject_id: 1,
+			teacher_id: 2,
+			room_id: null,
+			kind: 'td',
+			title: 'Maths',
+			interval: 1,
 			id: event.series_id,
 			lineage: 'lineage-1',
 			starts_on: '2026-09-07',
 			until: null,
-			template_key: block.key,
 			exceptions: {}
 		}
 	]
 };
-
-test('warning navigation identifies weekly blocks, dated exceptions and independent recurring events', () => {
-	assert.equal(warningEventTarget(event, year, [block], false).templateKey, block.key);
-	assert.equal(
-		warningEventTarget({ ...event, is_exception: true }, year, [block], false).templateKey,
-		null
-	);
-	assert.equal(
-		warningEventTarget({ ...event, series_id: block.key }, year, [block], true).templateKey,
-		block.key
-	);
-	assert.equal(warningEventTarget(event, year, [], false).templateKey, null);
-	const independent = { ...year, series: [{ ...year.series[0], template_key: null }] };
-	const target = warningEventTarget(event, independent, [block], false);
-	assert.equal(target.templateKey, null);
-	assert.equal(target.recurrenceKey, 'lineage-1');
-});
-
-test('weekly labels show weekday and full logical hours; dated labels include the complete date', () => {
-	assert.equal(warningEventWhen({ event, templateKey: block.key }, year), 'lundi · 08:00–08:55');
-	assert.equal(
-		warningEventWhen({ event, templateKey: null }, year),
-		'lundi 7 septembre 2026 · 08:00–08:55'
-	);
-	assert.equal(
-		warningEventWhen(
-			{ event: { ...event, start_slot: 1, duration_slots: 1 }, templateKey: block.key },
-			year
-		),
-		'lundi · 08:27:30–08:55'
-	);
-});
-
-test('warning targets merge split sessions and repeated weeks but retain separate dated exceptions', () => {
-	const weekly = warningEventTarget(event, year, [block], false);
-	assert.equal(
-		uniqueWarningTargets([weekly, { ...weekly, event: { ...event, id: 'segment-2' } }]).length,
-		1
-	);
-	const dated = { event, templateKey: null, recurrenceKey: 'lineage-1' };
-	const later = {
-		...dated,
-		event: { ...event, start: '2026-09-14T08:00:00+02:00', source_date: '2026-09-14' }
-	};
-	assert.equal(uniqueWarningTargets([later, dated]).length, 1);
-	assert.equal(
-		uniqueWarningTargets([
-			{ ...dated, recurrenceKey: undefined },
-			{ ...later, recurrenceKey: undefined }
-		]).length,
-		2
-	);
-});
 
 test('warning tags prefer the teaching role matching the session type, preserving archived roles', () => {
 	assert.equal(warningTeachingRole('td', ['admin', 'teacher', 'kholleur']), 'teacher');
@@ -307,90 +319,35 @@ test('whole classes overlap courses and kholles, while disjoint audiences remain
 	);
 });
 
-test('dated and weekly booking previews honor actual cycles, horizons and closed days', () => {
-	const annual = {
-		...year,
-		weeks: { '2026-09-07': 1, '2026-09-14': 2, '2026-09-21': 3, '2026-09-28': 4 }
-	};
-	const fields = {
-		...annual.series[0],
-		starts_on: '2026-09-14',
-		interval: 2 as const,
-		until: '2026-09-28'
-	};
-	const dated = datedBlockEvents(fields, annual, 1, 'candidate');
-	assert.deepEqual(
-		dated.map((item) => item.source_date),
-		['2026-09-14', '2026-09-28']
-	);
-	const weekly = { ...block, interval: 2 as const, phase: 2 };
-	const projected = futureTemplateEvents(
-		weeklyEvents([weekly], annual, '2026-09-07', 1),
-		[weekly],
-		annual,
-		'2026-09-07'
-	);
-	assert.deepEqual(crossCalendarTeacherConflicts(projected, [booking], '2026-09-07'), []);
+test('warning navigation keeps recurrences grouped and exceptions independently dated', () => {
+	const normal = warningEventTarget(event, year);
+	assert.equal(normal.recurrenceKey, 'lineage-1');
+	const exception = warningEventTarget({ ...event, is_exception: true }, year);
+	assert.equal(exception.recurrenceKey, undefined);
 	assert.equal(
-		crossCalendarTeacherConflicts(
-			projected,
-			[{ ...booking, start: '2026-09-14T08:00:00', end: '2026-09-14T08:55:00' }],
-			'2026-09-07'
-		).length,
+		uniqueWarningTargets([normal, { ...normal, event: { ...event, id: 'segment-2' } }]).length,
 		1
 	);
-	assert.deepEqual(
-		datedBlockEvents({ ...fields, interval: 0, starts_on: '2026-09-12' }, annual, 1, 'closed'),
-		[]
-	);
+	assert.equal(warningEventWhen(exception, year), 'lundi 7 septembre 2026 · 08:00–08:55');
 });
 
-test('weekly coherence includes dated kholles and preserves canceled template occurrences', () => {
-	const annual = {
-		...year,
-		weeks: { '2026-09-07': 1, '2026-09-14': 2 },
-		series: [{ ...year.series[0], exceptions: { '2026-09-14': null } }]
-	};
-	const kholle = {
-		...event,
-		id: 'kholle',
-		series_id: 'dated-kholle',
-		kind: 'kholle' as const,
-		teacher_id: 3,
-		target_kind: 'kholles' as const,
-		target_number: 1
-	};
-	const preview = previewTemplateEvents(
-		weeklyEvents([block], annual, '2026-09-07', 1),
-		[block],
-		annual,
-		'2026-09-07',
-		[event, kholle]
+test('default availability includes weekday noon but ends Saturday at twelve', () => {
+	assert.deepEqual(
+		teacherAvailabilityDetails(
+			[{ ...event, start: '2026-09-07T12:00:00', end: '2026-09-07T13:00:00' }],
+			[],
+			undefined,
+			2026
+		),
+		[]
 	);
-	assert.ok(preview.some((item) => item.id === kholle.id));
-	assert.ok(!preview.some((item) => item.source_date === '2026-09-14'));
-	assert.equal(timetableConflictDetails(preview, [], '2026-09-07')[0].severity, 'critical');
-	const legacyKholle = { ...kholle, template_key: 'legacy-kholle', series_id: 'legacy-series' };
-	const legacyYear = {
-		...annual,
-		series: [
-			...annual.series,
-			{
-				...year.series[0],
-				id: 'legacy-series',
-				template_key: 'legacy-kholle',
-				kind: 'kholle' as const,
-				exceptions: {}
-			}
-		]
-	};
-	assert.ok(
-		previewTemplateEvents(
-			weeklyEvents([block], legacyYear, '2026-09-07', 1),
-			[block],
-			legacyYear,
-			'2026-09-07',
-			[legacyKholle]
-		).some((item) => item.series_id === 'legacy-series')
+	assert.equal(
+		teacherAvailabilityDetails(
+			[{ ...event, start: '2026-09-12T12:00:00', end: '2026-09-12T13:00:00' }],
+			[],
+			undefined,
+			2026
+		).length,
+		1
 	);
 });

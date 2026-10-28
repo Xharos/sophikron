@@ -61,10 +61,6 @@ class AuthRequestMiddleware:
             return
         settings = scope["app"].state.auth_settings
         limit = settings.request_max_bytes
-        if scope["path"].startswith("/api/v1/timetable/years/") and scope["path"].endswith(
-            "/template"
-        ):
-            limit = max(limit, 262144)
         binary = is_document_upload(scope["path"], scope.get("method", ""))
         if binary:
             limit = scope["app"].state.document_settings.max_bytes

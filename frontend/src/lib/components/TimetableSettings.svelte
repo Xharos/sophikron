@@ -1,7 +1,29 @@
 <script lang="ts">
-	import { clockSeconds, timetableClock, type TimetableSettings } from '#lib/timetable';
-	let { settings = $bindable() }: { settings: TimetableSettings } = $props();
+	import {
+		clockSeconds,
+		timetableClock,
+		timetableDayBalance,
+		type TimetableSettings
+	} from '#lib/timetable';
+	let {
+		settings = $bindable(),
+		locked = false
+	}: { settings: TimetableSettings; locked?: boolean } = $props();
+	const balance = $derived(timetableDayBalance(settings));
 </script>
+
+{#if !locked && balance}<p
+		class="notification is-light"
+		class:is-warning={balance.remainingSeconds > 0}
+		class:is-success={balance.remainingSeconds === 0}
+		role="status"
+	>
+		Hors pauses et fenêtre du self : {balance.teachingSeconds / 60} minutes, soit {balance.sessions} séances
+		complètes de {settings.session_minutes} minutes.
+		{#if balance.remainingSeconds}
+			Il reste {balance.remainingSeconds / 60} minute(s) : la journée ne se découpe pas exactement en
+			séances complètes.{/if}
+	</p>{/if}
 
 <div class="columns is-multiline">
 	<div class="column is-half">
@@ -15,6 +37,7 @@
 	<div class="column is-half">
 		<label class="label" for="day-start">Début de journée</label>
 		<input
+			disabled={locked}
 			id="day-start"
 			class="input"
 			type="time"
@@ -27,6 +50,7 @@
 	<div class="column is-half">
 		<label class="label" for="day-end">Fin de journée</label>
 		<input
+			disabled={locked}
 			id="day-end"
 			class="input"
 			type="time"
@@ -39,6 +63,7 @@
 	<div class="column is-half">
 		<label class="label" for="session-minutes">Durée d’une séance, en minutes</label>
 		<input
+			disabled={locked}
 			id="session-minutes"
 			class="input"
 			type="number"
@@ -59,7 +84,7 @@
 		>
 	</div>
 </div>
-<fieldset class="mb-5">
+<fieldset class="mb-5" disabled={locked}>
 	<legend class="label">Pauses quotidiennes</legend>
 	{#each settings.breaks as pause, index (index)}
 		<div class="columns is-mobile is-vcentered mb-0">
@@ -108,6 +133,38 @@
 		>Ajouter une pause</button
 	>
 </fieldset>
+<fieldset class="mb-5" disabled={locked}>
+	<legend class="label">Ouverture du self</legend>
+	<p class="help mb-3">
+		Les cours et khôlles restent autorisés. Chaque élève doit garder une séance entière et continue
+		pour manger.
+	</p>
+	<div class="columns">
+		<div class="column">
+			<label class="label" for="lunch-start">Ouverture</label><input
+				id="lunch-start"
+				class="input"
+				type="time"
+				required
+				value={timetableClock(settings.lunch_start ?? 43200)}
+				oninput={(event) => (settings.lunch_start = clockSeconds(event.currentTarget.value))}
+			/>
+		</div>
+		<div class="column">
+			<label class="label" for="lunch-end">Fermeture</label><input
+				id="lunch-end"
+				class="input"
+				type="time"
+				required
+				value={timetableClock(settings.lunch_end ?? 50400)}
+				oninput={(event) => (settings.lunch_end = clockSeconds(event.currentTarget.value))}
+			/>
+		</div>
+	</div>
+</fieldset>
+{#if locked}<p class="help mb-4">
+		Horaires, pauses, durée des séances et self sont figés après création.
+	</p>{/if}
 <fieldset>
 	<legend class="label">Vacances et jours sans cours</legend>
 	<p class="help mb-3">

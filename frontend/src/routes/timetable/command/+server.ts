@@ -11,7 +11,7 @@ export const POST: RequestHandler = async (event) => {
 	const command = body as { path?: unknown; method?: unknown; data?: unknown };
 	if (
 		typeof command.path !== 'string' ||
-		!/^(?:configuration|calendars(?:\/[1-9]\d*(?:\/years)?)?|rooms(?:\/[1-9]\d*)?|years\/[1-9]\d*\/(?:settings|publish|series(?:\/[a-f0-9]{32})?))$/.test(
+		!/^(?:preferences|school-years(?:\/[1-9]\d{3})?|calendars(?:\/[1-9]\d*(?:\/(?:archive|restore))?)?|rooms(?:\/[1-9]\d*)?|years\/[1-9]\d*\/(?:preview|settings(?:\/preview)?|series(?:\/[a-f0-9]{32})?))$/.test(
 			command.path
 		) ||
 		!['POST', 'PUT', 'DELETE'].includes(String(command.method))

@@ -6,13 +6,26 @@ export interface TimetableSettings {
 	day_end: number;
 	session_minutes: number;
 	saturday: boolean;
+	lunch_start?: number;
+	lunch_end?: number;
 	breaks: { start: number; end: number }[];
 	holidays: { name: string; start: string; end: string }[];
+}
+export interface AnnualSubjectHours {
+	subject_id: number | null;
+	course: number;
+	td: number;
+	tp: number;
+	kholle: number;
+	total: number;
+	weekly: { course: number; td: number; tp: number; kholle: number; total: number };
 }
 export interface TimetableBlock {
 	starts_on: string;
 	start_slot: number;
 	duration_slots: number;
+	start_time?: number | null;
+	end_time?: number | null;
 	subject_id: number | null;
 	teacher_id: number | null;
 	room_id: number | null;
@@ -20,21 +33,21 @@ export interface TimetableBlock {
 	title: string;
 	interval: 0 | 1 | 2 | 3;
 	until: string | null;
-	target_kind?: 'promotion' | 'halves' | 'thirds' | 'kholles' | 'student';
+	target_kind?: 'promotion' | 'halves' | 'thirds' | 'kholles' | 'custom' | 'student';
 	target_number?: number | null;
 	target_user_id?: number | null;
 }
 export interface TimetableSeries extends TimetableBlock {
 	id: string;
 	lineage: string;
-	template_key?: string | null;
 	exceptions: Record<string, Omit<TimetableBlock, 'interval' | 'until'> | null>;
 }
 export interface TimetableEvent {
+	start_time?: number | null;
+	end_time?: number | null;
 	id: string;
 	series_id: string;
 	conflict_key?: string;
-	template_key?: string | null;
 	is_exception?: boolean;
 	school_year?: number;
 	session_minutes?: number;
@@ -68,11 +81,10 @@ export interface TimetableYear {
 	school_year: number;
 	settings: TimetableSettings;
 	revision: string | null;
-	published_revision: string | null;
 	slots: [number, number][];
 	weeks: Record<string, number>;
 	series: TimetableSeries[];
-	template_blocks?: WeeklyBlock[];
+	hours?: AnnualSubjectHours[];
 }
 export interface TimetableAgenda {
 	id: number;
@@ -80,6 +92,7 @@ export interface TimetableAgenda {
 	promotion_id: number | null;
 	revision: string | null;
 	is_paused?: boolean;
+	is_archived?: boolean;
 	years: { id: number; school_year: number; revision: string | null }[];
 }
 export interface TimetableCatalog {
@@ -107,7 +120,10 @@ export interface TimetableBoard {
 	warnings: string[];
 	availability?: { teacher_id: number; school_year: number; ranges: AvailabilityRange[] }[];
 	issues?: TimetableIssue[];
-	calendars?: Pick<TimetableAgenda, 'id' | 'name' | 'promotion_id' | 'revision' | 'is_paused'>[];
+	calendars?: Pick<
+		TimetableAgenda,
+		'id' | 'name' | 'promotion_id' | 'revision' | 'is_paused' | 'is_archived'
+	>[];
 	teacher_commitments?: TeacherCommitment[];
 }
 
@@ -125,10 +141,14 @@ export interface TeacherCommitment {
 
 export interface TimetableIssue {
 	code: string;
-	severity: 'warning' | 'critical';
+	severity: 'warning' | 'critical' | 'info';
 	message: string;
 	teacher_id?: number;
-	template_keys?: string[];
+	subject_id?: number | null;
+	family?: string;
+	kind?: TimetableBlock['kind'];
+	groups?: { label: string; hours: number }[];
+	cycles?: number[];
 }
 
 export interface TimetableWarning {
@@ -141,9 +161,20 @@ export interface TimetableWarning {
 
 export interface CommonTimetableYear {
 	school_year: number;
-	settings: TimetableSettings | null;
 	revision: string;
-	alternatives: { name: string; settings: TimetableSettings }[];
+	used: boolean;
+}
+
+/** Academic labels change on September 1, independently of individual teaching dates. */
+export function currentSchoolYear(today: string): number {
+	return Number(today.slice(0, 4)) - (Number(today.slice(5, 7)) < 9 ? 1 : 0);
+}
+
+/** Prefer the current label, then the nearest future label, then the most recent past label. */
+export function preferredSchoolYear(years: { school_year: number }[], today: string): number {
+	const current = currentSchoolYear(today);
+	const labels = years.map((year) => year.school_year).sort((a, b) => a - b);
+	return labels.find((year) => year >= current) ?? labels.at(-1) ?? 0;
 }
 export interface TimetableMember {
 	id: number;
@@ -154,20 +185,11 @@ export interface TimetableMember {
 }
 export interface TimetableGroup {
 	promotion_id: number;
-	kind: 'halves' | 'thirds' | 'kholles';
+	kind: 'halves' | 'thirds' | 'kholles' | 'custom';
+	name?: string;
+	is_active?: boolean;
 	number: number;
 	student_ids: number[];
-}
-export interface WeeklyBlock extends Omit<TimetableBlock, 'starts_on' | 'until' | 'interval'> {
-	key: string;
-	weekday: number;
-	interval: 1 | 2 | 3;
-	phase: number;
-}
-export interface WeeklyTemplate {
-	revision: string;
-	blocks: WeeklyBlock[];
-	versions: { number: number; effective_on: string; effective_at?: string }[];
 }
 export interface TimetableNode {
 	key: string;
@@ -189,7 +211,9 @@ export function timetableTree(
 	const pupils = members.filter(
 		(member) => member.roles.includes('user') && member.promotion_ids.includes(promotionId)
 	);
-	const partitions = groups.filter((group) => group.promotion_id === promotionId);
+	const partitions = groups.filter(
+		(group) => group.promotion_id === promotionId && group.is_active !== false
+	);
 	const root: TimetableNode = {
 		key: 'promotion',
 		label: name,
@@ -208,14 +232,16 @@ export function timetableTree(
 		studentIds: [pupil.id],
 		children: []
 	});
-	for (const kind of ['halves', 'thirds', 'kholles']) {
+	for (const kind of ['halves', 'thirds', 'kholles', 'custom']) {
 		for (const group of partitions
 			.filter((item) => item.kind === kind)
 			.sort((a, b) => a.number - b.number)) {
 			const label =
-				kind === 'kholles'
-					? `Khôlle ${String(group.number).padStart(3, '0')}`
-					: `${kind === 'halves' ? 'Demi-groupe' : 'Tiers de groupe'} ${String.fromCharCode((kind === 'halves' ? 64 : 87) + group.number)}`;
+				kind === 'custom'
+					? (group.name ?? 'Groupe personnalisé')
+					: kind === 'kholles'
+						? `Khôlle ${String(group.number).padStart(3, '0')}`
+						: `${kind === 'halves' ? 'Demi-groupe' : 'Tiers de groupe'} ${String.fromCharCode((kind === 'halves' ? 64 : 87) + group.number)}`;
 			root.children.push({
 				key: `${kind}-${group.number}`,
 				label,
@@ -230,7 +256,8 @@ export function timetableTree(
 		root.children.flatMap((node) => node.children.flatMap((child) => child.studentIds))
 	);
 	const remaining = pupils.filter((pupil) => !placed.has(pupil.id));
-	if (!priority) root.children = remaining.map(pupilNode);
+	if (!priority && !partitions.some((group) => group.kind === 'custom'))
+		root.children = remaining.map(pupilNode);
 	else if (remaining.length)
 		root.children.push({
 			key: 'unassigned',
@@ -264,42 +291,6 @@ export function nodeReceives(
 	);
 }
 
-/** Render a weekly scratch block using the same effective teaching seconds as the backend. */
-export function weeklyEvents(
-	blocks: WeeklyBlock[],
-	year: TimetableYear,
-	monday: string,
-	promotionId: number | null
-): TimetableEvent[] {
-	return blocks.flatMap((block) => {
-		const start = year.slots[block.start_slot]?.[0];
-		const end = year.slots[block.start_slot + block.duration_slots - 1]?.[1];
-		if (start === undefined || end === undefined) return [];
-		const day = shiftTimetableDate(monday, block.weekday);
-		const pieces: [number, number][] = [];
-		let cursor = start;
-		for (const pause of [...year.settings.breaks].sort((a, b) => a.start - b.start)) {
-			if (pause.end <= cursor || pause.start >= end) continue;
-			if (cursor < pause.start) pieces.push([cursor, pause.start]);
-			cursor = pause.end;
-		}
-		if (cursor < end) pieces.push([cursor, end]);
-		return pieces.map(([from, to], index) => ({
-			...block,
-			id: `${block.key}-${index}`,
-			series_id: block.key,
-			source_date: day,
-			start: `${day}T${timetableClock(from)}`,
-			end: `${day}T${timetableClock(to)}`,
-			calendar_id: year.calendar_id,
-			year_id: year.id,
-			promotion_id: promotionId,
-			color: '#244BC1',
-			teacher: '',
-			room: ''
-		}));
-	});
-}
 export const blockKinds: Record<TimetableBlock['kind'], string> = {
 	course: 'Cours',
 	td: 'TD',
@@ -327,33 +318,11 @@ export function timetableAudienceLabel(
 				: 'Groupe de khôlle';
 		case 'student':
 			return 'Séance individuelle';
+		case 'custom':
+			return 'Groupe personnalisé';
 		default:
 			return 'Classe entière';
 	}
-}
-
-/** Compare complete patterns independently of ordering and omitted audience defaults. */
-export function weeklySignature(blocks: WeeklyBlock[]): string {
-	return JSON.stringify(
-		[...blocks]
-			.sort((a, b) => a.key.localeCompare(b.key))
-			.map((block) => [
-				block.key,
-				block.weekday,
-				block.start_slot,
-				block.duration_slots,
-				block.subject_id,
-				block.teacher_id,
-				block.room_id,
-				block.kind,
-				block.title,
-				block.interval,
-				block.phase,
-				block.target_kind ?? 'promotion',
-				block.target_number ?? null,
-				block.target_user_id ?? null
-			])
-	);
 }
 
 /** Treat 55–65 minute teaching sessions as one pedagogical hour, including half-sessions. */
@@ -361,120 +330,6 @@ export function teachingHours(durationSlots: number, sessionMinutes: number): nu
 	return (
 		(durationSlots / 2) * (sessionMinutes >= 55 && sessionMinutes <= 65 ? 1 : sessionMinutes / 60)
 	);
-}
-
-export interface SubjectHours {
-	subjectId: number | null;
-	course: number;
-	td: number;
-	tp: number;
-}
-
-/** Average a full recurrence cycle from a pupil's perspective; khôlles never contribute. */
-export function weeklySubjectHours(blocks: WeeklyBlock[], sessionMinutes: number): SubjectHours[] {
-	const totals = new Map<number | null, SubjectHours>();
-	for (const block of blocks) {
-		if (
-			block.kind === 'kholle' ||
-			!['promotion', 'halves', 'thirds'].includes(block.target_kind ?? 'promotion')
-		)
-			continue;
-		const value = totals.get(block.subject_id) ?? {
-			subjectId: block.subject_id,
-			course: 0,
-			td: 0,
-			tp: 0
-		};
-		const size = block.target_kind === 'halves' ? 2 : block.target_kind === 'thirds' ? 3 : 1;
-		value[block.kind] +=
-			teachingHours(block.duration_slots, sessionMinutes) / block.interval / size;
-		totals.set(block.subject_id, value);
-	}
-	const total = (row: SubjectHours): number => row.course + row.td + row.tp;
-	return [...totals.values()].sort(
-		(left, right) => total(right) - total(left) || (left.subjectId ?? 0) - (right.subjectId ?? 0)
-	);
-}
-
-/** Report unequal teaching loads and missing promotion groups without blocking draft saves. */
-export function weeklyIssues(
-	blocks: WeeklyBlock[],
-	sessionMinutes: number,
-	promotionId: number | null,
-	groups: TimetableGroup[],
-	subjects: { id: number; name: string }[]
-): TimetableIssue[] {
-	const issues: TimetableIssue[] = [];
-	const loads = new Map<
-		string,
-		{ kind: 'halves' | 'thirds'; subject: number | null; hours: number[] }
-	>();
-	const missing = new Set<string>();
-	for (const block of blocks) {
-		if (
-			block.kind === 'kholle' ||
-			(block.target_kind !== 'halves' && block.target_kind !== 'thirds')
-		)
-			continue;
-		const size = block.target_kind === 'halves' ? 2 : 3;
-		const number = block.target_number ?? 0;
-		if (number < 1 || number > size) continue;
-		const key = `${block.target_kind}-${block.subject_id}`;
-		const load = loads.get(key) ?? {
-			kind: block.target_kind,
-			subject: block.subject_id,
-			hours: Array.from({ length: size }, () => 0)
-		};
-		load.hours[number - 1] += teachingHours(block.duration_slots, sessionMinutes) / block.interval;
-		loads.set(key, load);
-		if (
-			promotionId !== null &&
-			!groups.some(
-				(group) =>
-					group.promotion_id === promotionId &&
-					group.kind === block.target_kind &&
-					group.number === number &&
-					group.student_ids.length
-			)
-		) {
-			missing.add(`${block.target_kind}-${number}`);
-		}
-	}
-	for (const [key, load] of loads) {
-		if (Math.max(...load.hours) - Math.min(...load.hours) < 1e-8) continue;
-		const detail = load.hours
-			.map(
-				(hours, index) =>
-					`${String.fromCharCode((load.kind === 'halves' ? 65 : 88) + index)} : ${formatTeachingHours(hours)}`
-			)
-			.join(' · ');
-		issues.push({
-			code: `balance-${key}`,
-			severity: 'warning',
-			message: `${subjects.find((subject) => subject.id === load.subject)?.name ?? 'Sans matière'} : volumes inégaux entre groupes (${detail}), cours, TD et TP confondus. Comparez les élèves sur le cycle complet.`,
-			template_keys: blocks
-				.filter(
-					(block) =>
-						block.target_kind === load.kind &&
-						block.subject_id === load.subject &&
-						block.kind !== 'kholle'
-				)
-				.map((block) => block.key)
-		});
-	}
-	for (const key of missing) {
-		const [kind, number] = key.split('-');
-		const label = String.fromCharCode((kind === 'halves' ? 64 : 87) + Number(number));
-		issues.push({
-			code: `group-${key}`,
-			severity: 'warning',
-			message: `Le groupe ${label} utilisé dans la semaine type n’est pas défini ou ne contient aucun élève dans la promotion affectée.`,
-			template_keys: blocks
-				.filter((block) => block.target_kind === kind && block.target_number === Number(number))
-				.map((block) => block.key)
-		});
-	}
-	return issues;
 }
 
 /** Keep subject specialists first and French alphabetical ordering within both groups. */
@@ -504,7 +359,7 @@ function timetableAudiencesOverlap(
 	const first = left.target_kind ?? 'promotion';
 	const second = right.target_kind ?? 'promotion';
 	if (first === 'promotion' || second === 'promotion') return true;
-	if (first === second)
+	if (first === second && first !== 'custom')
 		return first === 'student'
 			? left.target_user_id === right.target_user_id
 			: left.target_number === right.target_number;
@@ -631,50 +486,6 @@ export function crossCalendarTeacherConflicts(
 	return [...warnings.values()];
 }
 
-/** Project a dated creation/replacement with its own recurrence anchor, excluding holidays and pauses. */
-export function datedBlockEvents(
-	block: TimetableBlock,
-	year: TimetableYear,
-	promotionId: number | null,
-	key: string
-): TimetableEvent[] {
-	const weekday = (new Date(`${block.starts_on}T12:00:00Z`).getUTCDay() + 6) % 7;
-	const anchor = year.weeks[mondayOf(block.starts_on)];
-	const pattern: WeeklyBlock = {
-		...block,
-		key,
-		weekday,
-		interval: Math.max(1, block.interval) as 1 | 2 | 3,
-		phase: 1
-	};
-	const segments = weeklyEvents([pattern], year, mondayOf(block.starts_on), promotionId);
-	const dates = !block.interval
-		? [block.starts_on]
-		: Object.entries(year.weeks)
-				.filter(([, number]) => anchor !== undefined && (number - anchor) % block.interval === 0)
-				.map(([monday]) => shiftTimetableDate(monday, weekday));
-	return dates
-		.filter(
-			(day) =>
-				day >= block.starts_on &&
-				day >= year.settings.start &&
-				day <= (block.interval ? (block.until ?? year.settings.end) : year.settings.end) &&
-				day <= year.settings.end &&
-				(weekday !== 5 || year.settings.saturday) &&
-				weekday !== 6 &&
-				!year.settings.holidays.some((holiday) => holiday.start <= day && day <= holiday.end)
-		)
-		.flatMap((day) =>
-			segments.map((event) => ({
-				...event,
-				id: `${event.id}-${day}`,
-				source_date: day,
-				start: `${day}T${event.start.slice(11, 19)}`,
-				end: `${day}T${event.end.slice(11, 19)}`
-			}))
-		);
-}
-
 export interface AvailabilityRange {
 	weekday: number;
 	start: number;
@@ -708,10 +519,17 @@ export function teacherAvailabilityDetails(
 				item.teacher_id === event.teacher_id &&
 				item.school_year === (event.school_year ?? schoolYear)
 		);
-		if (!pattern) continue;
+		if (event.teacher_id === null) continue;
 		const weekday = (new Date(`${event.start.slice(0, 10)}T12:00:00Z`).getUTCDay() + 6) % 7;
 		if (
-			pattern.ranges.some(
+			(
+				pattern?.ranges ??
+				Array.from({ length: 6 }, (_, weekday) => ({
+					weekday,
+					start: 28800,
+					end: weekday === 5 ? 43200 : 68400
+				}))
+			).some(
 				(range) =>
 					range.weekday === weekday &&
 					range.start <= clockSeconds(event.start.slice(11, 19)) &&
@@ -729,105 +547,6 @@ export function teacherAvailabilityDetails(
 			});
 	}
 	return [...warnings.values()];
-}
-
-/** Check every phase of the two/three-week cycles while a template is being edited. */
-export function weeklyConflicts(
-	events: TimetableEvent[],
-	blocks: WeeklyBlock[],
-	groups: TimetableGroup[]
-): string[] {
-	const patterns = new Map(blocks.map((block) => [block.key, block]));
-	const warnings = new Set<string>();
-	for (let week = 1; week <= 6; week++) {
-		const active = events.filter((event) => {
-			const block = patterns.get(event.series_id);
-			return block && ((week - 1) % block.interval) + 1 === block.phase;
-		});
-		for (const warning of timetableConflicts(active, groups)) warnings.add(warning);
-	}
-	return [...warnings].sort().slice(0, 100);
-}
-
-/** Project an unsaved pattern only onto remaining open dates and actual recurrence phases. */
-export function futureTemplateEvents(
-	events: TimetableEvent[],
-	blocks: WeeklyBlock[],
-	year: TimetableYear,
-	today: string
-): TimetableEvent[] {
-	const patterns = new Map(blocks.map((block) => [block.key, block]));
-	return Object.entries(year.weeks).flatMap(([monday, number]) => {
-		if (shiftTimetableDate(monday, 6) < today) return [];
-		return events.flatMap((event) => {
-			const block = patterns.get(event.series_id);
-			if (!block || ((number - 1) % block.interval) + 1 !== block.phase) return [];
-			const day = shiftTimetableDate(monday, block.weekday);
-			if (
-				day < today ||
-				day < year.settings.start ||
-				day > year.settings.end ||
-				(block.weekday === 5 && !year.settings.saturday) ||
-				year.settings.holidays.some((holiday) => holiday.start <= day && day <= holiday.end)
-			)
-				return [];
-			return [
-				{
-					...event,
-					id: `${event.id}-${day}`,
-					source_date: day,
-					start: `${day}T${event.start.slice(11, 19)}`,
-					end: `${day}T${event.end.slice(11, 19)}`
-				}
-			];
-		});
-	});
-}
-
-/** Compare a weekly draft with retained independent lessons and actual occurrence exceptions. */
-export function previewTemplateEvents(
-	events: TimetableEvent[],
-	blocks: WeeklyBlock[],
-	year: TimetableYear,
-	today: string,
-	dated: TimetableEvent[]
-): TimetableEvent[] {
-	const sources = new Map(year.series.map((source) => [source.id, source]));
-	const keys = new Set(blocks.map((block) => block.key));
-	const weeklySource = (source: TimetableSeries): boolean =>
-		source.interval > 0 &&
-		source.kind !== 'kholle' &&
-		['promotion', 'halves', 'thirds'].includes(source.target_kind ?? 'promotion');
-	const sourceKey = (event: TimetableEvent): string | null => {
-		const source = sources.get(event.series_id);
-		if (source && !weeklySource(source)) return null;
-		return (
-			event.template_key ??
-			source?.template_key ??
-			(source?.interval && source.kind !== 'kholle' && keys.has(source.lineage)
-				? source.lineage
-				: null)
-		);
-	};
-	const exceptions = new Set<string>();
-	for (const source of year.series) {
-		if (!weeklySource(source)) continue;
-		const key = source.template_key ?? (keys.has(source.lineage) ? source.lineage : null);
-		if (key) for (const day of Object.keys(source.exceptions)) exceptions.add(`${key}:${day}`);
-	}
-	for (const event of dated)
-		if (event.is_exception && sourceKey(event))
-			exceptions.add(`${sourceKey(event)}:${event.source_date}`);
-	const projected = futureTemplateEvents(events, blocks, year, today).filter(
-		(event) => !exceptions.has(`${event.series_id}:${event.source_date}`)
-	);
-	const independent = dated.filter(
-		(event) =>
-			!sourceKey(event) ||
-			event.is_exception ||
-			Object.hasOwn(sources.get(event.series_id)?.exceptions ?? {}, event.source_date)
-	);
-	return [...projected, ...independent];
 }
 
 export function formatTeachingHours(hours: number): string {
@@ -882,15 +601,47 @@ export function defaultTimetableSettings(year: number): TimetableSettings {
 		start: `${year}-09-01`,
 		end: `${year + 1}-06-30`,
 		day_start: 28800,
-		day_end: 61200,
+		day_end: 68100,
 		session_minutes: 55,
+		lunch_start: 43200,
+		lunch_end: 50400,
 		saturday: false,
 		breaks: [
 			{ start: 35400, end: 36600 },
-			{ start: 43200, end: 46800 },
-			{ start: 53400, end: 54600 }
+			{ start: 57000, end: 58200 }
 		],
 		holidays: []
+	};
+}
+
+/** Count complete nominal sessions outside recess and the self window, merging overlaps once. */
+export function timetableDayBalance(
+	settings: TimetableSettings
+): { sessions: number; remainingSeconds: number; teachingSeconds: number } | null {
+	const span = settings.day_end - settings.day_start;
+	const session = settings.session_minutes * 60;
+	if (!Number.isFinite(span) || !Number.isFinite(session) || span <= 0 || session <= 0) return null;
+	const intervals = [
+		...settings.breaks,
+		{ start: settings.lunch_start ?? 43200, end: settings.lunch_end ?? 50400 }
+	]
+		.map((interval) => [
+			Math.max(settings.day_start, interval.start),
+			Math.min(settings.day_end, interval.end)
+		])
+		.filter(([start, end]) => start < end)
+		.sort((a, b) => a[0] - b[0]);
+	let excluded = 0,
+		cursor = settings.day_start;
+	for (const [start, end] of intervals) {
+		excluded += Math.max(0, end - Math.max(cursor, start));
+		cursor = Math.max(cursor, end);
+	}
+	const teachingSeconds = span - excluded;
+	return {
+		sessions: Math.floor(teachingSeconds / session),
+		remainingSeconds: teachingSeconds % session,
+		teachingSeconds
 	};
 }
 

@@ -1,15 +1,17 @@
-"""Private timetable authorization, draft publication and personal calendar feeds."""
+"""Private annual timetable authorization, live mutations and personal calendar feeds."""
 
 import re
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from icalendar import Calendar, Event
-from sqlalchemy import delete, select
+from sqlalchemy import delete, literal, select
 
 from app.core.security import new_token, token_digest
 from app.models import (
     Promotion,
+    PromotionCustomGroup,
+    PromotionCustomGroupMember,
     PromotionGroup,
     PromotionGroupMember,
     Role,
@@ -21,7 +23,6 @@ from app.models import (
     TimetableSchoolYear,
     TimetableSeries,
     TimetableSubscription,
-    TimetableTemplateVersion,
     TimetableYear,
     User,
     UserPromotion,
@@ -30,12 +31,11 @@ from app.models import (
 from app.repositories.timetable import TimetableRepository
 from app.schemas.timetable import (
     CalendarSave,
+    EventPreview,
     OccurrenceEdit,
-    SeriesData,
     SeriesFields,
     SessionFields,
     Version,
-    YearCreate,
     YearDocument,
     YearSettings,
 )
@@ -44,13 +44,11 @@ from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.timetable_engine import (
     PARIS,
-    cycle_warnings,
+    apply_event_change,
+    current_school_year,
     daily_slots,
     occurrences,
-    series_dates,
-    teaching_day,
     teaching_weeks,
-    validate_series,
 )
 
 
@@ -78,6 +76,9 @@ class TimetableService:
             or (not admin and not {"teaching.read", "kholleur.access"}.intersection(permissions))
         ):
             raise AuthError(403, "Vous n’avez pas accès aux emplois du temps.")
+        from app.services.timetable_lifecycle import rollover
+
+        await rollover(self.db, self.today())
         return admin
 
     async def _calendar(
@@ -85,14 +86,16 @@ class TimetableService:
     ) -> TimetableCalendar:
         """Hide unrelated calendars after checking current staff scope."""
         admin = await self.authorize(actor, write=write)
-        calendars = await self.repo.calendars(None if admin else actor.id)
+        calendars = await self.repo.calendars(None if admin else actor.id, archives=admin)
         calendar = next((row for row in calendars if row.id == identifier), None)
         if calendar is None:
             raise AuthError(404, "Agenda introuvable.")
+        if write and calendar.is_archived:
+            raise AuthError(409, "Un calendrier archivé est en lecture seule.")
         return calendar
 
     async def _year(self, identifier: int, actor: UserContext, version: Version) -> TimetableYear:
-        """Lock drafts after authorization and reject stale editing revisions."""
+        """Lock calendars after authorization and reject stale editing revisions."""
         await self.auth._lifecycle_lock()
         await self.authorize(actor, write=True)
         row = await self.db.scalar(
@@ -101,8 +104,11 @@ class TimetableService:
         if row is None:
             raise AuthError(404, "Année scolaire introuvable.")
         calendar = await self.db.get(TimetableCalendar, row.calendar_id)
-        if calendar is None or calendar.is_deleted:
+        if calendar is None:
             raise AuthError(404, "Agenda introuvable.")
+        if calendar.is_archived:
+            raise AuthError(409, "Un calendrier archivé est en lecture seule.")
+        self.require_live_confirmation(calendar, version.confirmed_live)
         if row.revision != version.expected_revision:
             raise AuthError(409, "L’agenda a changé. Rechargez-le avant de continuer.")
         return row
@@ -181,6 +187,17 @@ class TimetableService:
                         .exists(),
                     )
                 )
+            elif block.target_kind == "custom":
+                valid = await self.db.scalar(
+                    select(PromotionCustomGroup.id).where(
+                        PromotionCustomGroup.id == block.target_number,
+                        PromotionCustomGroup.promotion_id == calendar.promotion_id,
+                        PromotionCustomGroup.is_active.is_(True),
+                        select(PromotionCustomGroupMember.user_id)
+                        .where(PromotionCustomGroupMember.group_id == PromotionCustomGroup.id)
+                        .exists(),
+                    )
+                )
             else:
                 valid = await self.db.get(
                     PromotionGroup, (calendar.promotion_id, block.target_kind, block.target_number)
@@ -190,60 +207,43 @@ class TimetableService:
                     422, "Ce destinataire n’appartient plus à la promotion de l’agenda."
                 )
 
+    @staticmethod
+    def require_live_confirmation(calendar: TimetableCalendar, confirmed: bool) -> None:
+        """Require explicit acknowledgement before changing a calendar currently broadcast."""
+        if not calendar.is_paused and calendar.promotion_id is not None and not confirmed:
+            raise AuthError(409, "Confirmez la modification de ce calendrier diffusé en direct.")
+
     async def common_years(self) -> list[dict]:
-        """Describe common settings without discarding conflicting legacy configurations."""
-        rows = list(
-            await self.db.scalars(
+        """Return immutable year labels and their permanent usage markers in one query."""
+        return [
+            {"school_year": row.school_year, "used": row.used, "revision": row.revision}
+            for row in await self.db.scalars(
                 select(TimetableSchoolYear).order_by(TimetableSchoolYear.school_year.desc())
             )
-        )
-        result = []
-        for row in rows:
-            alternatives = []
-            if row.settings is None:
-                for year, name in await self.db.execute(
-                    select(TimetableYear, TimetableCalendar.name)
-                    .join(TimetableCalendar)
-                    .where(
-                        TimetableYear.school_year == row.school_year,
-                        TimetableCalendar.is_deleted.is_(False),
-                    )
-                ):
-                    alternatives.append({"name": name, "settings": year.settings})
-            result.append(
-                {
-                    "school_year": row.school_year,
-                    "settings": row.settings,
-                    "revision": row.revision,
-                    "alternatives": alternatives,
-                }
-            )
-        return result
+        ]
 
     async def catalog(self, actor: UserContext) -> dict:
         """Return minimal calendar and member metadata inside the caller's current scope."""
         async with self.db.begin():
             admin = await self.authorize(actor)
             calendars = await self.repo.calendars(None if admin else actor.id)
+            all_years = list(
+                await self.db.scalars(
+                    select(TimetableYear).where(
+                        TimetableYear.calendar_id.in_([calendar.id for calendar in calendars])
+                    )
+                )
+            )
             items = []
             for calendar in calendars:
-                years = await self.repo.years(calendar.id)
-                visible = []
-                for year in years:
-                    published = (
-                        YearDocument.model_validate(year.published) if year.published else None
-                    )
-                    if admin or (
-                        published
-                        and published.settings.start <= self.today() <= published.settings.end
-                    ):
-                        visible.append(
-                            {
-                                "id": year.id,
-                                "school_year": year.school_year,
-                                "revision": year.revision if admin else None,
-                            }
-                        )
+                visible = [
+                    year
+                    for year in all_years
+                    if year.calendar_id == calendar.id
+                    and (admin or year.starts_on <= self.today() <= year.ends_on)
+                ]
+                if not admin and not visible:
+                    continue
                 items.append(
                     {
                         "id": calendar.id,
@@ -251,9 +251,18 @@ class TimetableService:
                         "promotion_id": calendar.promotion_id,
                         "revision": calendar.revision if admin else None,
                         "is_paused": calendar.is_paused,
-                        "years": visible,
+                        "is_archived": calendar.is_archived,
+                        "years": [
+                            {
+                                "id": year.id,
+                                "school_year": year.school_year,
+                                "revision": year.revision if admin else None,
+                            }
+                            for year in visible
+                        ],
                     }
                 )
+
             promotion_query = select(Promotion).where(Promotion.is_active.is_(True))
             if not admin:
                 promotion_query = promotion_query.join(UserPromotion).where(
@@ -347,28 +356,85 @@ class TimetableService:
     async def save_calendar(
         self, actor: UserContext, data: CalendarSave, identifier: int | None
     ) -> dict:
-        """Create or reassign a reusable agenda under the account lifecycle lock."""
+        """Create one annual calendar or confirm its live rename, assignment or diffusion change."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
             await self.authorize(actor, write=True)
-            if not data.name.strip():
-                raise AuthError(422, "Donnez un nom à l’agenda.")
+            name = " ".join(data.name.split())
+            if not data.is_paused and data.promotion_id is None:
+                raise AuthError(422, "Affectez une promotion avant d’activer la diffusion.")
+            if not name or len(name.casefold()) > 300:
+                raise AuthError(422, "Donnez un nom valide au calendrier.")
             if data.promotion_id is not None:
                 promotion = await self.db.get(Promotion, data.promotion_id)
                 if promotion is None or not promotion.is_active:
                     raise AuthError(422, "Choisissez une promotion active.")
+                other = await self.db.scalar(
+                    select(TimetableCalendar.id).where(
+                        TimetableCalendar.promotion_id == data.promotion_id,
+                        TimetableCalendar.is_archived.is_(False),
+                        TimetableCalendar.id != identifier if identifier else True,
+                    )
+                )
+                if other is not None:
+                    raise AuthError(409, "Cette promotion possède déjà un calendrier actif.")
+            other_name = await self.db.scalar(
+                select(TimetableCalendar.id).where(
+                    TimetableCalendar.name_key == name.casefold(),
+                    TimetableCalendar.id != identifier if identifier else True,
+                )
+            )
+            if other_name is not None:
+                raise AuthError(
+                    409, "Un calendrier porte déjà ce nom, y compris dans les archives."
+                )
             row = await self.db.get(TimetableCalendar, identifier) if identifier else None
-            if identifier and (
-                row is None or row.is_deleted or row.revision != data.expected_revision
-            ):
-                raise AuthError(409, "L’agenda a changé ou n’existe plus.")
-            if row is None:
+            if identifier:
+                if row is None or row.revision != data.expected_revision:
+                    raise AuthError(409, "Le calendrier a changé. Rechargez la liste.")
+                if row.is_archived:
+                    raise AuthError(409, "Un calendrier archivé est en lecture seule.")
+                self.require_live_confirmation(row, data.confirmed_live)
+                if row.promotion_id != data.promotion_id and not data.confirmed_assignment:
+                    raise AuthError(
+                        409, "Confirmez le changement de promotion et de destinataires."
+                    )
+                if data.settings is not None or data.school_year is not None:
+                    raise AuthError(422, "L’année et les horaires initiaux sont immuables.")
+            else:
+                if data.school_year is None or data.settings is None:
+                    raise AuthError(
+                        422, "Choisissez une année scolaire et les réglages du calendrier."
+                    )
+                if data.school_year < current_school_year(self.today()):
+                    raise AuthError(422, "Choisissez une année scolaire actuelle ou future.")
+                tag = await self.db.get(TimetableSchoolYear, data.school_year)
+                if tag is None:
+                    raise AuthError(422, "Créez d’abord cette année scolaire dans le catalogue.")
+                self.validate_year_bounds(data.school_year, data.settings)
                 row = TimetableCalendar()
                 self.db.add(row)
-            row.name, row.promotion_id = data.name.strip(), data.promotion_id
+                tag.used = True
+            row.name, row.name_key, row.promotion_id = name, name.casefold(), data.promotion_id
             row.is_paused = data.is_paused
             row.revision = uuid4().hex
             await self.db.flush()
+            if identifier is None:
+                self.db.add(
+                    TimetableYear(
+                        calendar_id=row.id,
+                        school_year=data.school_year,
+                        starts_on=data.settings.start,
+                        ends_on=data.settings.end,
+                        settings=data.settings.model_dump(mode="json"),
+                        revision=uuid4().hex,
+                        updated_at=self.auth.clock(),
+                    )
+                )
+            else:
+                for year in await self.repo.years(row.id):
+                    year.revision = uuid4().hex
+                    year.updated_at = self.auth.clock()
             await record_event(
                 self.db,
                 "timetable.changed",
@@ -377,6 +443,19 @@ class TimetableService:
                 resource_id=row.id,
             )
             return {"id": row.id, "revision": row.revision}
+
+    @staticmethod
+    def validate_year_bounds(school_year: int, settings: YearSettings) -> None:
+        """Keep a calendar inside its immutable September-to-August academic label."""
+        if (
+            not date(school_year, 9, 1)
+            <= settings.start
+            <= settings.end
+            <= date(school_year + 1, 8, 31)
+        ):
+            raise AuthError(422, "Les dates doivent appartenir à l’année scolaire sélectionnée.")
+        if not daily_slots(settings):
+            raise AuthError(422, "Aucun demi-créneau complet dans cette grille.")
 
     async def add_room(self, actor: UserContext, name: str) -> dict:
         """Create or reuse a canonical room without duplicating case or whitespace variants."""
@@ -400,138 +479,53 @@ class TimetableService:
                 row.revision = uuid4().hex
             return {"id": row.id, "name": row.name, "revision": row.revision}
 
-    async def create_year(self, actor: UserContext, calendar_id: int, data: YearCreate) -> dict:
-        """Prepare an annual draft and automatically reuse recurring patterns without exceptions."""
-        async with self.db.begin():
-            await self.auth._lifecycle_lock()
-            calendar = await self._calendar(calendar_id, actor, write=True)
-            years = await self.repo.years(calendar.id)
-            if any(row.school_year == data.settings.start.year for row in years):
-                raise AuthError(409, "Cette année scolaire existe déjà dans cet agenda.")
-            if not daily_slots(data.settings):
-                raise AuthError(422, "Aucun demi-créneau complet dans cette grille.")
-            shared = await self.db.get(TimetableSchoolYear, data.settings.start.year)
-            if shared and shared.settings != data.settings.model_dump(mode="json"):
-                raise AuthError(409, "Utilisez les réglages communs de cette année scolaire.")
-            if shared is None:
-                shared = TimetableSchoolYear(
-                    school_year=data.settings.start.year,
-                    settings=data.settings.model_dump(mode="json"),
-                    revision=uuid4().hex,
-                )
-                self.db.add(shared)
-                await self.db.flush()
-            year = TimetableYear(
-                calendar_id=calendar.id,
-                school_year=data.settings.start.year,
-                starts_on=data.settings.start,
-                ends_on=data.settings.end,
-                settings=data.settings.model_dump(mode="json"),
-                revision=uuid4().hex,
-            )
-            self.db.add(year)
-            await self.db.flush()
-            previous = next((row for row in years if row.school_year < year.school_year), None)
-            skipped = 0
-            if data.copy_previous and previous:
-                document = await self.repo.document(previous)
-                latest = await self.db.scalar(
-                    select(TimetableTemplateVersion)
-                    .where(TimetableTemplateVersion.year_id == previous.id)
-                    .order_by(TimetableTemplateVersion.number.desc())
-                    .limit(1)
-                )
-                if latest:
-                    from app.schemas.timetable import TemplateBlock
-                    from app.services.timetable_templates import template_series
-
-                    for value in latest.blocks:
-                        block = TemplateBlock.model_validate(value)
-                        if block.kind == "kholle" or block.target_kind not in {
-                            "promotion",
-                            "halves",
-                            "thirds",
-                        }:
-                            skipped += 1
-                            continue
-                        block.key = uuid4().hex
-                        copied = template_series(block, data.settings, data.settings.start)
-                        if copied:
-                            validate_series(copied, data.settings)
-                            await self.repo.store_series(year.id, copied)
-                    document.series = []
-                old_weeks = teaching_weeks(document.settings)
-                new_weeks = list(teaching_weeks(data.settings))
-                for source in document.series:
-                    if not source.interval:
-                        continue
-                    monday = source.starts_on - timedelta(days=source.starts_on.weekday())
-                    index = old_weeks.get(monday, 1) - 1
-                    if index >= len(new_weeks):
-                        skipped += 1
-                        continue
-                    first = new_weeks[index] + timedelta(days=source.starts_on.weekday())
-                    while first <= data.settings.end and not teaching_day(first, data.settings):
-                        first += timedelta(weeks=source.interval)
-                    if first > data.settings.end:
-                        skipped += 1
-                        continue
-                    until = data.settings.end if source.until else None
-                    if source.until and source.until < document.settings.end:
-                        stop_index = max(0, sum(day <= source.until for day in old_weeks) - 1)
-                        until = min(
-                            new_weeks[min(stop_index, len(new_weeks) - 1)] + timedelta(days=6),
-                            data.settings.end,
-                        )
-                    identifier = uuid4().hex
-                    copied = source.model_copy(
-                        update={
-                            "id": identifier,
-                            "lineage": identifier,
-                            "starts_on": first,
-                            "until": until,
-                            "exceptions": {},
-                        }
-                    )
-                    validate_series(copied, data.settings)
-                    await self.repo.store_series(year.id, copied)
-            await record_event(
-                self.db,
-                "timetable.changed",
-                actor_user_id=actor.id,
-                resource_type="timetable",
-                resource_id=calendar.id,
-            )
-            return {"id": year.id, "revision": year.revision, "skipped": skipped}
-
     async def save_settings(
         self, actor: UserContext, identifier: int, version: Version, settings: YearSettings
     ) -> dict:
-        """Validate every retained block before accepting a changed draft grid or holiday set."""
+        """Change only dates, vacations and Saturday; retain hidden occurrences and exceptions."""
         async with self.db.begin():
             year = await self._year(identifier, actor, version)
-            if settings.start.year != year.school_year or not daily_slots(settings):
-                raise AuthError(422, "Gardez l’année de rentrée et au moins un demi-créneau.")
-            affected = list(
-                await self.db.scalars(
-                    select(TimetableYear).where(TimetableYear.school_year == year.school_year)
-                )
-            )
-            for item in affected:
-                document = await self.repo.document(item)
-                for series in document.series:
-                    validate_series(series, settings)
-            shared = await self.db.get(TimetableSchoolYear, year.school_year)
-            shared.settings, shared.revision = settings.model_dump(mode="json"), uuid4().hex
-            for item in affected:
-                item.settings = shared.settings
-                item.starts_on, item.ends_on = settings.start, settings.end
-                await self._changed(actor, item)
-            return {"revision": year.revision}
+            self.validate_year_bounds(year.school_year, settings)
+            previous = YearSettings.model_validate(year.settings)
+            for field in (
+                "day_start",
+                "day_end",
+                "session_minutes",
+                "breaks",
+                "lunch_start",
+                "lunch_end",
+            ):
+                if getattr(previous, field) != getattr(settings, field):
+                    raise AuthError(
+                        422, "Horaires, pauses, séance et self sont figés après création."
+                    )
+            year.settings = settings.model_dump(mode="json")
+            year.starts_on, year.ends_on = settings.start, settings.end
+            return await self._changed(actor, year)
+
+    async def preview_settings(
+        self, actor: UserContext, identifier: int, data: Version, settings: YearSettings
+    ) -> dict:
+        """Describe hidden and added segments before an administrator confirms date changes."""
+        async with self.db.begin():
+            await self.authorize(actor, write=True)
+            year = await self.db.get(TimetableYear, identifier)
+            if year is None:
+                raise AuthError(404, "Calendrier introuvable.")
+            await self._calendar(year.calendar_id, actor, write=True)
+            if year.revision != data.expected_revision:
+                raise AuthError(409, "Le calendrier a changé. Rechargez-le.")
+            self.validate_year_bounds(year.school_year, settings)
+            document = await self.repo.document(year)
+            before = {event["id"] for event in occurrences(document)}
+            document.settings = settings
+            after = {event["id"] for event in occurrences(document)}
+            return {"hidden": len(before - after), "added": len(after - before)}
 
     async def _changed(self, actor: UserContext, year: TimetableYear) -> dict:
-        """Advance the draft revision and journal a successful mutation in its transaction."""
+        """Advance the calendar revision and journal a successful mutation in its transaction."""
         year.revision = uuid4().hex
+        year.updated_at = self.auth.clock()
         await record_event(
             self.db,
             "timetable.changed",
@@ -544,128 +538,44 @@ class TimetableService:
     async def add_series(
         self, actor: UserContext, identifier: int, version: Version, block: SeriesFields
     ) -> dict:
-        """Create one validated series without modifying the published snapshot."""
+        """Create one validated series in the live annual calendar."""
         async with self.db.begin():
             year = await self._year(identifier, actor, version)
             calendar = await self.db.get(TimetableCalendar, year.calendar_id)
             document = await self.repo.document(year)
-            if len(document.series) >= 5000:
-                raise AuthError(422, "Limite de 5000 séries par année atteinte.")
             await self._references(block, calendar)
-            key = uuid4().hex
-            series = SeriesData(**block.model_dump(), id=key, lineage=key)
-            validate_series(series, document.settings)
-            await self.repo.store_series(year.id, series)
+            changed = apply_event_change(document, None, None, "one", block)
+            await self.persist_document(year.id, document, changed)
             return await self._changed(actor, year)
+
+    async def persist_document(
+        self, year_id: int, before: YearDocument, after: YearDocument
+    ) -> None:
+        """Persist only changed compact series in bulk; never materialize dated event rows."""
+        previous = {item.id: item for item in before.series}
+        retained = {item.id for item in after.series}
+        changed = [item for item in after.series if previous.get(item.id) != item]
+        removed = set(previous) - retained
+        if removed:
+            await self.db.execute(delete(TimetableSeries).where(TimetableSeries.id.in_(removed)))
+        if changed:
+            await self.repo.store_series_many(year_id, changed)
 
     async def edit_occurrence(
         self, actor: UserContext, identifier: int, series_id: str, data: OccurrenceEdit
     ) -> dict:
-        """Replace/cancel one occurrence or split a series, retaining independent exceptions."""
+        """Use the preview's business rules to replace or cancel one or future occurrences."""
         async with self.db.begin():
             year = await self._year(identifier, actor, data)
             document = await self.repo.document(year)
-            source = next((item for item in document.series if item.id == series_id), None)
-            if source is None or data.occurrence not in series_dates(source, document.settings):
-                raise AuthError(404, "Occurrence introuvable.")
-            if source.template_key is not None and data.scope != "one":
-                raise AuthError(
-                    422,
-                    "Modifiez cette occurrence seulement ou ouvrez l’édition de la semaine type.",
-                )
             if data.block:
                 calendar = await self.db.get(TimetableCalendar, year.calendar_id)
                 await self._references(data.block, calendar)
-            if data.scope == "one":
-                replacement = data.block
-                exceptions = {**source.exceptions, data.occurrence: replacement}
-                if len(exceptions) > 100:
-                    raise AuthError(422, "Limite de 100 exceptions par série atteinte.")
-                source = source.model_copy(update={"exceptions": exceptions})
-                validate_series(source, document.settings)
-                await self.repo.store_series(year.id, source)
-            else:
-                future = {
-                    day: value for day, value in source.exceptions.items() if day >= data.occurrence
-                }
-                source.exceptions = {
-                    day: value for day, value in source.exceptions.items() if day < data.occurrence
-                }
-                if data.block:
-                    key = uuid4().hex
-                    new = SeriesData(
-                        **data.block.model_dump(),
-                        id=key,
-                        lineage=source.lineage,
-                        exceptions=future,
-                        template_key=source.template_key,
-                        uid_date=source.uid_date if not data.block.interval else None,
-                        first_uid=source.first_uid
-                        if data.block.starts_on == source.starts_on
-                        else None,
-                    )
-                    validate_series(new, document.settings)
-                    if len(document.series) >= 5000:
-                        raise AuthError(422, "Limite de 5000 séries par année atteinte.")
-                    await self.repo.store_series(year.id, new)
-                if data.occurrence == source.starts_on:
-                    await self.db.execute(
-                        delete(TimetableSeries).where(TimetableSeries.id == source.id)
-                    )
-                else:
-                    source.until = data.occurrence - timedelta(days=1)
-                    await self.repo.store_series(year.id, source)
-            return await self._changed(actor, year)
-
-    async def publish(self, actor: UserContext, identifier: int, version: Version) -> dict:
-        """Atomically replace only this year's public-to-members snapshot after validation."""
-        async with self.db.begin():
-            year = await self._year(identifier, actor, version)
-            document = await self.repo.document(year)
-            calendar = await self.db.get(TimetableCalendar, year.calendar_id)
-            if calendar.is_paused or calendar.is_deleted:
-                raise AuthError(409, "Cet agenda est en pause. Réactivez-le pour publier.")
-            if calendar.promotion_id is None:
-                raise AuthError(422, "Affectez cet agenda à une promotion avant publication.")
-            for other in await self.repo.years(calendar.id):
-                if other.id == year.id or other.published is None:
-                    continue
-                previous = YearDocument.model_validate(other.published).settings
-                if (
-                    previous.start <= document.settings.end
-                    and document.settings.start <= previous.end
-                ):
-                    raise AuthError(
-                        422, "Deux années publiées du même agenda ne peuvent se chevaucher."
-                    )
-            for series in document.series:
-                validate_series(series, document.settings)
-                dates = series_dates(series, document.settings)
-                await self._references(
-                    series,
-                    calendar,
-                    historical=bool(dates and max(dates) < self.today()),
-                    allow_unavailable_teacher=True,
-                )
-                for replacement in series.exceptions.values():
-                    if replacement:
-                        await self._references(
-                            replacement,
-                            calendar,
-                            historical=replacement.starts_on < self.today(),
-                            allow_unavailable_teacher=True,
-                        )
-            year.published = document.model_dump(mode="json")
-            year.published_revision = year.revision
-            year.published_at = self.auth.clock()
-            await record_event(
-                self.db,
-                "timetable.published",
-                actor_user_id=actor.id,
-                resource_type="timetable",
-                resource_id=year.calendar_id,
+            changed = apply_event_change(
+                document, series_id, data.occurrence, data.scope, data.block
             )
-            return {"revision": year.revision}
+            await self.persist_document(year.id, document, changed)
+            return await self._changed(actor, year)
 
     async def _decorate(self, events: list[dict], *, include_roles: bool = False) -> list[dict]:
         """Batch labels only for already-authorized events, never a global private directory."""
@@ -699,10 +609,35 @@ class TimetableService:
                 )
             )
         }
+        custom_ids = {
+            event.get("target_number") for event in events if event.get("target_kind") == "custom"
+        }
+        custom_names = (
+            {
+                group.id: group.name
+                for group in await self.db.scalars(
+                    select(PromotionCustomGroup).where(PromotionCustomGroup.id.in_(custom_ids))
+                )
+            }
+            if custom_ids
+            else {}
+        )
         return [
             {
                 **event,
+                **(
+                    {
+                        "audience_label": custom_names.get(
+                            event.get("target_number"), "Groupe personnalisé"
+                        )
+                    }
+                    if event.get("target_kind") == "custom"
+                    else {}
+                ),
                 "title": event["title"] or subjects[event["subject_id"]].name,
+                "subject_label": subjects[event["subject_id"]].name
+                if event["subject_id"] is not None
+                else "Sans matière",
                 "color": subjects[event["subject_id"]].color
                 if event["subject_id"] is not None
                 else "#64748B",
@@ -723,36 +658,56 @@ class TimetableService:
         ]
 
     async def board(
-        self, actor: UserContext, calendar_ids: list[int], school_year: int | None, draft: bool
+        self,
+        actor: UserContext,
+        calendar_ids: list[int],
+        school_year: int | None,
+        preview_year: int | None = None,
+        proposal: EventPreview | None = None,
     ) -> dict:
-        """Read complete authorized promotions; staff receive only current published years."""
+        """Read authorized live events and administrator-only archives or unsaved previews."""
         async with self.db.begin():
             admin = await self.authorize(actor)
-            if draft and not admin:
-                raise AuthError(403, "Les brouillons sont réservés à l’administration.")
-            allowed = await self.repo.calendars(None if admin else actor.id)
+            if proposal is not None:
+                await self.authorize(actor, write=True)
+                preview_row = await self.db.get(TimetableYear, preview_year)
+                if preview_row is None:
+                    raise AuthError(404, "Calendrier introuvable.")
+                calendar_ids = [preview_row.calendar_id]
+            allowed = await self.repo.calendars(None if admin else actor.id, archives=admin)
             if not set(calendar_ids).issubset({row.id for row in allowed}):
                 raise AuthError(404, "Agenda introuvable.")
             selected = [row for row in allowed if row.id in calendar_ids]
             result, years, warnings = [], [], []
+            annual_rows = list(
+                await self.db.scalars(
+                    select(TimetableYear).where(TimetableYear.calendar_id.in_(calendar_ids))
+                )
+            )
+            loaded = await self.repo.documents(annual_rows)
             documents = {}
             for calendar in selected:
-                candidates = await self.repo.years(calendar.id)
-                for year in candidates:
-                    document = (
-                        await self.repo.document(year)
-                        if draft
-                        else (
-                            YearDocument.model_validate(year.published) if year.published else None
+                for year, document in loaded.values():
+                    if year.calendar_id != calendar.id:
+                        continue
+                    if school_year is not None and year.school_year != school_year:
+                        continue
+                    if not admin and not year.starts_on <= self.today() <= year.ends_on:
+                        continue
+                    if proposal is not None:
+                        if calendar.is_archived:
+                            raise AuthError(409, "Un calendrier archivé est en lecture seule.")
+                        if year.revision != proposal.expected_revision:
+                            raise AuthError(409, "Le calendrier a changé. Rechargez-le.")
+                        if proposal.block:
+                            await self._references(proposal.block, calendar)
+                        document = apply_event_change(
+                            document,
+                            proposal.series_id,
+                            proposal.occurrence,
+                            proposal.scope,
+                            proposal.block,
                         )
-                    )
-                    if document is None:
-                        continue
-                    if admin:
-                        if school_year is not None and year.school_year != school_year:
-                            continue
-                    elif not document.settings.start <= self.today() <= document.settings.end:
-                        continue
                     documents[year.id] = document
                     years.append(
                         {
@@ -761,7 +716,6 @@ class TimetableService:
                             "school_year": year.school_year,
                             "settings": document.settings.model_dump(mode="json"),
                             "revision": year.revision if admin else None,
-                            "published_revision": year.published_revision if admin else None,
                             "slots": daily_slots(document.settings),
                             "weeks": {
                                 day.isoformat(): number
@@ -772,7 +726,6 @@ class TimetableService:
                             else [],
                         }
                     )
-                    warnings.extend(cycle_warnings(document))
                     result.extend(
                         {
                             **event,
@@ -780,10 +733,11 @@ class TimetableService:
                             "promotion_id": calendar.promotion_id,
                             "year_id": year.id,
                             "school_year": year.school_year,
+                            "session_minutes": document.settings.session_minutes,
                         }
                         for event in occurrences(document)
                     )
-                    break
+
             members: dict[int, dict] = {}
             groups = []
             promotion_ids = {row.promotion_id for row in selected if row.promotion_id}
@@ -853,6 +807,41 @@ class TimetableService:
                             ],
                         }
                     )
+            if promotion_ids:
+                custom_members = list(
+                    await self.db.scalars(
+                        select(PromotionCustomGroupMember).where(
+                            PromotionCustomGroupMember.promotion_id.in_(promotion_ids),
+                            PromotionCustomGroupMember.user_id.in_(members),
+                        )
+                    )
+                )
+                for group in await self.db.scalars(
+                    select(PromotionCustomGroup)
+                    .where(PromotionCustomGroup.promotion_id.in_(promotion_ids))
+                    .order_by(PromotionCustomGroup.name)
+                ):
+                    student_ids = [
+                        item.user_id for item in custom_members if item.group_id == group.id
+                    ]
+                    groups.append(
+                        {
+                            "promotion_id": group.promotion_id,
+                            "kind": "custom",
+                            "number": group.id,
+                            "name": group.name,
+                            "is_active": group.is_active,
+                            "student_ids": student_ids,
+                        }
+                    )
+                    for pupil in student_ids:
+                        members[pupil]["assignments"].append(
+                            {
+                                "promotion_id": group.promotion_id,
+                                "kind": "custom",
+                                "number": group.id,
+                            }
+                        )
             if not admin:
                 result = [
                     event
@@ -874,26 +863,35 @@ class TimetableService:
                 ]
             events = await self._decorate(result, include_roles=True)
             warnings.extend(self._conflicts(events, groups, self.today()))
-            from app.services.teacher_availability import availability_warnings, effective_ranges
+            from app.services.teacher_availability import (
+                availability_settings,
+                availability_warnings,
+                effective_ranges,
+            )
 
-            settings_by_year = {
-                item["school_year"]: YearSettings.model_validate(item["settings"]) for item in years
+            explicit = {
+                (row.user_id, row.school_year): row.ranges
+                for row in await self.db.scalars(
+                    select(TeacherAvailability).where(
+                        TeacherAvailability.school_year.in_({item["school_year"] for item in years})
+                    )
+                )
             }
             availability = [
                 {
-                    "teacher_id": row.user_id,
-                    "school_year": row.school_year,
-                    "ranges": effective_ranges(row.ranges, settings_by_year[row.school_year]),
+                    "teacher_id": teacher,
+                    "school_year": number,
+                    "ranges": effective_ranges(
+                        explicit.get((teacher, number)), availability_settings(number)
+                    ),
                 }
-                for row in await self.db.scalars(
-                    select(TeacherAvailability).where(
-                        TeacherAvailability.user_id.in_({event["teacher_id"] for event in events}),
-                        TeacherAvailability.school_year.in_(
-                            {item["school_year"] for item in years}
-                        ),
-                    )
+                for teacher, number in (
+                    set(explicit)
+                    | {(event["teacher_id"], event["school_year"]) for event in events}
                 )
+                if teacher is not None
             ]
+
             warnings.extend(
                 availability_warnings(
                     events,
@@ -930,39 +928,17 @@ class TimetableService:
                     "severity": "warning",
                     "message": (
                         f"{name} est archivé et reste affecté à des séances futures. "
-                        "Remplacez cet enseignant dans la semaine type ou les événements concernés."
+                        "Remplacez cet enseignant dans les événements concernés."
                     ),
                 }
                 for identifier, name in unavailable.items()
             )
-            if years:
-                from app.services.timetable_templates import template_blocks
 
-                latest = await self.repo.latest_templates(set(documents)) if draft else {}
-                for item in years:
-                    version = latest.get(item["id"])
-                    item["template_blocks"] = (
-                        [
-                            block
-                            for block in version.blocks
-                            if block.get("kind") != "kholle"
-                            and block.get("target_kind", "promotion")
-                            in {"promotion", "halves", "thirds"}
-                        ]
-                        if version
-                        else [
-                            block.model_dump(mode="json")
-                            for block in template_blocks(
-                                documents[item["id"]],
-                                max(documents[item["id"]].settings.start, self.today()),
-                            )
-                        ]
-                    )
             commitments = (
                 await self._teacher_commitments(
                     set(calendar_ids),
                     {item["school_year"] for item in years},
-                    draft,
+                    admin,
                     None
                     if admin
                     else {
@@ -972,6 +948,24 @@ class TimetableService:
                 if years
                 else []
             )
+            from app.services.timetable_diagnostics import annual_diagnostics
+
+            for item in years:
+                related = [event for event in events if event["year_id"] == item["id"]]
+                item["hours"], diagnostics = annual_diagnostics(
+                    related,
+                    documents[item["id"]].settings,
+                    list(members.values()),
+                    groups,
+                    next(
+                        calendar.promotion_id
+                        for calendar in selected
+                        if calendar.id == item["calendar_id"]
+                    ),
+                    self.today(),
+                    documents[item["id"]].series,
+                )
+                issues.extend(diagnostics)
             return {
                 "teacher_commitments": commitments,
                 "years": years,
@@ -982,6 +976,7 @@ class TimetableService:
                         "promotion_id": calendar.promotion_id,
                         "revision": calendar.revision if admin else None,
                         "is_paused": calendar.is_paused,
+                        "is_archived": calendar.is_archived,
                     }
                     for calendar in selected
                 ],
@@ -997,7 +992,7 @@ class TimetableService:
         self,
         calendar_ids: set[int],
         school_years: set[int],
-        draft: bool,
+        include_private: bool,
         teacher_ids: set[int] | None,
     ) -> list[dict]:
         """Expose only external teacher booking identities and times for conflict previews.
@@ -1006,8 +1001,8 @@ class TimetableService:
         ----------
         calendar_ids, school_years
             Calendars already authorized by the board and their selected school years.
-        draft
-            Use preparations only for an authorized administrator requesting drafts.
+        include_private
+            Include private preparations only for an authorized administrator.
         teacher_ids
             Restrict staff reads to teachers on their authorized board; administrators may
             preview any newly selected teacher without fetching private pupil recipients.
@@ -1022,7 +1017,7 @@ class TimetableService:
         sources = [
             item
             for year in sorted(school_years)
-            for item in await self.repo.teaching_documents(year, draft=draft)
+            for item in await self.repo.teaching_documents(year, include_private=include_private)
             if item[0].calendar_id not in calendar_ids
         ]
         if not sources:
@@ -1175,39 +1170,54 @@ class TimetableService:
             roles = await self.auth.repo.roles(user.id)
             if not {"user", "teacher", "kholleur"}.intersection(roles):
                 raise AuthError(404, "Abonnement introuvable.")
+            from app.services.timetable_lifecycle import rollover
+
+            await rollover(self.db, self.today())
             events = []
             calendars = {calendar.id: calendar for calendar in await self.repo.calendars(user.id)}
             if calendars:
                 assignments: dict[int, set[tuple[str, int]]] = {}
-                for item in await self.db.scalars(
-                    select(PromotionGroupMember).where(
+                promotion_ids = {calendar.promotion_id for calendar in calendars.values()}
+                for promotion_id, kind, number in await self.db.execute(
+                    select(
+                        PromotionGroupMember.promotion_id,
+                        PromotionGroupMember.kind,
+                        PromotionGroupMember.group_number,
+                    )
+                    .where(
                         PromotionGroupMember.user_id == user.id,
-                        PromotionGroupMember.promotion_id.in_(
-                            {calendar.promotion_id for calendar in calendars.values()}
-                        ),
+                        PromotionGroupMember.promotion_id.in_(promotion_ids),
+                    )
+                    .union_all(
+                        select(
+                            PromotionCustomGroupMember.promotion_id,
+                            literal("custom"),
+                            PromotionCustomGroupMember.group_id,
+                        ).where(
+                            PromotionCustomGroupMember.user_id == user.id,
+                            PromotionCustomGroupMember.promotion_id.in_(promotion_ids),
+                        )
                     )
                 ):
-                    assignments.setdefault(item.promotion_id, set()).add(
-                        (item.kind, item.group_number)
-                    )
-                today = self.today().isoformat()
-                publications = await self.db.scalars(
-                    select(TimetableYear).where(
-                        TimetableYear.calendar_id.in_(calendars),
-                        TimetableYear.published.is_not(None),
-                        TimetableYear.published["settings"]["start"].astext <= today,
-                        TimetableYear.published["settings"]["end"].astext >= today,
+                    assignments.setdefault(promotion_id, set()).add((kind, number))
+                annual_rows = list(
+                    await self.db.scalars(
+                        select(TimetableYear).where(
+                            TimetableYear.calendar_id.in_(calendars),
+                            TimetableYear.starts_on <= self.today(),
+                            TimetableYear.ends_on >= self.today(),
+                        )
                     )
                 )
-                for year in publications:
+                for year, document in (await self.repo.documents(annual_rows)).values():
                     memberships = assignments.get(calendars[year.calendar_id].promotion_id, set())
-                    document = YearDocument.model_validate(year.published)
                     events.extend(
-                        {**event, "published_at": year.published_at}
+                        {**event, "updated_at": year.updated_at}
                         for event in occurrences(document)
                         if ("user" in roles and student_receives(event, user.id, memberships))
                         or ("user" not in roles and event["teacher_id"] == user.id)
                     )
+
             events = await self._decorate(events)
             calendar = Calendar()
             calendar.add("prodid", "-//Sophikron//Emploi du temps//FR")
@@ -1217,9 +1227,9 @@ class TimetableService:
                 event = Event()
                 event.add("uid", item["id"] + "@sophikron")
                 event.add(
-                    "dtstamp", item["published_at"] or datetime(2000, 1, 1, tzinfo=timezone.utc)
+                    "dtstamp", item["updated_at"] or datetime(2000, 1, 1, tzinfo=timezone.utc)
                 )
-                event.add("last-modified", item["published_at"])
+                event.add("last-modified", item["updated_at"])
                 event.add("dtstart", datetime.fromisoformat(item["start"]).astimezone(timezone.utc))
                 event.add("dtend", datetime.fromisoformat(item["end"]).astimezone(timezone.utc))
                 event.add("summary", item["title"])
@@ -1263,7 +1273,7 @@ def audiences_overlap(left: dict, right: dict, groups: dict[tuple, set[int]]) ->
     )
     if "promotion" in {left_kind, right_kind}:
         return True
-    if left_kind == right_kind:
+    if left_kind == right_kind and left_kind != "custom":
         field = "target_user_id" if left_kind == "student" else "target_number"
         return left.get(field) == right.get(field)
 

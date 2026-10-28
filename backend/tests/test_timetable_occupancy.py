@@ -107,6 +107,6 @@ def test_split_sessions_preserve_breaks_seconds_and_union_overlapping_weekly_ran
         {},
     )
     assert effective_ranges(raw, settings()) == [
-        {"weekday": 0, "start": 28800, "end": 35400},
-        {"weekday": 0, "start": 36600, "end": 39600},
+        {"weekday": 0, "start": 28800, "end": 39600},
+        {"weekday": 5, "start": 28800, "end": 32400},
     ]

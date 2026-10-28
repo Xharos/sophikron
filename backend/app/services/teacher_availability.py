@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.models import (
     Promotion,
+    PromotionCustomGroupMember,
     PromotionGroupMember,
     Role,
     Subject,
@@ -27,6 +28,19 @@ from app.services.timetable_engine import PARIS, daily_slots, occurrences
 from app.services.timetable_occupancy import fully_occupied_ranges
 
 
+def availability_settings(school_year: int) -> YearSettings:
+    """Provide a fixed staff grid independent of every promotion calendar and its pauses."""
+    return YearSettings(
+        start=date(school_year, 9, 1),
+        end=date(school_year + 1, 8, 31),
+        day_start=28800,
+        day_end=68400,
+        session_minutes=60,
+        breaks=[],
+        saturday=True,
+    )
+
+
 def open_ranges(settings: YearSettings) -> list[dict]:
     """Return every open weekday interval, excluding breaks and disabled Saturdays.
 
@@ -40,17 +54,9 @@ def open_ranges(settings: YearSettings) -> list[dict]:
     list[dict]
         Available weekday intervals, including any final partial session.
     """
-    intervals, previous = [], settings.day_start
-    for pause in sorted(settings.breaks, key=lambda item: item.start):
-        if previous < pause.start:
-            intervals.append((previous, pause.start))
-        previous = pause.end
-    if previous < settings.day_end:
-        intervals.append((previous, settings.day_end))
     return [
-        {"weekday": weekday, "start": start, "end": end}
-        for weekday in range(6 if settings.saturday else 5)
-        for start, end in intervals
+        {"weekday": weekday, "start": 28800, "end": 43200 if weekday == 5 else 68400}
+        for weekday in range(6)
     ]
 
 
@@ -149,6 +155,8 @@ def teaching_audience_label(event: dict) -> str:
         Public group description; individual sessions never include a pupil's name.
     """
     kind, number = event.get("target_kind", "promotion"), event.get("target_number")
+    if kind == "custom":
+        return event.get("audience_label", "Groupe personnalisé")
     if kind == "halves":
         return f"Demi-groupe {chr(64 + number)}" if number else "Demi-groupe"
     if kind == "thirds":
@@ -201,9 +209,7 @@ class TeacherAvailabilityService:
             admin = await self.timetable.authorize(actor)
             years = list(
                 await self.db.scalars(
-                    select(TimetableSchoolYear)
-                    .where(TimetableSchoolYear.settings.is_not(None))
-                    .order_by(TimetableSchoolYear.school_year.desc())
+                    select(TimetableSchoolYear).order_by(TimetableSchoolYear.school_year.desc())
                 )
             )
             return {
@@ -219,8 +225,8 @@ class TeacherAvailabilityService:
                 "years": [
                     {
                         "school_year": row.school_year,
-                        "settings": row.settings,
-                        "slots": daily_slots(YearSettings.model_validate(row.settings)),
+                        "settings": availability_settings(row.school_year).model_dump(mode="json"),
+                        "slots": daily_slots(availability_settings(row.school_year)),
                     }
                     for row in years
                 ],
@@ -234,7 +240,7 @@ class TeacherAvailabilityService:
         *,
         include_occupancy: bool = False,
     ) -> dict:
-        """Combine teaching assignments without exposing pupil rosters or drafts to staff.
+        """Combine teaching assignments without exposing pupil rosters or include_privates to staff.
 
         Parameters
         ----------
@@ -250,17 +256,17 @@ class TeacherAvailabilityService:
         Returns
         -------
         dict
-            Effective availability and assigned events, draft for admin and published for staff.
+            Availability and live assignments; administrators also see private preparations.
         """
         async with self.db.begin():
             admin = await self.timetable.authorize(actor)
             common = await self.db.get(TimetableSchoolYear, school_year)
-            if common is None or common.settings is None:
+            if common is None:
                 raise AuthError(404, "Configurez d’abord les règles de cette année scolaire.")
             teachers = await self.teachers()
             if not set(teacher_ids).issubset({item["id"] for item in teachers}):
                 raise AuthError(404, "Enseignant introuvable.")
-            settings = YearSettings.model_validate(common.settings)
+            settings = availability_settings(school_year)
             patterns = {
                 row.user_id: row
                 for row in await self.db.scalars(
@@ -271,7 +277,9 @@ class TeacherAvailabilityService:
                 )
             }
             events = []
-            documents = await self.timetable.repo.teaching_documents(school_year, draft=admin)
+            documents = await self.timetable.repo.teaching_documents(
+                school_year, include_private=admin
+            )
             calendar_rows = (
                 list(
                     await self.db.execute(
@@ -294,6 +302,7 @@ class TeacherAvailabilityService:
                 calendar.id: f"{promotion} {promotion_year}" if promotion else calendar.name
                 for calendar, promotion, promotion_year, _ in calendar_rows
             }
+            calendar_names = {calendar.id: calendar.name for calendar, _, _, _ in calendar_rows}
             participating = {
                 calendar.id: calendar.promotion_id
                 for calendar, _, _, active in calendar_rows
@@ -357,7 +366,12 @@ class TeacherAvailabilityService:
                     {
                         **{key: value for key, value in event.items() if key not in private_fields},
                         "audience_label": teaching_audience_label(event),
-                        "calendar_label": labels[event["calendar_id"]],
+                        "calendar_label": (
+                            f"{calendar_names[event['calendar_id']]} · "
+                            f"{labels[event['calendar_id']]}"
+                            if calendar_names[event["calendar_id"]] != labels[event["calendar_id"]]
+                            else labels[event["calendar_id"]]
+                        ),
                     }
                     for event in decorated
                 ],
@@ -411,6 +425,14 @@ class TeacherAvailabilityService:
                 memberships.setdefault(row.promotion_id, {}).setdefault(
                     (row.kind, row.group_number), set()
                 ).add(row.user_id)
+            for row in await self.db.scalars(
+                select(PromotionCustomGroupMember).where(
+                    PromotionCustomGroupMember.promotion_id.in_(rosters)
+                )
+            ):
+                memberships.setdefault(row.promotion_id, {}).setdefault(
+                    ("custom", row.group_id), set()
+                ).add(row.user_id)
         ranges = fully_occupied_ranges(
             events,
             {identifier: rosters.get(promotions[identifier], set()) for identifier in events},
@@ -441,7 +463,7 @@ class TeacherAvailabilityService:
             await self.auth._lifecycle_lock()
             await self.timetable.authorize(actor, write=True)
             common = await self.db.get(TimetableSchoolYear, school_year, with_for_update=True)
-            if common is None or common.settings is None:
+            if common is None:
                 raise AuthError(404, "Année scolaire introuvable.")
             if teacher_id not in {item["id"] for item in await self.teachers()}:
                 raise AuthError(404, "Enseignant introuvable.")
@@ -452,15 +474,14 @@ class TeacherAvailabilityService:
                 raise AuthError(
                     409, "Les disponibilités ont changé. Rechargez-les avant de continuer."
                 )
+            common.used = True
             if data.ranges is None:
                 if row:
                     await self.db.delete(row)
                 return {"revision": None}
-            settings = YearSettings.model_validate(common.settings)
+            settings = availability_settings(school_year)
             if any(
-                item.weekday >= (6 if settings.saturday else 5)
-                or item.start < settings.day_start
-                or item.end > settings.day_end
+                item.start < 28800 or item.end > (43200 if item.weekday == 5 else 68400)
                 for item in data.ranges
             ):
                 raise AuthError(

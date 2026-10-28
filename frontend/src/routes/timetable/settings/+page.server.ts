@@ -10,6 +10,8 @@ export const load: PageServerLoad = async (event) => {
 	try {
 		return {
 			configuration: await api<{
+				today: string;
+				preferences: { auto_archive: boolean; revision: string };
 				years: CommonTimetableYear[];
 				rooms: { id: number; name: string; revision: string }[];
 			}>(event, '/timetable/configuration')

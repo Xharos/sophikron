@@ -1,4 +1,4 @@
-"""Whole-class agendas, annual drafts, normalized series and opaque subscriptions."""
+"""Annual live calendars, compact recurring series and opaque personal subscriptions."""
 
 from datetime import date, datetime
 
@@ -10,6 +10,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Identity,
+    Index,
     Integer,
     LargeBinary,
     String,
@@ -23,17 +24,26 @@ from app.core.database import Base
 
 
 class TimetableCalendar(Base):
-    """Keep a reusable agenda independently of its manual promotion assignment."""
+    """Keep one annual calendar with a reversible promotion assignment and archive state."""
 
     __tablename__ = "timetable_calendars"
+    __table_args__ = (
+        Index(
+            "uq_timetable_active_promotion",
+            "promotion_id",
+            unique=True,
+            postgresql_where=text("NOT is_archived AND promotion_id IS NOT NULL"),
+        ),
+    )
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
+    name_key: Mapped[str] = mapped_column(String(300), unique=True)
     promotion_id: Mapped[int | None] = mapped_column(
         ForeignKey("sophikron.promotions.id", ondelete="RESTRICT"), index=True
     )
     revision: Mapped[str] = mapped_column(String(32))
     is_paused: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
-    is_deleted: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    is_archived: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
 
 
 class TimetableRoom(Base):
@@ -48,11 +58,11 @@ class TimetableRoom(Base):
 
 
 class TimetableSchoolYear(Base):
-    """Share one editable establishment configuration across all annual agendas."""
+    """Identify an immutable academic year and remember whether it was ever used."""
 
     __tablename__ = "timetable_school_years"
     school_year: Mapped[int] = mapped_column(Integer, primary_key=True)
-    settings: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    used: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
     revision: Mapped[str] = mapped_column(String(32))
 
 
@@ -72,11 +82,11 @@ class TeacherAvailability(Base):
 
 
 class TimetableYear(Base):
-    """Keep editable settings separate from the last published annual snapshot."""
+    """Store the sole annual configuration and the revision of its live recurring events."""
 
     __tablename__ = "timetable_years"
     __table_args__ = (
-        UniqueConstraint("calendar_id", "school_year"),
+        UniqueConstraint("calendar_id"),
         CheckConstraint("ends_on >= starts_on", name="period"),
     )
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
@@ -90,9 +100,7 @@ class TimetableYear(Base):
     ends_on: Mapped[date] = mapped_column(Date)
     settings: Mapped[dict] = mapped_column(JSONB)
     revision: Mapped[str] = mapped_column(String(32))
-    published_revision: Mapped[str | None] = mapped_column(String(32))
-    published: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class TimetableSeries(Base):
@@ -127,20 +135,12 @@ class TimetableSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
-class TimetableTemplateVersion(Base):
-    """Keep immutable weekly pattern snapshots and their successive effective dates."""
+class TimetablePreferences(Base):
+    """Version the establishment's annual automatic archive policy."""
 
-    __tablename__ = "timetable_template_versions"
-    __table_args__ = (
-        UniqueConstraint("year_id", "number"),
-        CheckConstraint("number > 0", name="number"),
-    )
-    id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    year_id: Mapped[int] = mapped_column(
-        ForeignKey("sophikron.timetable_years.id", ondelete="CASCADE"), index=True
-    )
-    number: Mapped[int] = mapped_column(Integer)
-    effective_on: Mapped[date] = mapped_column(Date)
-    effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
-    blocks: Mapped[list] = mapped_column(JSONB)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    __tablename__ = "timetable_preferences"
+    __table_args__ = (CheckConstraint("id = 1", name="singleton"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    auto_archive: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
+    last_rollover_year: Mapped[int | None] = mapped_column(Integer)
+    revision: Mapped[str] = mapped_column(String(32))

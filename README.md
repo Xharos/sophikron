@@ -4,12 +4,13 @@
 
 Share teaching materials, publish educational pages and create interactive content.
 
-Private timetables at `/timetable` provide agenda management, common establishment settings,
-full-screen group/student previews, dated weekly templates, drafts and publication. The permanent
-`prof` agenda provides annual teacher availability, selected teacher overlays and weekly teaching-hour totals.
+Private timetables at `/timetable` provide annual calendars, live diffusion, recurring dated events,
+full-screen group/student previews, custom option groups, lunch checks, annual hour totals and administrator-only archives.
+Rooms and academic-year labels have a shared catalogue; daily rules belong to each calendar. The
+permanent `prof` agenda provides independent annual availability and teaching-calendar overlays.
 Members generate a personal calendar subscription from
 `/me`; students use subscriptions without access to the timetable web interface. See
-[timetable documentation](docs/timetable.md) for migration `0011_teacher_availability`, permissions and setup.
+[timetable documentation](docs/timetable.md) for migrations, automatic September archival, permissions and setup.
 
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />

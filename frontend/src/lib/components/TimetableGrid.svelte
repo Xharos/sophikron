@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { Calendar, TimeGrid, Interaction } from '@event-calendar/core';
 	import '@event-calendar/core/index.css';
 	import {
@@ -25,7 +25,7 @@
 		oncopy,
 		onpaste,
 		canPaste = false,
-		templateMode = false,
+		dateless = false,
 		availabilityMode = false,
 		occupiedRanges = [],
 		onrangechange,
@@ -37,15 +37,27 @@
 		editable: boolean;
 		oncreate: (date: string, slot: number) => void;
 		onopen: (event: TimetableEvent) => void;
-		onmove: (event: TimetableEvent, date: string, slot: number, duration?: number) => void;
+		onmove: (
+			event: TimetableEvent,
+			date: string,
+			slot: number,
+			duration?: number,
+			exact?: { start: number; end: number }
+		) => void;
 		oncopy: (event: TimetableEvent) => void;
 		onpaste: (date: string, slot: number) => void;
 		canPaste?: boolean;
-		templateMode?: boolean;
+		dateless?: boolean;
 		availabilityMode?: boolean;
 		occupiedRanges?: AvailabilityRange[];
 		onrangechange?: (event: TimetableEvent, day: string, start: number, end: number) => void;
-		onresize?: (event: TimetableEvent, day: string, slot: number, duration: number) => void;
+		onresize?: (
+			event: TimetableEvent,
+			day: string,
+			slot: number,
+			duration: number,
+			exact?: { start: number; end: number }
+		) => void;
 	} = $props();
 	let mounted = $state(false);
 	let availableHeight = $state(0);
@@ -60,6 +72,130 @@
 		y: number;
 	} | null>(null);
 	const instructionsId = $props.id();
+	let creationPress: { id: number; x: number; y: number; touch: boolean } | null = null;
+	let creationTimer: ReturnType<typeof setTimeout> | undefined;
+	let suppressCreationClickUntil = 0;
+	let creationPreview = $state<{
+		day: string;
+		slot: number;
+		left: number;
+		top: number;
+		width: number;
+		height: number;
+		start: number;
+		end: number;
+	} | null>(null);
+	let creationActive = false;
+	let cancelledCreationPointer: number | null = null;
+	/** Cancel a pending hold or an active creation without changing calendar data. */
+	function cancelCreation(): void {
+		clearTimeout(creationTimer);
+		if (creationPress && grid?.hasPointerCapture(creationPress.id))
+			grid.releasePointerCapture(creationPress.id);
+		creationPress = null;
+		creationActive = false;
+		creationPreview = null;
+	}
+	/** Snap a complete session to the pointer, respecting Saturday availability bounds. */
+	function positionCreation(x: number, y: number): void {
+		const point = pointAt(x, y, null);
+		const year = years[0];
+		if (!point || !year) {
+			creationPreview = null;
+			return;
+		}
+		const weekday = (new Date(`${point.day}T12:00:00Z`).getUTCDay() + 6) % 7;
+		const closing = availabilityMode && weekday === 5 ? 43200 : year.settings.day_end;
+		const days = [...grid.querySelectorAll<HTMLElement>('.ec-body .ec-day')];
+		const bounds = days[weekday]?.getBoundingClientRect();
+		const first = Math.floor(year.settings.day_start / 3600) * 3600;
+		const span = Math.ceil(year.settings.day_end / 3600) * 3600 - first;
+		let last = year.slots.length - 2;
+		while (last >= 0 && year.slots[last + 1][1] > closing) last--;
+		if (!bounds || last < 0 || y >= bounds.top + (bounds.height * (closing - first)) / span) {
+			creationPreview = null;
+			return;
+		}
+		const slot = Math.min(point.slot, last);
+		const start = year.slots[slot][0],
+			end = year.slots[slot + 1][1];
+		creationPreview = {
+			day: point.day,
+			slot,
+			left: bounds.left + 2,
+			width: bounds.width - 4,
+			top: bounds.top + (bounds.height * (start - first)) / span,
+			height: (bounds.height * (end - start)) / span,
+			start,
+			end
+		};
+	}
+	/** Start a hold only on the empty grid, preserving interactions with existing events. */
+	function beginCreation(event: PointerEvent): void {
+		// A fresh press is a new action, not the synthetic click following a completed drag.
+		suppressCreationClickUntil = 0;
+		if (
+			!editable ||
+			event.button !== 0 ||
+			!event.isPrimary ||
+			document.querySelector('dialog[open]')
+		)
+			return;
+		const point = pointAt(event.clientX, event.clientY, event.target);
+		if (!point || events.some((item) => item.id === point.eventId)) return;
+		cancelCreation();
+		cancelledCreationPointer = null;
+		creationPress = {
+			id: event.pointerId,
+			x: event.clientX,
+			y: event.clientY,
+			touch: event.pointerType === 'touch'
+		};
+		creationTimer = setTimeout(() => {
+			if (!creationPress || !editable) return;
+			creationActive = true;
+			grid.setPointerCapture(creationPress.id);
+			positionCreation(creationPress.x, creationPress.y);
+		}, 350);
+	}
+	function moveCreation(event: PointerEvent): void {
+		if (!creationPress || event.pointerId !== creationPress.id) return;
+		if (
+			!creationActive &&
+			creationPress.touch &&
+			Math.hypot(event.clientX - creationPress.x, event.clientY - creationPress.y) > 8
+		) {
+			cancelCreation();
+			return;
+		}
+		creationPress.x = event.clientX;
+		creationPress.y = event.clientY;
+		if (creationActive) {
+			event.preventDefault();
+			positionCreation(event.clientX, event.clientY);
+		}
+	}
+	function finishCreation(event: PointerEvent): void {
+		if (event.pointerId === cancelledCreationPointer) {
+			cancelledCreationPointer = null;
+			suppressCreationClickUntil = Date.now() + 500;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+			return;
+		}
+		if (!creationPress || event.pointerId !== creationPress.id) return;
+		if (!creationActive) {
+			cancelCreation();
+			return;
+		}
+		event.preventDefault();
+		event.stopImmediatePropagation();
+		positionCreation(event.clientX, event.clientY);
+		const target = creationPreview;
+		suppressCreationClickUntil = Date.now() + 500;
+		cancelCreation();
+		if (target && editable) oncreate(target.day, target.slot);
+	}
 	function pointAt(x: number, y: number, target: EventTarget | null): typeof pointer {
 		const settings = years[0]?.settings;
 		if (!settings || !grid) return null;
@@ -112,6 +248,12 @@
 		menu = null;
 	}
 	function keyboard(event: KeyboardEvent): void {
+		if (event.key === 'Escape' && creationPress) {
+			event.preventDefault();
+			cancelledCreationPointer = creationPress.id;
+			cancelCreation();
+			return;
+		}
 		if (
 			!editable ||
 			availabilityMode ||
@@ -175,12 +317,17 @@
 	}
 	$effect(() => {
 		void date;
-		void templateMode;
+		void dateless;
 		pointer = null;
 		menu = null;
+		untrack(cancelCreation);
+	});
+	$effect(() => {
+		if (!editable) untrack(cancelCreation);
 	});
 	onMount(() => {
 		mounted = true;
+		return cancelCreation;
 	});
 	function nearestSlot(seconds: number): number {
 		let best = 0;
@@ -239,11 +386,26 @@
 					};
 				})
 			: [];
+		const selfWindow =
+			settings && years[0]?.id !== 0 && !dateless
+				? Array.from({ length: settings.saturday ? 6 : 5 }, (_, index) => {
+						const day = shiftTimetableDate(mondayOf(date), index);
+						return {
+							id: `self-${day}`,
+							title: 'Self ouvert · cours autorisés',
+							start: `${day}T${timetableClock(settings.lunch_start ?? 43200)}`,
+							end: `${day}T${timetableClock(settings.lunch_end ?? 50400)}`,
+							display: 'background' as const,
+							backgroundColor: 'var(--color-success-soft)',
+							classNames: ['timetable-lunch']
+						};
+					})
+				: [];
 		return {
 			view: 'timeGridWeek',
 			date,
 			firstDay: 1,
-			dayHeaderFormat: templateMode
+			dayHeaderFormat: dateless
 				? { weekday: 'long' }
 				: { weekday: 'short', day: 'numeric', month: 'short' },
 			locale: 'fr-FR',
@@ -315,8 +477,9 @@
 			slotLabelFormat: (value) => {
 				return `${String(value.getHours()).padStart(2, '0')} h`;
 			},
-			events: [...displayed, ...pauses, ...occupied],
+			events: [...displayed, ...pauses, ...occupied, ...selfWindow],
 			dateClick: (info) => {
+				if (creationActive || Date.now() < suppressCreationClickUntil) return;
 				if (!editable || !(info.jsEvent instanceof MouseEvent)) return;
 				const bounds = info.dayEl.getBoundingClientRect();
 				const first = Math.floor((settings?.day_start ?? 28800) / 3600) * 3600;
@@ -347,7 +510,14 @@
 					seconds -
 					clockSeconds(event.start.slice(11, 19));
 				const day = `${moved.getFullYear()}-${String(moved.getMonth() + 1).padStart(2, '0')}-${String(moved.getDate()).padStart(2, '0')}`;
-				onmove(event, day, nearestSlot(logical));
+				const exact =
+					event.start_time !== null && event.start_time !== undefined
+						? {
+								start: seconds,
+								end: seconds + (event.end_time ?? event.start_time) - event.start_time
+							}
+						: undefined;
+				onmove(event, day, nearestSlot(logical), undefined, exact);
 			},
 			eventResize: (info) => {
 				const event = events.find((item) => item.id === String(info.event.id));
@@ -366,11 +536,16 @@
 					end.getSeconds() +
 					(end.getDate() !== start.getDate() ? 86400 : 0);
 				const resized = resizedTimetableSlots(event, first, last, years[0].slots);
+				const exact =
+					event.start_time !== null && event.start_time !== undefined
+						? { start: first, end: last }
+						: undefined;
 				(onresize ?? onmove)(
 					event,
 					event.start.slice(0, 10),
 					resized.start_slot,
-					resized.duration_slots
+					resized.duration_slots,
+					exact
 				);
 			}
 		};
@@ -384,6 +559,10 @@
 
 <svelte:window
 	onkeydown={keyboard}
+	onpointermove={moveCreation}
+	onpointerupcapture={finishCreation}
+	onpointercancel={cancelCreation}
+	onblur={cancelCreation}
 	onpointerdown={(event) => {
 		if (
 			menu &&
@@ -402,6 +581,14 @@
 	aria-label="Grille de l’emploi du temps"
 	aria-describedby={instructionsId}
 	tabindex="0"
+	onpointerdowncapture={beginCreation}
+	onclickcapture={(event) => {
+		if (Date.now() < suppressCreationClickUntil) {
+			suppressCreationClickUntil = 0;
+			event.preventDefault();
+			event.stopImmediatePropagation();
+		}
+	}}
 	onpointermove={(event) => {
 		if (!menu) pointer = pointAt(event.clientX, event.clientY, event.target);
 	}}
@@ -418,6 +605,21 @@
 	{#if mounted && years[0]?.slots.length}<Calendar plugins={[TimeGrid, Interaction]} {options} />
 	{:else}<p role="status" class="p-5">Préparation de la grille…</p>{/if}
 </div>
+{#if creationPreview}<div
+		class="creation-preview"
+		aria-hidden="true"
+		style:left={`${creationPreview.left}px`}
+		style:top={`${creationPreview.top}px`}
+		style:width={`${creationPreview.width}px`}
+		style:height={`${creationPreview.height}px`}
+	>
+		<strong>{availabilityMode ? 'Nouvelle disponibilité' : 'Nouvelle séance'}</strong>
+		<span
+			>{timetableClock(creationPreview.start).slice(0, 5)}–{timetableClock(
+				creationPreview.end
+			).slice(0, 5)}</span
+		>
+	</div>{/if}
 <p id={instructionsId} class="is-sr-only">
 	{#if availabilityMode}Déplacez une disponibilité ou redimensionnez ses bordures. Cliquez dessus
 		pour modifier ses horaires au clavier ou la supprimer.
@@ -447,6 +649,22 @@
 	</div>{/if}
 
 <style>
+	.creation-preview {
+		position: fixed;
+		z-index: 25;
+		pointer-events: none;
+		border-radius: 7px;
+		padding: 6px;
+		color: white;
+		background: var(--color-primary);
+		opacity: 0.85;
+		box-shadow: inset 0 0 0 2px currentColor;
+		font-size: 0.75rem;
+	}
+	.creation-preview span,
+	.creation-preview strong {
+		display: block;
+	}
 	.timetable-context-menu {
 		position: fixed;
 		z-index: 30;
@@ -577,6 +795,10 @@
 	.timetable-grid :global(.ec-bg-event .ec-event-body) {
 		flex: initial;
 		text-align: center;
+	}
+	.timetable-grid :global(.ec-bg-event.timetable-lunch) {
+		background-image: none;
+		pointer-events: none;
 	}
 	.timetable-grid :global(.ec-bg-event.timetable-occupied) {
 		opacity: 1;

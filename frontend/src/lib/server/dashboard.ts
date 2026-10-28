@@ -51,6 +51,9 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	let path: string;
 	switch (resource) {
+		case 'customPromotionGroups':
+			path = `/promotion-groups/${identifier(event.url.searchParams.get('id'))}/custom/groups`;
+			break;
 		case 'promotionGroups':
 			path = `/promotion-groups/${identifier(event.url.searchParams.get('id'))}`;
 			break;
@@ -137,6 +140,22 @@ export async function commandDashboard(event: RequestEvent): Promise<unknown> {
 				event,
 				`/promotion-groups/${identifier(input.id)}/${partitionKind(input.kind)}/preview`,
 				'POST',
+				input.data
+			);
+		case 'saveCustomGroup': {
+			const groupId = input.groupId === 0 ? 0 : identifier(input.groupId);
+			return api(
+				event,
+				`/promotion-groups/${identifier(input.id)}/custom/${groupId}`,
+				'PUT',
+				input.data
+			);
+		}
+		case 'deleteCustomGroup':
+			return api(
+				event,
+				`/promotion-groups/${identifier(input.id)}/custom/${identifier(input.groupId)}`,
+				'DELETE',
 				input.data
 			);
 		case 'saveGroups':

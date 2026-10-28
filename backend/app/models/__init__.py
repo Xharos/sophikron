@@ -11,7 +11,13 @@ from app.models.auth import (
     User,
     UserRole,
 )
-from app.models.groups import PromotionGroup, PromotionGroupMember, PromotionPartition
+from app.models.groups import (
+    PromotionCustomGroup,
+    PromotionCustomGroupMember,
+    PromotionGroup,
+    PromotionGroupMember,
+    PromotionPartition,
+)
 from app.models.lessons import (
     Lesson,
     LessonCollaborator,
@@ -35,22 +41,24 @@ from app.models.statistics import LoginStatistic
 from app.models.timetable import (
     TeacherAvailability,
     TimetableCalendar,
+    TimetablePreferences,
     TimetableRoom,
     TimetableSchoolYear,
     TimetableSeries,
     TimetableSubscription,
-    TimetableTemplateVersion,
     TimetableYear,
 )
 
 __all__ = [
+    "PromotionCustomGroup",
+    "PromotionCustomGroupMember",
+    "TimetablePreferences",
     "TeacherAvailability",
     "TimetableCalendar",
     "TimetableRoom",
     "TimetableSchoolYear",
     "TimetableSeries",
     "TimetableSubscription",
-    "TimetableTemplateVersion",
     "TimetableYear",
     "SiteSettings",
     "Subject",

@@ -31,31 +31,30 @@ def test_teaching_audience_labels_omit_pupil_identities(event: dict, expected: s
     assert teaching_audience_label(event) == expected
 
 
-def test_default_availability_excludes_breaks_and_closed_days() -> None:
-    """Cover full opening hours, including the final partial session and optional Saturday."""
+def test_default_availability_ignores_calendar_breaks_and_always_opens_saturday() -> None:
+    """Use 8–19 Monday–Friday and 8–12 Saturday, with no recess or lunch exclusions."""
     rules = settings(day_end=61500)
     ranges = open_ranges(rules)
-    assert {item["weekday"] for item in ranges} == set(range(5))
-    assert ranges[0] == {"weekday": 0, "start": 28800, "end": 35400}
-    assert ranges[-1]["end"] == 61500
-    assert len(open_ranges(settings(saturday=True))) == len(ranges) * 6 // 5
+    assert ranges == [
+        {"weekday": day, "start": 28800, "end": 43200 if day == 5 else 68400} for day in range(6)
+    ]
     assert effective_ranges(None, rules) == ranges
     assert effective_ranges([], rules) == []
 
 
-def test_changed_rules_clip_patterns_and_merge_overlaps_without_reopening_days() -> None:
-    """Split a large interval at pauses, merge duplicates and clip closed Saturdays."""
+def test_explicit_ranges_merge_and_clip_to_the_fixed_staff_grid() -> None:
+    """Keep noon and Saturday morning even if the calendar has pauses or closes Saturday."""
     result = effective_ranges(
         [
             {"weekday": 0, "start": 28000, "end": 45000},
-            {"weekday": 0, "start": 30000, "end": 42000},
-            {"weekday": 5, "start": 28800, "end": 35400},
+            {"weekday": 0, "start": 30000, "end": 50000},
+            {"weekday": 5, "start": 28800, "end": 50000},
         ],
         settings(),
     )
     assert result == [
-        {"weekday": 0, "start": 28800, "end": 35400},
-        {"weekday": 0, "start": 36600, "end": 43200},
+        {"weekday": 0, "start": 28800, "end": 50000},
+        {"weekday": 5, "start": 28800, "end": 43200},
     ]
 
 

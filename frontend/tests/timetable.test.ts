@@ -2,29 +2,25 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	clockSeconds,
+	currentSchoolYear,
+	preferredSchoolYear,
 	defaultTimetableSettings,
+	timetableDayBalance,
 	isoWeek,
 	mondayOf,
 	shiftTimetableDate,
 	timetableClock,
-	weeklyEvents,
 	timetableTree,
 	nodeReceives,
 	teachingHours,
-	weeklySubjectHours,
-	weeklyIssues,
-	weeklySignature,
 	nearestTimetableSlot,
 	resizedTimetableSlots,
 	orderedTimetableTeachers,
 	timetableAudienceLabel,
 	timetableConflicts,
-	weeklyConflicts,
-	type WeeklyBlock,
 	type TimetableMember,
 	type TimetableGroup,
-	type TimetableEvent,
-	type TimetableYear
+	type TimetableEvent
 } from '../src/lib/timetable.ts';
 
 test('session text identifies whole classes, half groups, thirds and kholle groups', () => {
@@ -49,54 +45,64 @@ test('exact half-session seconds survive display and parsing', () => {
 	assert.equal(timetableClock(8 * 3600 + 55 * 30), '08:27:30');
 	assert.equal(clockSeconds('08:27:30'), 30450);
 });
+
+test('calendar creation uses the requested school hours, session, self and recess defaults', () => {
+	const settings = defaultTimetableSettings(2026);
+	assert.equal(settings.day_start, 28800);
+	assert.equal(settings.day_end, 68100);
+	assert.equal(settings.session_minutes, 55);
+	assert.deepEqual(settings.breaks, [
+		{ start: 35400, end: 36600 },
+		{ start: 57000, end: 58200 }
+	]);
+	assert.equal(settings.lunch_start, 43200);
+	assert.equal(settings.lunch_end, 50400);
+});
+
+test('daily layout exposes incomplete sessions and does not count overlapping pauses twice', () => {
+	const settings = { ...defaultTimetableSettings(2026), day_end: 68400 };
+	assert.deepEqual(timetableDayBalance(settings), {
+		sessions: 9,
+		remainingSeconds: 300,
+		teachingSeconds: 30000
+	});
+	assert.deepEqual(
+		timetableDayBalance({ ...settings, day_end: 41400, session_minutes: 60, breaks: [] }),
+		{ sessions: 3, remainingSeconds: 1800, teachingSeconds: 12600 }
+	);
+	assert.equal(timetableDayBalance({ ...settings, day_end: 68100 })?.remainingSeconds, 0);
+	assert.equal(
+		timetableDayBalance({ ...settings, breaks: [...settings.breaks, { start: 45000, end: 46800 }] })
+			?.teachingSeconds,
+		30000
+	);
+	assert.equal(timetableDayBalance({ ...settings, session_minutes: 0 }), null);
+});
+
+test('school year focus follows September 1 rather than catalogue creation order', () => {
+	const years = [
+		{ school_year: 2028 },
+		{ school_year: 2026 },
+		{ school_year: 2027 },
+		{ school_year: 2025 }
+	];
+	assert.equal(currentSchoolYear('2026-08-31'), 2025);
+	assert.equal(preferredSchoolYear(years, '2026-08-31'), 2025);
+	assert.equal(preferredSchoolYear(years, '2026-09-01'), 2026);
+	assert.equal(preferredSchoolYear(years, '2027-01-01'), 2026);
+	assert.equal(
+		preferredSchoolYear(
+			years.filter((year) => year.school_year >= 2027),
+			'2026-10-01'
+		),
+		2027
+	);
+});
 test('civil week arithmetic crosses years and daylight-saving boundaries', () => {
 	assert.equal(mondayOf('2026-09-01'), '2026-08-31');
 	assert.equal(shiftTimetableDate('2026-10-25', 1), '2026-10-26');
 	assert.equal(isoWeek('2027-01-01'), 53);
 	assert.equal(isoWeek('2026-09-07'), 37);
-});
-test('weekly patterns split at recess without losing logical half-session duration', () => {
-	const settings = defaultTimetableSettings(2026);
-	const year: TimetableYear = {
-		id: 1,
-		calendar_id: 1,
-		school_year: 2026,
-		settings,
-		revision: null,
-		published_revision: null,
-		slots: [
-			[28800, 30450],
-			[30450, 32100],
-			[32100, 33750],
-			[33750, 35400],
-			[36600, 38250]
-		],
-		weeks: {},
-		series: []
-	};
-	const events = weeklyEvents(
-		[
-			{
-				key: 'a',
-				weekday: 0,
-				phase: 1,
-				interval: 1,
-				start_slot: 3,
-				duration_slots: 2,
-				subject_id: 1,
-				teacher_id: 2,
-				room_id: 1,
-				kind: 'course',
-				title: ''
-			}
-		],
-		year,
-		'2026-09-07',
-		1
-	);
-	assert.equal(events.length, 2);
-	assert.equal(events[0].start, '2026-09-07T09:22:30');
-	assert.equal(events[1].start, '2026-09-07T10:10:00');
 });
 
 const members: TimetableMember[] = [1, 2].map((id) => ({
@@ -147,22 +153,6 @@ test('student leaves reveal every assigned partition without duplicating pupils 
 	}
 });
 
-const pattern = (changes: Partial<WeeklyBlock> = {}): WeeklyBlock => ({
-	key: 'a',
-	weekday: 0,
-	start_slot: 0,
-	duration_slots: 4,
-	subject_id: 1,
-	teacher_id: 2,
-	room_id: 1,
-	kind: 'td',
-	title: '',
-	interval: 1,
-	phase: 1,
-	target_kind: 'promotion',
-	...changes
-});
-
 test('pedagogical hours use the inclusive five-minute tolerance and preserve half-sessions', () => {
 	for (const minutes of [55, 60, 65]) {
 		assert.equal(teachingHours(2, minutes), 1);
@@ -171,62 +161,6 @@ test('pedagogical hours use the inclusive five-minute tolerance and preserve hal
 	}
 	assert.equal(teachingHours(2, 54), 0.9);
 	assert.equal(teachingHours(2, 66), 1.1);
-});
-
-test('two hours in each half count as two pupil hours and kholles never contribute', () => {
-	const blocks = [1, 2].map((number) =>
-		pattern({ key: String(number), target_kind: 'halves', target_number: number })
-	);
-	const totals = weeklySubjectHours(
-		[...blocks, pattern({ key: 'k', kind: 'kholle', duration_slots: 8 })],
-		55
-	);
-	assert.deepEqual(totals, [{ subjectId: 1, course: 0, td: 2, tp: 0 }]);
-	assert.equal(weeklyIssues(blocks, 55, null, [], []).length, 0);
-	assert.ok(weeklyIssues(blocks.slice(0, 1), 55, null, [], [])[0].message.includes('B : 0 h'));
-});
-
-test('thirds and alternating sessions average over full cycles and warn on missing definitions', () => {
-	const blocks = [1, 2, 3].map((number) =>
-		pattern({
-			key: String(number),
-			kind: 'tp',
-			target_kind: 'thirds',
-			target_number: number,
-			interval: 2,
-			phase: number === 1 ? 1 : 2
-		})
-	);
-	assert.deepEqual(weeklySubjectHours(blocks, 60), [{ subjectId: 1, course: 0, td: 0, tp: 1 }]);
-	assert.equal(weeklyIssues(blocks, 60, null, [], []).length, 0);
-	const checks = weeklyIssues(blocks, 60, 1, [], []);
-	assert.equal(checks.length, 3);
-	assert.ok(checks.every((check) => check.code.startsWith('group-')));
-	assert.equal(
-		weeklyIssues(
-			blocks,
-			60,
-			1,
-			[
-				{ promotion_id: 1, kind: 'thirds', number: 1, student_ids: [1] },
-				{ promotion_id: 1, kind: 'thirds', number: 2, student_ids: [2] },
-				{ promotion_id: 1, kind: 'thirds', number: 3, student_ids: [3] }
-			],
-			[]
-		).length,
-		0
-	);
-});
-
-test('weekly signatures ignore ordering and optional defaults but detect material changes', () => {
-	const first = pattern();
-	const second = pattern({ key: 'b', weekday: 1 });
-	assert.equal(
-		weeklySignature([first, second]),
-		weeklySignature([second, { ...first, target_number: null, target_user_id: null }])
-	);
-	assert.notEqual(weeklySignature([first]), weeklySignature([{ ...first, teacher_id: 3 }]));
-	assert.notEqual(weeklySignature([first]), weeklySignature([{ ...first, phase: 2, interval: 2 }]));
 });
 
 test('typed times snap across breaks while keeping exact half-session seconds', () => {
@@ -329,70 +263,6 @@ test('course TD and TP choices exclude kholleur-only accounts while kholles reta
 	);
 });
 
-test('pupil subject hours sort by total course TD and TP volume after cycle and audience weighting', () => {
-	const blocks = [
-		pattern({ subject_id: 1, kind: 'course', duration_slots: 4 }),
-		pattern({
-			subject_id: 3,
-			kind: 'tp',
-			duration_slots: 8,
-			interval: 2,
-			target_kind: 'halves',
-			target_number: 1
-		}),
-		pattern({ subject_id: 2, kind: 'tp', duration_slots: 8 }),
-		pattern({ subject_id: 1, kind: 'td', duration_slots: 2 }),
-		pattern({ subject_id: 3, kind: 'kholle', duration_slots: 40 })
-	];
-	assert.deepEqual(
-		weeklySubjectHours(blocks, 55).map((row) => [row.subjectId, row.course + row.td + row.tp]),
-		[
-			[2, 4],
-			[1, 3],
-			[3, 1]
-		]
-	);
-});
-
-test('equal subject hours remain balanced when A has TP and B has courses', () => {
-	const blocks = [
-		pattern({ key: 'a', target_kind: 'halves', target_number: 1, kind: 'tp', duration_slots: 8 }),
-		pattern({
-			key: 'b',
-			target_kind: 'halves',
-			target_number: 2,
-			kind: 'course',
-			duration_slots: 8
-		})
-	];
-	assert.deepEqual(weeklyIssues(blocks, 55, null, [], []), []);
-	const changed = [blocks[0], { ...blocks[1], duration_slots: 6 }];
-	assert.equal(weeklyIssues(changed, 55, null, [], []).length, 1);
-	assert.ok(
-		weeklyIssues(changed, 55, null, [], [])[0].message.includes('cours, TD et TP confondus')
-	);
-	assert.deepEqual(weeklyIssues(blocks, 55, null, [], []), []);
-});
-
-test('unassigned sessions retain their hours without creating teacher or room conflicts', () => {
-	const blocks = [pattern({ subject_id: null, teacher_id: null, room_id: null, title: 'Réunion' })];
-	assert.deepEqual(weeklySubjectHours(blocks, 55), [{ subjectId: null, course: 0, td: 2, tp: 0 }]);
-	assert.deepEqual(weeklyIssues(blocks, 55, null, [], []), []);
-	const first = conflictEvent({ teacher_id: null, room_id: null, subject_id: null });
-	const second = { ...first, id: 'b', series_id: 'b', target_number: 2 };
-	assert.deepEqual(timetableConflicts([first, second]), []);
-	assert.deepEqual(
-		orderedTimetableTeachers(
-			[
-				{ id: 1, name: 'Zoé', subject_ids: [1] },
-				{ id: 2, name: 'Alice', subject_ids: [2] }
-			],
-			null
-		).map((teacher) => teacher.id),
-		[2, 1]
-	);
-});
-
 const conflictEvent = (changes: Partial<TimetableEvent> = {}): TimetableEvent => ({
 	id: 'a',
 	series_id: 'a',
@@ -442,29 +312,6 @@ test('live conflicts allow two half groups in one room but keep teacher and whol
 	);
 });
 
-test('live weekly conflicts ignore sessions placed in different phases of a cycle', () => {
-	const events = [
-		conflictEvent({ target_kind: 'promotion', target_number: null }),
-		conflictEvent({
-			id: 'b',
-			series_id: 'b',
-			title: 'B',
-			target_kind: 'promotion',
-			target_number: null
-		})
-	];
-	const blocks = [
-		pattern({ key: 'a', interval: 2, phase: 1 }),
-		pattern({ key: 'b', interval: 2, phase: 2 })
-	];
-	assert.deepEqual(weeklyConflicts(events, blocks, []), []);
-	assert.ok(
-		weeklyConflicts(events, [blocks[0], { ...blocks[1], phase: 1 }], []).some((warning) =>
-			warning.includes('salle')
-		)
-	);
-});
-
 test('group views include shared and intersecting audiences while excluding other students', () => {
 	const root = timetableTree('PTSI', 1, members, groups);
 	const half = root.children.find((node) => node.key === 'halves-1')!;
@@ -489,4 +336,32 @@ test('unassigned pupils remain reachable and teaching staff never enter the tree
 	const incomplete = timetableTree('PTSI', 1, members, [groups[0]]);
 	assert.equal(incomplete.children.at(-1)?.key, 'unassigned');
 	assert.equal(incomplete.children.at(-1)?.children[0].userId, 2);
+});
+
+test('overlapping named audiences retain their names and report actual shared pupils', () => {
+	const custom: TimetableGroup[] = [
+		{ promotion_id: 1, kind: 'custom', number: 10, name: 'German', student_ids: [1] },
+		{ promotion_id: 1, kind: 'custom', number: 11, name: 'European section', student_ids: [1, 2] }
+	];
+	const root = timetableTree('PTSI', 1, members, custom);
+	assert.equal(root.children.find((node) => node.key === 'custom-10')?.label, 'German');
+	assert.ok(
+		!timetableTree('PTSI', 1, members, [{ ...custom[0], is_active: false }]).children.some(
+			(node) => node.key === 'custom-10'
+		)
+	);
+	const first = conflictEvent({ target_kind: 'custom', target_number: 10, room_id: null });
+	const second = conflictEvent({
+		id: 'second',
+		series_id: 'second',
+		teacher_id: 2,
+		target_kind: 'custom',
+		target_number: 11,
+		room_id: null
+	});
+	assert.ok(timetableConflicts([first, second], custom).length > 0);
+	assert.deepEqual(
+		timetableConflicts([first, second], [custom[0], { ...custom[1], student_ids: [2] }]),
+		[]
+	);
 });

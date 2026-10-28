@@ -66,6 +66,28 @@ export interface TeacherHours {
 	total: number;
 }
 
+/** Split each calendar by subject using the same actual segment accounting as its totals. */
+export function teacherCalendarHours(
+	events: TimetableEvent[],
+	sessionMinutes: number
+): (TeacherHours & { calendarId: number; label: string })[] {
+	return [...new Set(events.map((event) => event.calendar_id))]
+		.flatMap((calendarId) => {
+			const sessions = events.filter((event) => event.calendar_id === calendarId);
+			return teacherSubjectHours(sessions, sessionMinutes).map((row) => ({
+				...row,
+				calendarId,
+				label: sessions[0]?.calendar_label ?? `Calendrier ${calendarId}`
+			}));
+		})
+		.sort(
+			(a, b) =>
+				a.label.localeCompare(b.label, 'fr') ||
+				a.calendarId - b.calendarId ||
+				(a.subjectId ?? 0) - (b.subjectId ?? 0)
+		);
+}
+
 /** Count actual assigned half-sessions, once per segment, without pupil audience weighting. */
 export function teacherSubjectHours(
 	events: TimetableEvent[],

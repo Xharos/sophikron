@@ -24,6 +24,21 @@ class PartitionVersion(InputModel):
     expected_revision: str | None = Field(pattern=r"^[0-9a-f]{32}$")
 
 
+class CustomGroupVersion(PartitionVersion):
+    """Require explicit acknowledgement before changing a live custom audience."""
+
+    confirmed_live: bool = False
+
+
+class CustomGroupSave(CustomGroupVersion):
+    """Name an overlapping group and explicitly acknowledge changes to live recipients."""
+
+    name: str = Field(min_length=1, max_length=100)
+    student_ids: list[PupilId] = Field(min_length=1, max_length=2000)
+    x: int = Field(default=320, ge=0, le=1000000, strict=True)
+    y: int = Field(default=20, ge=0, le=1000000, strict=True)
+
+
 class PartitionGenerate(PartitionVersion):
     """Carry the pupil snapshot and a khôlle generation target between two and five."""
 

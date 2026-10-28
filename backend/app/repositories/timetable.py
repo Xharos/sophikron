@@ -1,6 +1,6 @@
 """Parameterized timetable persistence inside service-owned transactions."""
 
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,7 +8,6 @@ from app.models import (
     Promotion,
     TimetableCalendar,
     TimetableSeries,
-    TimetableTemplateVersion,
     TimetableYear,
     UserPromotion,
 )
@@ -22,23 +21,30 @@ class TimetableRepository:
         """Use the request's existing transaction-bound session."""
         self.db = db
 
-    async def calendars(self, user_id: int | None) -> list[TimetableCalendar]:
+    async def calendars(
+        self, user_id: int | None, *, archives: bool = False
+    ) -> list[TimetableCalendar]:
         """Return all admin agendas or only agendas in the caller's active promotions."""
         statement = (
             select(TimetableCalendar)
-            .where(TimetableCalendar.is_deleted.is_(False))
+            .where(TimetableCalendar.is_archived.is_(False) if not archives else True)
             .order_by(TimetableCalendar.name)
         )
         if user_id is not None:
             statement = (
                 statement.join(Promotion)
                 .join(UserPromotion)
-                .where(UserPromotion.user_id == user_id, Promotion.is_active.is_(True))
+                .where(
+                    UserPromotion.user_id == user_id,
+                    Promotion.is_active.is_(True),
+                    TimetableCalendar.is_paused.is_(False),
+                    TimetableCalendar.is_archived.is_(False),
+                )
             )
         return list(await self.db.scalars(statement))
 
     async def years(self, calendar_id: int) -> list[TimetableYear]:
-        """Return an agenda's settings and publication records in school-year order."""
+        """Return an agenda's annual configuration in school-year order."""
         return list(
             await self.db.scalars(
                 select(TimetableYear)
@@ -48,7 +54,7 @@ class TimetableRepository:
         )
 
     async def document(self, year: TimetableYear) -> YearDocument:
-        """Assemble the draft without mixing it with its last published snapshot."""
+        """Assemble the compact live annual document."""
         rows = await self.db.scalars(
             select(TimetableSeries)
             .where(TimetableSeries.year_id == year.id)
@@ -60,7 +66,7 @@ class TimetableRepository:
         )
 
     async def teaching_documents(
-        self, school_year: int, *, draft: bool
+        self, school_year: int, *, include_private: bool
     ) -> list[tuple[TimetableYear, YearDocument]]:
         """Load annual teaching sources in bulk, excluding removed agendas.
 
@@ -68,88 +74,49 @@ class TimetableRepository:
         ----------
         school_year
             Requested year after staff authorization.
-        draft
-            Whether the authorized administrator requested preparation documents.
+        include_private
+            Whether an administrator may include calendars with diffusion switched off.
 
         Returns
         -------
         list[tuple[TimetableYear, YearDocument]]
-            Drafts or publications using at most two queries, regardless of agenda count.
+            Live annual documents using at most two queries, regardless of agenda count.
         """
         years = list(
             await self.db.scalars(
                 select(TimetableYear)
                 .join(TimetableCalendar)
                 .where(
-                    TimetableCalendar.is_deleted.is_(False),
+                    TimetableCalendar.is_archived.is_(False),
+                    TimetableCalendar.is_paused.is_(False) if not include_private else True,
                     TimetableYear.school_year == school_year,
                 )
             )
         )
-        if not draft:
-            return [
-                (year, YearDocument.model_validate(year.published))
-                for year in years
-                if year.published is not None
-            ]
-        series_by_year: dict[int, list[SeriesData]] = {}
-        for row in await self.db.scalars(
-            select(TimetableSeries).where(TimetableSeries.year_id.in_([year.id for year in years]))
-        ):
-            series_by_year.setdefault(row.year_id, []).append(SeriesData.model_validate(row.data))
-        return [
-            (
+        return [(year, document) for year, document in (await self.documents(years)).values()]
+
+    async def documents(
+        self, years: list[TimetableYear]
+    ) -> dict[int, tuple[TimetableYear, YearDocument]]:
+        """Load all compact series in one query, independent of occurrence and calendar counts."""
+        by_year: dict[int, list[SeriesData]] = {}
+        if years:
+            for row in await self.db.scalars(
+                select(TimetableSeries).where(
+                    TimetableSeries.year_id.in_([year.id for year in years])
+                )
+            ):
+                by_year.setdefault(row.year_id, []).append(SeriesData.model_validate(row.data))
+        return {
+            year.id: (
                 year,
                 YearDocument(
                     settings=YearSettings.model_validate(year.settings),
-                    series=series_by_year.get(year.id, []),
+                    series=by_year.get(year.id, []),
                 ),
             )
             for year in years
-        ]
-
-    async def latest_templates(self, year_ids: set[int]) -> dict[int, TimetableTemplateVersion]:
-        """Load the latest weekly version for each authorized year in one query.
-
-        Parameters
-        ----------
-        year_ids
-            Annual records already selected by the authorization service.
-
-        Returns
-        -------
-        dict[int, TimetableTemplateVersion]
-            Latest version per year; years without a version are absent.
-        """
-        latest = (
-            select(
-                TimetableTemplateVersion.year_id,
-                func.max(TimetableTemplateVersion.number).label("number"),
-            )
-            .where(TimetableTemplateVersion.year_id.in_(year_ids))
-            .group_by(TimetableTemplateVersion.year_id)
-            .subquery()
-        )
-        rows = await self.db.scalars(
-            select(TimetableTemplateVersion).join(
-                latest,
-                (TimetableTemplateVersion.year_id == latest.c.year_id)
-                & (TimetableTemplateVersion.number == latest.c.number),
-            )
-        )
-        return {version.year_id: version for version in rows}
-
-    async def store_series(self, year_id: int, series: SeriesData) -> None:
-        """Insert or replace one normalized series and its bounded exception document."""
-        row = await self.db.get(TimetableSeries, series.id)
-        if row is None:
-            row = TimetableSeries(id=series.id, year_id=year_id)
-            self.db.add(row)
-        row.subject_id = series.subject_id
-        row.teacher_id = series.teacher_id
-        row.room_id = series.room_id
-        row.data = series.model_dump(mode="json")
-        await self.db.flush()
+        }
 
     async def store_series_many(self, year_id: int, series: list[SeriesData]) -> None:
         """Upsert changed series in bounded batches inside the caller's transaction.
@@ -157,7 +124,7 @@ class TimetableRepository:
         Parameters
         ----------
         year_id
-            Authorized annual draft identifier.
+            Authorized annual calendar identifier.
         series
             New or changed records; unchanged historical series are omitted.
 

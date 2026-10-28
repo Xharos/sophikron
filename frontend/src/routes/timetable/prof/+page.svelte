@@ -6,6 +6,8 @@
 	import TeacherHours from '#lib/components/TeacherHours.svelte';
 	import {
 		clockSeconds,
+		preferredSchoolYear,
+		currentSchoolYear,
 		mondayOf,
 		shiftTimetableDate,
 		timetableClock,
@@ -70,7 +72,6 @@
 					id: 0,
 					calendar_id: 0,
 					revision: null,
-					published_revision: null,
 					weeks: {},
 					series: []
 				}
@@ -142,12 +143,11 @@
 
 	$effect(() => {
 		if (!yearNumber && data.catalog.years.length) {
-			const current = data.catalog.years.find(
-				(year) =>
-					year.settings.start <= data.catalog.today && year.settings.end >= data.catalog.today
-			);
-			yearNumber = (current ?? data.catalog.years[0]).school_year;
-			date = current ? data.catalog.today : data.catalog.years[0].settings.start;
+			yearNumber = preferredSchoolYear(data.catalog.years, data.catalog.today);
+			date =
+				yearNumber === currentSchoolYear(data.catalog.today)
+					? data.catalog.today
+					: data.catalog.years.find((year) => year.school_year === yearNumber)!.settings.start;
 			const initialTeacher =
 				data.catalog.teachers.find((teacher) => teacher.id === data.user?.id) ??
 				data.catalog.teachers[0];
@@ -255,14 +255,13 @@
 		const range = index !== null ? pattern?.ranges[index] : null;
 		rangeIndex = index;
 		weekday = range?.weekday ?? day;
+		const closing = weekday === 5 ? 43200 : 68400;
+		if (!range && (start ?? 28800) >= closing) return;
 		rangeStart = timetableClock(range?.start ?? start ?? annual.settings.day_start);
 		rangeEnd = timetableClock(
 			range?.end ??
 				end ??
-				Math.min(
-					annual.settings.day_end,
-					clockSeconds(rangeStart) + annual.settings.session_minutes * 60
-				)
+				Math.min(closing, clockSeconds(rangeStart) + annual.settings.session_minutes * 60)
 		);
 		rangeMessage = '';
 		editorOpen = true;
@@ -337,7 +336,7 @@
 			onchange={(event) => changeYear(Number(event.currentTarget.value))}
 		>
 			{#each data.catalog.years as year (year.school_year)}<option value={year.school_year}
-					>{year.school_year}–{year.school_year + 1}</option
+					>{year.school_year}/{year.school_year + 1}</option
 				>{/each}
 		</select>
 		<div class="buttons has-addons mode-buttons" role="group" aria-label="Mode de consultation">
@@ -402,8 +401,8 @@
 		{mode === 'availability'
 			? 'Semaine type sans dates, valable pour l’année scolaire.'
 			: administrator
-				? 'Séances issues des préparations des agendas actifs.'
-				: 'Séances publiées des enseignants sélectionnés.'}
+				? 'Séances enregistrées des calendriers actifs.'
+				: 'Séances diffusées des enseignants sélectionnés.'}
 		{selectedName ? ` ${selectedName}.` : ''}
 		{#if mode === 'availability'}
 			Hachures claires : tous les élèves de tous les agendas actifs ont cours simultanément, au
@@ -480,7 +479,10 @@
 		<div class="calendar-area" aria-busy={loading || busy}>
 			{#if !annual}<div class="calendar-empty">
 					<h2>Aucune année scolaire configurée</h2>
-					<p>Les règles communes définissent les horaires, les pauses et l’ouverture du samedi.</p>
+					<p>
+						Créez une année scolaire dans « Salles et années scolaires » pour saisir les
+						disponibilités.
+					</p>
 					{#if administrator}<a class="button is-primary mt-4" href={resolve('/timetable/settings')}
 							>Configurer les règles</a
 						>{/if}
@@ -494,7 +496,7 @@
 					events={displayedEvents}
 					{date}
 					editable={editing && canEdit}
-					templateMode={mode === 'availability'}
+					dateless={mode === 'availability'}
 					availabilityMode={mode === 'availability'}
 					occupiedRanges={mode === 'availability' ? (board.occupied_ranges ?? []) : []}
 					oncreate={createAt}
@@ -554,8 +556,8 @@
 				/>
 			</div>
 			<p class="help mb-4">
-				Les pauses sont exclues automatiquement. Les plages qui se touchent ou se recouvrent sont
-				réunies.
+				Plages de 08h00 à 19h00 en semaine et de 08h00 à 12h00 le samedi, sans pause imposée. Les
+				plages qui se touchent ou se recouvrent sont réunies.
 			</p>
 			<div class="buttons">
 				<button class="button is-primary" disabled={busy}>Enregistrer</button

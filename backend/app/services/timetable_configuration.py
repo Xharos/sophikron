@@ -1,19 +1,32 @@
-"""Establishment-wide calendar settings and reversible catalogue operations."""
+"""Room/year catalogues and reversible annual calendar archival."""
 
 from uuid import uuid4
 
 from sqlalchemy import select
 
-from app.models import TimetableRoom, TimetableSchoolYear, TimetableYear
-from app.schemas.timetable import CommonSettingsSave, RoomSave
+from app.models import (
+    TeacherAvailability,
+    TimetableCalendar,
+    TimetableRoom,
+    TimetableSchoolYear,
+    TimetableYear,
+)
+from app.schemas.timetable import (
+    CalendarRestore,
+    PreferencesSave,
+    RoomSave,
+    SchoolYearCreate,
+    Version,
+)
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.timetable import TimetableService
-from app.services.timetable_engine import daily_slots, validate_series
+from app.services.timetable_engine import current_school_year
+from app.services.timetable_lifecycle import rollover
 
 
 class TimetableConfigurationService:
-    """Apply common drafts atomically while leaving published annual snapshots untouched."""
+    """Manage immutable year labels, shared rooms and read-only calendar archives."""
 
     def __init__(self, auth: AuthService) -> None:
         """Reuse the timetable authorization and request-owned transaction resources."""
@@ -22,10 +35,16 @@ class TimetableConfigurationService:
         self.db = auth.db
 
     async def read(self, actor: UserContext) -> dict:
-        """Return shared settings and legacy alternatives only to permanent administrators."""
+        """Return rooms and immutable academic-year labels only to permanent administrators."""
         async with self.db.begin():
             await self.core.authorize(actor, write=True)
+            preferences = await rollover(self.db, self.core.today())
             return {
+                "today": self.core.today().isoformat(),
+                "preferences": {
+                    "auto_archive": preferences.auto_archive,
+                    "revision": preferences.revision,
+                },
                 "years": await self.core.common_years(),
                 "rooms": [
                     {"id": room.id, "name": room.name, "revision": room.revision}
@@ -37,37 +56,57 @@ class TimetableConfigurationService:
                 ],
             }
 
-    async def save(self, actor: UserContext, data: CommonSettingsSave) -> dict:
-        """Validate all affected agenda drafts before changing their shared annual settings."""
+    async def create_school_year(self, actor: UserContext, data: SchoolYearCreate) -> dict:
+        """Create an unused academic label; no common calendar settings are stored."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
             await self.core.authorize(actor, write=True)
-            row = await self.db.get(TimetableSchoolYear, data.settings.start.year)
-            if (row.revision if row else None) != data.expected_revision:
-                raise AuthError(409, "Les réglages communs ont changé. Rechargez la page.")
-            if not daily_slots(data.settings):
-                raise AuthError(422, "Aucun demi-créneau complet dans cette journée.")
-            years = list(
-                await self.db.scalars(
-                    select(TimetableYear).where(
-                        TimetableYear.school_year == data.settings.start.year
-                    )
-                )
+            if data.school_year < current_school_year(self.core.today()):
+                raise AuthError(422, "Une année scolaire passée ne peut pas être créée.")
+            if await self.db.get(TimetableSchoolYear, data.school_year):
+                raise AuthError(409, "Cette année scolaire existe déjà.")
+            row = TimetableSchoolYear(
+                school_year=data.school_year, used=False, revision=uuid4().hex
             )
-            for year in years:
-                document = await self.core.repo.document(year)
-                for series in document.series:
-                    validate_series(series, data.settings)
+            self.db.add(row)
+            return {"school_year": row.school_year, "revision": row.revision}
+
+    async def preferences(self, actor: UserContext, data: PreferencesSave) -> dict:
+        """Save the policy and immediately catch up when automatic archival is enabled."""
+        async with self.db.begin():
+            await self.auth._lifecycle_lock()
+            await self.core.authorize(actor, write=True)
+            row = await rollover(self.db, self.core.today())
+            if row.revision != data.expected_revision:
+                raise AuthError(409, "Ces réglages ont changé. Rechargez la page.")
+            if data.auto_archive and not row.auto_archive:
+                row.last_rollover_year = None
+            row.auto_archive, row.revision = data.auto_archive, uuid4().hex
+            await rollover(self.db, self.core.today())
+            return {"auto_archive": row.auto_archive, "revision": row.revision}
+
+    async def delete_school_year(self, actor: UserContext, school_year: int, data: Version) -> dict:
+        """Delete only a never-used label under the same lifecycle lock as calendar creation."""
+        async with self.db.begin():
+            await self.auth._lifecycle_lock()
+            await self.core.authorize(actor, write=True)
+            row = await self.db.get(TimetableSchoolYear, school_year)
             if row is None:
-                row = TimetableSchoolYear(school_year=data.settings.start.year)
-                self.db.add(row)
-            row.settings = data.settings.model_dump(mode="json")
-            row.revision = uuid4().hex
-            for year in years:
-                year.settings = row.settings
-                year.starts_on, year.ends_on = data.settings.start, data.settings.end
-                await self.core._changed(actor, year)
-            return {"revision": row.revision}
+                raise AuthError(404, "Année scolaire introuvable.")
+            if row.revision != data.expected_revision:
+                raise AuthError(409, "L’année a changé. Rechargez la page.")
+            availability = await self.db.scalar(
+                select(TeacherAvailability.user_id)
+                .where(TeacherAvailability.school_year == school_year)
+                .limit(1)
+            )
+            calendar = await self.db.scalar(
+                select(TimetableYear.id).where(TimetableYear.school_year == school_year).limit(1)
+            )
+            if row.used or availability is not None or calendar is not None:
+                raise AuthError(409, "Une année déjà utilisée ne peut plus être supprimée.")
+            await self.db.delete(row)
+            return {"school_year": school_year}
 
     async def room(
         self,
@@ -76,7 +115,7 @@ class TimetableConfigurationService:
         data: RoomSave | None,
         expected_revision: str | None = None,
     ) -> dict:
-        """Rename or retire a room without erasing references in existing publications."""
+        """Rename or retire a room without erasing references in existing sessions."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
             await self.core.authorize(actor, write=True)
@@ -103,13 +142,46 @@ class TimetableConfigurationService:
             room.revision = uuid4().hex
             return {"id": room.id, "revision": room.revision}
 
-    async def delete_calendar(self, actor: UserContext, identifier: int, revision: str) -> dict:
-        """Remove an agenda from consultation and feeds while retaining its stored history."""
+    async def archive(self, actor: UserContext, identifier: int, data: Version) -> dict:
+        """Stop all diffusion and make a retained calendar permanently read-only until restored."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
             calendar = await self.core._calendar(identifier, actor, write=True)
-            if calendar.revision != revision:
-                raise AuthError(409, "L’agenda a changé. Rechargez la liste.")
-            calendar.is_deleted = True
+            if calendar.revision != data.expected_revision:
+                raise AuthError(409, "Le calendrier a changé. Rechargez la liste.")
+            self.core.require_live_confirmation(calendar, data.confirmed_live)
+            calendar.is_archived, calendar.is_paused = True, True
             calendar.revision = uuid4().hex
-            return {"id": calendar.id}
+            for year in await self.core.repo.years(calendar.id):
+                await self.core._changed(actor, year)
+            return {"id": calendar.id, "revision": calendar.revision}
+
+    async def restore(self, actor: UserContext, identifier: int, data: CalendarRestore) -> dict:
+        """Restore without broadcasting, optionally detaching a conflicting promotion."""
+        async with self.db.begin():
+            await self.auth._lifecycle_lock()
+            await self.core.authorize(actor, write=True)
+            calendar = await self.db.get(TimetableCalendar, identifier)
+            if calendar is None or not calendar.is_archived:
+                raise AuthError(404, "Archive introuvable.")
+            if calendar.revision != data.expected_revision:
+                raise AuthError(409, "L’archive a changé. Rechargez la liste.")
+            if calendar.promotion_id is not None and not data.detach_promotion:
+                conflict = await self.db.scalar(
+                    select(TimetableCalendar.id).where(
+                        TimetableCalendar.promotion_id == calendar.promotion_id,
+                        TimetableCalendar.is_archived.is_(False),
+                    )
+                )
+                if conflict is not None:
+                    raise AuthError(
+                        409,
+                        "Cette promotion possède un calendrier actif. Réactivez sans promotion.",
+                    )
+            if data.detach_promotion:
+                calendar.promotion_id = None
+            calendar.is_archived, calendar.is_paused = False, True
+            calendar.revision = uuid4().hex
+            for year in await self.core.repo.years(calendar.id):
+                await self.core._changed(actor, year)
+            return {"id": calendar.id, "revision": calendar.revision}

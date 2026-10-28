@@ -10,6 +10,7 @@ from app.core.http import SearchAccessLogFilter
 from app.schemas.timetable import BlockFields, SeriesData, YearDocument, YearSettings
 from app.services.errors import AuthError
 from app.services.timetable_engine import (
+    current_school_year,
     cycle_warnings,
     daily_slots,
     occurrences,
@@ -18,6 +19,13 @@ from app.services.timetable_engine import (
     teaching_weeks,
     validate_series,
 )
+
+
+def test_school_year_changes_at_september_first() -> None:
+    """Use the academic boundary rather than a calendar's custom course dates."""
+    assert current_school_year(date(2026, 8, 31)) == 2025
+    assert current_school_year(date(2026, 9, 1)) == 2026
+    assert current_school_year(date(2027, 1, 1)) == 2026
 
 
 def settings(**changes: object) -> YearSettings:
@@ -69,6 +77,54 @@ def test_exact_half_sessions_and_pause_splitting() -> None:
     assert segments(series(duration_slots=10), grid)[-1] == (46800, 50100)
     with pytest.raises(AuthError):
         segments(series(start_slot=len(slots) - 1), grid)
+
+
+def test_default_grid_restarts_at_self_closing_and_keeps_noon_sessions() -> None:
+    """Anchor afternoon slots at 14:00 while allowing normal sessions during the self window."""
+    grid = YearSettings(start=date(2026, 9, 1), end=date(2027, 6, 30))
+    assert grid.day_start == 28800 and grid.day_end == 68100 and grid.session_minutes == 55
+    assert [(pause.start, pause.end) for pause in grid.breaks] == [(35400, 36600), (57000, 58200)]
+    slots = daily_slots(grid)
+    afternoon = next(index for index, (start, _) in enumerate(slots) if start == 50400)
+    noon = next(index for index, (start, _) in enumerate(slots) if start == 43200)
+    assert segments(series(start_slot=afternoon, duration_slots=2), grid) == [(50400, 53700)]
+    assert segments(series(start_slot=noon, duration_slots=2), grid) == [(43200, 46500)]
+    parts = segments(series(start_slot=afternoon - 1, duration_slots=2), grid)
+    assert sum(end - start for start, end in parts) == 3300
+    assert len(parts) == 2
+
+
+def test_free_times_preserve_seconds_and_do_not_skip_recess() -> None:
+    """Expand exact custom hours independently of half-slots, including through a fixed pause."""
+    grid = settings()
+    custom = series(start_time=35113, end_time=37847, start_slot=0, duration_slots=2)
+    assert segments(custom, grid) == [(35113, 37847)]
+    events = occurrences(YearDocument(settings=grid, series=[custom]))
+    assert events[0]["start"].startswith("2026-09-07T09:45:13")
+    assert events[0]["end"].startswith("2026-09-07T10:30:47")
+    assert events[0]["start_time"] == 35113 and events[0]["end_time"] == 37847
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [
+        {"start_time": 30000},
+        {"end_time": 33000},
+        {"start_time": 33000, "end_time": 30000},
+        {"start_time": True, "end_time": 33000},
+    ],
+)
+def test_free_times_require_two_strict_ordered_boundaries(changes: dict) -> None:
+    """Reject partial, reversed and non-integer custom schedules at the API boundary."""
+    with pytest.raises(ValidationError):
+        series(**changes)
+
+
+@pytest.mark.parametrize("start,end", [(28000, 33000), (60000, 62000)])
+def test_free_times_remain_inside_establishment_opening(start: int, end: int) -> None:
+    """Keep exact placement subject to the same school opening and closing bounds."""
+    with pytest.raises(AuthError):
+        segments(series(start_time=start, end_time=end), settings())
 
 
 def test_a_pause_inside_a_half_session_never_discards_teaching_minutes() -> None:

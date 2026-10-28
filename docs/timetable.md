@@ -1,366 +1,208 @@
-# Private timetables
+# Private annual timetables
 
-`/timetable` manages reusable agendas and their promotion assignment. Common room and school-year
-configuration lives at `/timetable/settings`. Each `/timetable/<id>` opens a full-screen weekly
-workspace with a searchable promotion/group/student tree, annual drafts, dated weekly templates
-and personal ICS subscriptions.
+Each calendar belongs to exactly one academic-year label and may be assigned to one promotion.
+A promotion can have only one non-archived calendar, even when diffusion is switched off.
+Names are unique after whitespace and case normalization, including archived names.
+Create a separate calendar for the following year; no implicit copying or annual reuse occurs.
+The existing full-screen week grid, group tree, subject colors, teaching-role badges, keyboard
+copy/paste, contextual menu, dragging and resizing remain available.
 
-## Access and publication
+## Rooms and academic years
 
-Only permanent administrators with `users.manage` can create agendas, rooms, annual settings,
-blocks or publications. Teachers with `teaching.read` and khôlleurs with `kholleur.access`
-can consult the current published school year of agendas attached to their current active
-promotions. They may preview all students and subjects in these promotions. Teaching staff are
-excluded from the promotion tree; their personal subscription combines their own assigned sessions
-across their current promotions. A student's preview is restricted to the selected promotion.
-Students cannot open the web page or its catalogue/board APIs.
+The administration page at /timetable/settings contains rooms, academic-year labels and the automatic archive policy.
+Create labels such as 2026/2027 by entering their first year. A label has no shared opening rules.
+Creating a calendar or saving staff availability permanently marks the label as used, even after
+archival or resetting that availability. Only a never-used label can be deleted.
+Room creation, renaming and retirement preserve existing session references and use revisions.
+Past labels cannot be created: the academic year changes on September 1 in Europe/Paris.
+New calendar and teacher availability selectors prefer the current label, then the nearest future
+label, independently of catalogue creation order or individual calendars' course dates.
 
-The permanent `prof` entry opens `/timetable/prof`. It is a system workspace rather than a removable
-promotion agenda: it has no rename, pause, archive or delete operation. Administrators edit availability;
-teachers and khôlleurs have read-only access to staff availability and published teaching assignments,
-including teachers outside their own promotions. This teaching-only directory exposes names and subject
-assignments, never pupil rosters, recipient IDs, email addresses or account profiles. Its dated view uses
-draft assignments for administrators and published assignments for other staff. Existing promotion-page
-and personal-subscription access rules remain scoped to current memberships.
+## Calendar creation and settings
 
-### Teacher availability and teaching hours
+An administrator chooses the name, mandatory year label, optional promotion, inclusive start/end
+dates, daily opening/closing times, session duration, fixed recess breaks, self opening/closing
+times, Saturday opening and inclusive holiday periods. Dates must be between September 1 and
+August 31 of the selected academic year. The UI creates calendars with diffusion switched off.
 
-Choose a school year and a teacher, listed in subject folders (including “Sans matière”). Teachers with
-several subjects appear in each folder and retain the same color and shared availability. The workspace
-starts in the dated timetable view. It initially selects the authenticated account when present in
-the teaching roster, otherwise the first teacher in that roster. Clicking the selected teacher again alternates availability and
-dated timetable views; explicit mode buttons provide the same controls. Ctrl-left + click toggles teachers
-in the selection; clicking a subject selects its teachers. Multiple selections overlay only those teachers'
-sessions and disable availability editing. All changes require an administrator and exactly one teacher.
+Creation defaults are 08:00–18:55, 55-minute sessions, recess 09:50–10:10 and 15:50–16:10,
+and a self window of 12:00–14:00. Standard half-session phases restart at the self boundaries,
+so the afternoon starts at exactly 14:00. Noon remains available for courses and kholles.
+The creation form reports nominal teaching time outside the union of recess and the self window,
+complete sessions and the remainder. Overlapping exclusions count once. The requested defaults
+leave 495 nominal minutes: nine complete 55-minute sessions without a remainder.
 
-An absent annual availability record means every opening interval is available, excluding recess, lunch,
-Sunday and Saturday unless enabled. “Éditer les disponibilités” enables dragging/resizing both borders,
-an accessible time form, adding/removing intervals, closing the entire week and restoring default hours.
-Each edit saves immediately and checks the observed revision; stale writes return HTTP 409. An explicit
-empty list means unavailable all week; null restores implicit defaults. Intersecting or touching ranges
-merge, crossing a pause splits the interval, and closed days/out-of-hours submissions return HTTP 422.
-Changed opening rules clip existing patterns at read time without deleting their stored ranges. Patterns
-belong to one school year and are not copied automatically into the next year or published snapshots.
+Opening/closing times, session duration, recess and self times are immutable after creation.
+Only calendar dates, holidays and Saturday opening can subsequently change. The settings preview
+reports the number of disappearing/appearing event segments before confirmation. Such changes
+never delete compact series or their exceptions: hidden sessions reappear if the exclusion is
+removed. Alternations and annual totals are recomputed from the effective settings.
 
-The dated view navigates within the selected school year and combines assignments from all non-removed
-agendas for the explicitly selected teacher(s). “Heures” reuses the interactive stacked chart and its
-accessible table, totals the consulted real week by subject, distinguishes course/TD/TP/khôlle, and sorts
-subjects by decreasing total. Teacher hours have no pupil-group weighting. Split segments are counted
-once and pauses are excluded. Each 55–65-minute session counts as one pedagogical hour; other session
-lengths use actual minutes divided by 60. Multiple teachers' hours are summed, including simultaneous
-assignments to different teachers.
-Teaching events display the promotion's label, falling back to the agenda name when no promotion is
-assigned. Each calendar uses a stable shade of the selected teacher's color; kholles retain their
-hatching. In the availability view, block backgrounds are 80% opaque in both consultation and editing,
-while their text and inset borders stay opaque.
-The availability view optionally requests `include_occupancy=true` on the staff board API. Only then
-does the backend calculate `occupied_ranges` (weekday/start/end), using all non-removed, non-paused
-calendars in the selected school year, independently of the selected teacher. Inactive promotions
-are excluded. Administrators use preparations; other teaching staff use published snapshots only.
-For each actual date, the backend unions the real recipients of simultaneous sessions within each
-calendar and requires every pupil to be covered. It then intersects full-class intervals across all
-participating calendars, and projects their union onto the weekly availability pattern. One affected
-week suffices, including alternating cycles and dated exceptions; unrelated weeks are never combined
-to invent simultaneous occupancy. A free half-group keeps the slot unhatched. Duplicate sessions and
-intersecting group families never count a pupil twice. Without a roster, only explicit whole-class
-sessions prove complete coverage. No calendars or an empty participating calendar produces no ranges.
-Ranges are clipped to current opening rules and pauses. The API returns no rosters or group recipient
-IDs. The renderer uses broad, light 45-degree background hatching, opposite to pause hatching, visible
-through availability backgrounds and unchanged while editing. This indication does not prevent saving
-availability. Dated teaching views and other pages do not request or render this calculation.
+## Dated sessions and recurrence
 
-Availability conflicts never block saving a session or publishing. They use actual generated teaching
-segments (including replacements), ignore dates before today's Europe/Paris date and group recurring
-assignments into one warning with the first affected date. Teacher, room and audience overlap warnings
-likewise ignore past dates and group each recurring resource/assignment pair. Unsaved weekly templates
-also preview conflicts and availability warnings.
-The promotion board also returns `teacher_commitments`: future external bookings limited to teacher
-IDs, times and calendar references. It never includes external lesson titles, rooms or pupil recipients.
-Admin previews use drafts; staff previews use publications and only teachers appearing on their
-authorized board. Non-removed external calendars participate independently of the selected pupil or
-group. Recurring teacher collisions are reported once per stable pair in both affected calendars,
-with the other calendar's ID/name. Teacher collisions and overlapping pupil audiences are critical
-red warnings. Whole-class/course and whole-class/kholle overlaps conflict; disjoint halves, thirds
-and kholle groups remain valid. Cross-partition checks use actual membership intersections. Missing
-promotion assignment does not suppress whole-class conflicts within the same calendar.
-Weekly previews compare projected cycle dates with retained dated lessons and occurrence exceptions,
-including independent kholles. Canceled occurrences stay canceled. Touching times and recess gaps do
-not conflict. Promotion-wide warnings do not disappear when selecting one pupil/group in the tree.
-Before saving a teaching assignment, the UI re-reads external bookings to include changes made in
-another open tab. A centered confirmation explains any external teacher clash before creation or
-modification. Cancel keeps entered fields and makes no write; confirm allows the inconsistent draft
-and keeps its red diagnostic. Template-derived occurrence changes include the clash in their existing
-one-occurrence confirmation. Weekly block/drag/resize changes still update only the editing buffer;
-version activation checks bookings again and publication remains explicit. Following a dated warning
-from a modified weekly buffer preserves that buffer when returning to weekly editing.
-“Points à vérifier” retains structured references to the affected sessions. Each session shows its
-type and the teaching member in the existing role badge, with the name colored by the session's
-subject. Dual-role members use their kholleur badge for kholles and teacher badge for courses/TD/TP;
-archived members retain their current teaching-role metadata. Weekly references show weekday and
-complete logical hours; dated sessions and exceptions show a full French date and hours. Split
-segments and repeated template weeks share one entry. Selecting a session opens its current weekly
-block in the weekly editor, or moves the dated view and opens the corresponding occurrence editor.
-Independent recurring series and dated overrides stay in dated mode. Read-only staff can consult
-details but cannot edit. Structural issues without an affected session have no session action.
-Warning navigation does not save or publish a change. Other unsaved weekly edits remain in place
-when opening another weekly block from a warning.
+There is no weekly-template editor, version activation, draft snapshot or publication operation.
+Create an event once, weekly, every two teaching weeks or every three teaching weeks, optionally
+bounded by an end date. Complete holiday weeks suspend recurrence cycles; partial teaching weeks
+count once. Local times retain Europe/Paris civil hours across daylight-saving changes.
+New and pasted events default to weekly repetition.
 
-Staff APIs are `GET /api/v1/timetable/staff/catalog`,
-`GET /api/v1/timetable/staff/board?school_year=2026&teacher_ids=1,2`, and admin-only
-`PUT /api/v1/timetable/staff/{school_year}/{teacher_id}/availability` with
-`{expected_revision, ranges: [{weekday, start, end}]}` (seconds after midnight, Monday=0).
+Holding the empty grid for 350 ms previews one complete session. Move it to another slot/day and
+release to open the creation form at that location; no write occurs until the form is saved.
+Escape, pointer cancellation and dropping outside the valid grid cancel creation. The same gesture
+works while editing one teacher's availability, respecting Saturday's noon closing. Ordinary clicks,
+existing-event dragging/resizing and keyboard copy/paste keep their existing behavior.
 
-Administrators can prepare future years and inspect earlier annual records. Other members and
-subscriptions receive only publications whose configured start/end dates include today's
-Europe/Paris date. There is no fixed June 31 date: defaults are September 1 through June 30.
+The event editor's Free times switch permits exact start times and arbitrary durations (to the
+second), within the calendar's opening hours. These uninterrupted events do not skip recess or snap
+to the half-session grid. Their exact boundaries survive recurring/future edits, isolated exceptions,
+copy/paste, dragging/resizing, conflict/lunch checks, hour totals and personal ICS exports. They use
+optional boundaries in the existing compact series JSON; no extra tables or database migration are
+needed. Standard events continue to use half-session slots and exclude recess and incomplete tails.
 
-Draft settings, series and exceptions are separate from the last published annual JSON snapshot.
-Saving a draft leaves that publication intact. Pausing an agenda freezes this publication:
-subscriptions keep receiving it, while publishing another revision is refused until resumed.
-Publish explicitly replaces the snapshot atomically;
-conflict warnings do not block publication. Before the first publication the subscription is a
-valid empty calendar. Names, subject identities, room labels and access memberships resolve
-from current authorized records; private account names are not copied into publication storage.
+Courses, TD, TP and kholles can target the whole class, halves A/B or thirds X/Y/Z. Halves and
+thirds can be prepared without a promotion. Numbered kholle groups and named custom groups require a promotion.
+Administrators manage custom groups from the promotion's dashboard group panel. Each name is unique
+inside its promotion and membership contains at least one current non-archived pupil, up to the entire
+roster. These groups can overlap one another and the standard partitions. Replacing live group
+membership requires explicit backend-checked confirmation and refreshes calendar revisions/ICS dates.
+Their sessions participate in recipient filtering, collisions, meal checks and actual hour totals,
+but never in half/third group balance checks. A group from another promotion cannot be assigned.
 
-## Administrator workflow
+The custom category sits alongside halves, thirds and kholle groups and uses their shared bubble/list
+map. The permanent full-class bubble contains the entire roster. Creating a named empty draft opens
+the map; at least one current pupil must be added before saving. Dragging or keyboard selection adds
+a pupil without removing their other custom memberships; returning a pupil to the full-class source
+removes them from the group being edited. Group positions are saved with the group's revision.
+Deletion retires the choice after confirmation, including a live-calendar acknowledgement. Existing
+sessions and their saved memberships remain intact; retired groups cannot receive new sessions.
+Optional subject/teacher/room references remain supported; a subjectless session requires a title.
+Teacher choices retain subject specialists first and exclude kholleur-only accounts from courses.
 
-1. Configure canonical rooms and common school-year settings: rentrée/end dates, opening/closing
-   hours, recess/lunch breaks, session length, Saturday opening and inclusive holiday intervals.
-   Settings changes validate every affected agenda draft atomically. Existing publications stay
-   unchanged until explicitly republished. Room removal retires the entry without breaking history.
-2. Create an agenda and assign at most one active promotion to it. Reassignment during summer is
-   manual. The management page also renames, pauses and removes agendas. Removal hides an agenda
-   from consultation and subscriptions while retaining its database history.
-3. Open an agenda to prepare its annual draft with common settings. The calendar uses hour labels
-   and alternating subtle hourly backgrounds; placement, movement and lengths use half-sessions.
-4. Enter “Éditer la semaine type”. This mode hides the promotion tree and always displays the full
-   pattern. Click a weekday to open the right drawer. Choose course/TD/TP, subject, teacher, room
-   and recipients using radio buttons styled like the account role selector. Weekly recipients are
-   whole class, halves A/B or thirds X/Y/Z, independently of promotion assignment; khôlles are forbidden
-   server-side in new weekly saves. Existing legacy khôlles and individual series remain independent
-   dated events and are not deleted when replacing the pattern. A block can repeat every worked
-   week or use phase A/B or a three-week cycle. The button reads “Quitter” while unchanged and exits
-   without writing. After a change it reads “Sauvegarder” and opens a dialog offering immediate
-   activation or another date/time. Immediate activation uses the precise server instant (or the
-   school year's start when preparing a future year). Scheduled activation uses the device's local
-   time; version history displays Paris times. Returning to editing keeps unsaved changes.
-   Saved changes remain drafts until explicitly published.
-   Saving an unchanged pattern keeps its version, draft revision and existing occurrence identities,
-   including when blocks were reordered. An unchanged empty pattern creates no initial version.
-   New events leave subject, teacher and room unselected, including after creating another event.
-   Clicking one of these choices a second time clears it; the space key also toggles the choice.
-   Each reference is independently optional. Without a subject, a custom title containing at least
-   one non-whitespace character is mandatory in both the editor and API. Unassigned events use a
-   neutral color, omit missing teacher/room labels and never trigger an archived-teacher warning or
-   conflicts for absent teacher/room assignments. The hours chart groups them under “Sans matière”.
-   New events start at one session (or half a session at the final half-slot). Teachers assigned
-   to the selected subject sort first, with French alphabetical ordering within each section;
-    changing subjects reorders the choices without replacing the selected teacher. Other subject
-    teachers remain selectable with subdued styling, while the chosen option and keyboard focus
-    stay prominent. Course/TD/TP choices include only accounts with the teacher role; kholleur-only
-    accounts are offered for kholles. Dual-role accounts remain eligible for both. Changing a kholle
-    into a course/TD/TP clears an incompatible kholleur-only selection.
-   The “Ajouter une séance” button also opens it using the keyboard.
-5. In the real-date view, add punctual events or edit/cancel an occurrence. Template-derived sessions
-   only permit one-occurrence edits or cancellation; future-scope edits return HTTP 422, including
-   deletion. Independent recurring series retain their one/future selector. Changing the recurring
-   template itself requires its weekly editor.
-   Recipients use a two-step selector: whole class, halves, thirds, or a defined promotion khôlle group,
-   then the group number/letter. Individual pupils are not offered as new recipients. Type a start time
-   or use adjacent −/+ controls; the typed value snaps to the closest valid half-session, including
-   exact seconds and recess boundaries. Length is entered in half-session steps.
-   Publish when ready. “Préparation” identifies the draft and “Version diffusée” previews the last
-   distributed snapshot; explanatory text states that only publication updates ICS subscriptions.
+Saving, deleting, moving or resizing a recurring event opens a confirmation asking whether to
+change that occurrence alone or that occurrence and all following ones. A single edit creates an
+independent single-event node, preserving its ICS UID, and leaves a cancellation in the original chain.
+A future edit splits the remaining chain and preserves earlier history. Detached events remain unchanged,
+including if the remaining chain is subsequently changed or cancelled. Cancellation dates follow a
+weekday shift, so a detached week never silently reappears in the chain. A single event can itself
+be changed into a recurring series by saving its repetition property.
+Every proposed event change is previewed by the same backend engine used when saving.
+The confirmation uses a labeled switch for including following occurrences, for edits and deletion.
+Compact diagnostic cards use red for critical issues, orange for warnings and neutral resolved/information
+cards. Confirmation previews show only added, resolved or changed checks, including before/after group
+hours. Unchanged checks are available in the separate verification panel. Incomplete-cycle information
+is attached to the related subject/type group imbalance instead of shown as a redundant global alert.
 
-Both editable grids support right-click copy/paste and Ctrl+C/Ctrl+V (Cmd on macOS) at the pointer.
-All pupil and teaching grids share darker 2px inset borders that preserve block geometry and
-compact content aligned at the top left: a bold title, session type and audience (whole class,
-half/third group or numbered kholle group), an italic teacher when assigned, then hours
-and the optional room. Missing fields leave no blank lines, and adding information never changes
-the session's duration. The right-hand creation gutter is 0.75rem (twice the library's default),
-including beside simultaneous sessions. Pause backgrounds retain their centered labels.
-Kholle sessions use sparse, low-contrast diagonal hatching over their existing color in every pupil
-and teaching grid, in editable and read-only views. Other session types retain a solid background.
-The teaching-only API supplies a display-only `audience_label`, keeping pupil IDs and recipient
-fields private. Availability blocks retain their own labels without a fictitious course or group.
-The session editor keeps its save button in a non-scrolling toolbar between the header and scrollable
-body, without showing scrolling content around the toolbar. Editable grids allow
-resizing from both the top and bottom borders, snapping to exact half-session boundaries around
-pauses. In weekly mode, resizing updates the local editing buffer like saving an individual block:
-it makes no API write, creates no version and does not publish. Other pending edits stay intact.
-The explicit “Sauvegarder” workflow still chooses when to activate the complete version; until then,
-changes exist only in the current page. Publication remains separate.
-In dated mode, every save, deletion or resize of a template-derived occurrence requires a centered
-confirmation dialog before any write. It explains that only the selected occurrence changes. Cancel
-restores the editor's entered fields, or leaves a resized block unchanged. Failed/stale writes keep
-the confirmation open and display the error. Dated resizing of independent sessions still saves
-directly without reopening the editor. Dragging a dated event opens the editor; its eventual save
-uses the same confirmation for template-derived sessions. None of these dated actions modifies the
-weekly template, its other occurrences or the published snapshot.
-Copies stay in page memory, preserve their fields and open a prefilled editor before being saved.
-Pasting into the real-date grid creates a single occurrence; pasting into the weekly template
-preserves its recurrence cycle. Khôlles and legacy individual recipients cannot enter the template.
-Pasting beyond the day's capacity asks the administrator to reduce the length. Text-field shortcuts
-and read-only views retain their usual behavior. The grid also supports Shift+F10, menu arrow keys
-and Escape for keyboard navigation.
+## Lunch and annual hours
 
-The folder tree displays all defined half, third and khôlle groups as selectable resources.
-Students appear under every assigned half, third and khôlle group, once within each group.
-Unassigned students remain visible separately. Searching a name expands matching folders and
-reveals all of that pupil's groups. Selecting a folder overlays its students' actual
-sessions; selecting a student shows that person's sessions only. Audience checks are also applied
-by the backend and personal export, independently of the tree UI.
+Self times describe a window in which pupils must be able to eat; they are not a forbidden interval
+and do not subtract teaching slots. Noon courses and kholles are permitted. Each pupil in the current
+promotion must retain a continuous free interval at least as long as one configured session inside
+the self window. Actual half/third/kholle/individual memberships and overlapping sessions are used.
+Different groups may eat at different times. Fragmented free half-hours do not replace a full hour.
+Insufficient lunch produces a critical warning, including in the event preview. With no promotion,
+no pupil lunch conclusion is invented. Past lunch dates are excluded from actionable warnings.
 
-Weekly versions are append-only. V1 remains applicable before V2's effective instant, then V2 until
-V3, and so on. At a Tuesday 15:00 activation, completed sessions retain V1, while ongoing and future
-sessions use V2 in their entirety. V2 wins when an extended/moved transition-day session overlaps
-completed V1 work for the same recipients. Completed transition-day occurrences retain their UIDs;
-moving the same template block into a later slot on that day creates a separate UID for the new
-occurrence, so subscriptions never contain duplicate identifiers. The server clock determines
-immediate activation; client-supplied timestamps must include a timezone.
-Past activation dates, including dates before an earlier saved version, are allowed only with
-explicit acknowledgement of historical replacement. The API independently enforces this requirement.
-Applying a retroactive version replaces generated sessions from that instant while retaining the
-immutable version records; the distributed snapshot still changes only on publication.
-Immediate editing may supersede a previously scheduled future version. Date-specific replacements and cancellations
-survive template changes. If a replacement no longer has a corresponding recurring date, it becomes
-an independent event with its original UID. Unchanged historical occurrences keep their UIDs.
-On the activation day, the new pattern takes precedence over an ongoing exception.
+The Hours panel switches between annual totals and weekly means per subject and teaching type.
+It uses all actual retained occurrences, including cancellations, replacements and later makeups.
+The denominator is every week with at least one teaching day, including partial weeks. With a roster,
+totals use the average pupil's actual audience membership; without one, halves/thirds use 1/2 and 1/3.
+Recess segments count only their actual teaching duration. A configured session of 55–65 minutes
+counts as one pedagogical hour; other durations use minutes / 60. Kholles are shown separately.
+Annual subject/type differences between halves or thirds and missing assigned groups produce warnings;
+no national curriculum target is assumed or hard-coded.
 
-“Heures” opens the existing interactive stacked chart component, with course/TD/TP totals by subject
-    and an accessible numeric table. Subjects sort by decreasing total course/TD/TP hours in both
-    the graph and table. Counts are weekly averages over the complete recurrence cycle,
-from a pupil's perspective: two hours for A plus two hours for B count as two pupil hours. Halves
-and thirds carry weights 1/2 and 1/3, independent of unequal pupil headcounts. A 55–65 minute session
-counts as one pedagogical hour (inclusive endpoints); its half-session counts as 0.5 h. Outside that
-tolerance, effective teaching minutes are divided by 60. Breaks and khôlles do not contribute.
-Unequal group workloads produce a warning by subject, combining course/TD/TP and comparing all groups
-over the full cycle. The chart retains its separate course/TD/TP breakdown. The graph still shows the
-average, with an explicit explanation when loads differ.
+## Teacher workspace and conflicts
 
-Promotion assignment resolves generic A/B/X/Y/Z recipients against current promotion groups without
-rewriting the pattern or copying pupil IDs. Missing or empty group definitions trigger warnings.
-The management page warns when an agenda lacks a promotion; “Points à vérifier” adds a red critical
-entry. These conditions allow draft saves; publication still requires an active promotion.
-Class conflict checks distinguish disjoint groups of one partition and use known membership
-intersections across partitions. A canonical room may host two simultaneous half-group sessions;
-a third half-group or any whole-class overlap still warns. Teacher conflicts remain independent.
-Weekly workload and conflict checks recompute from unsaved edits; promotion metadata refreshes
-after writes and when returning to the window, without requiring a full page reload.
+The permanent /timetable/prof workspace keeps subject folders, teacher selection and overlays,
+availability editing, dated teaching consultation and weekly teacher-hour totals. Its year selector
+uses the explicit academic-year catalogue, independently of promotion calendars.
+The Hours panel uses a single table with one row per calendar/promotion and subject, separate
+course/TD/TP/kholle columns, subject totals across calendars and an overall weekly total.
+Each calendar's own session duration is respected.
+Default availability is 08:00–19:00 Monday–Friday and 08:00–12:00 Saturday, without recess or lunch.
+An absent pattern means that entire grid is available; an explicit empty pattern means unavailable.
+Saving null restores the default. Patterns belong only to their chosen year and are never copied.
+Overlapping/touching ranges merge. Out-of-grid submissions, including Saturday afternoon, are refused.
+The Saturday column remains visible in the staff workspace regardless of promotion settings.
 
-Archiving a teacher preserves the account's encrypted identity and historical event labels. Their
-subscription is denied immediately. Existing published sessions remain visible to authorized
-members, and future assigned sessions trigger a warning. Existing teacher references can remain in
-a saved/published draft while awaiting replacement; assigning an archived teacher to a new template
-block is rejected. Replacing the teacher applies through normal version activation and preserves
-earlier assignments. Names resolve from the retained account, rather than an immutable name snapshot.
+Teacher availability and cross-calendar bookings compare matching academic labels only. Archived
+calendars never participate. Administrators can inspect non-archived preparations with diffusion off;
+other staff receive only currently diffused teaching sessions. External booking metadata contains
+teacher IDs, times and calendar references, never another promotion's pupil roster or course details.
+The availability workspace retains anonymous full-class occupancy hatching, calculated from real
+simultaneous recipients without adding queries per pupil or occurrence.
 
-The session length is effective teaching time. A 55-minute session yields exact 27m30s
-half-slots; starts at 08:00 and 08:27:30 are both valid. A four-session block starting at 08:00
-with recess at 09:50–10:10 produces 08:00–09:50 and 10:10–12:00 segments. Both segments edit
-the same occurrence. Lunch and other pauses are handled identically. A pause inside a
-half-session splits its display but does not discard its remaining teaching time. Any final
-remainder shorter than a half-session cannot hold another block.
+Teacher unavailability, simultaneous teacher/room bookings and overlapping pupil audiences are
+nonblocking diagnostics. Teacher and pupil collisions are critical. The UI previews current external
+bookings before saving and allows confirmation despite diagnostics. Ordinary conflict warnings group
+recurring pairs and ignore past dates. Warning event links open the actual dated occurrence.
 
-Weeks containing at least one open non-holiday school day are numbered from one. Fully closed
-holiday weeks do not advance two/three-week cycles. The UI also shows the ISO week number.
-Partial school weeks still count once. Incomplete final cycles trigger a warning without
-removing any session; holiday days and exceptions may require further manual balancing.
+## Live diffusion, confirmations and archives
 
-Click an existing segment to modify/cancel only its occurrence or that occurrence and all
-following ones. Future edits split the series without altering its earlier occurrences.
-Independent exceptions are retained; incompatible retained exceptions must be resolved before
-changing that series or its settings. Deleted occurrences disappear from the draft and,
-after publication, the export. Advanced restoration/history UI is outside this increment.
+The master switch on /timetable controls web visibility and ICS events. With diffusion off, the
+calendar is administrator-only and contributes no events to personal subscriptions. Enabling diffusion
+requires a promotion. Every change to an assigned, diffused calendar requires explicit confirmation,
+also enforced by the backend. Reassignment separately confirms the recipient change and recomputes
+group/lunch diagnostics. Calendar and event revisions prevent stale concurrent writes; changing the
+promotion or diffusion also invalidates a previously opened event editor.
 
-Published annual date ranges of the same agenda must not overlap; this keeps one current
-school-year publication unambiguous for consultation and subscriptions.
+Archiving retains all rows, cuts diffusion, excludes the calendar from teacher views/conflicts and
+makes settings/events read-only. Only administrators can discover or inspect archives. Restoration
+keeps diffusion off. If its promotion already has an active calendar, restore with the promotion
+detached; the management dialog offers that option. No calendar deletion endpoint exists.
 
-Preparing a later year copies the latest weekly template onto the new year's teaching dates and
-cycle phases. It drops single events, personal student templates and date-specific exceptions.
-Older agendas without template versions retain the previous recurring-series copying behavior.
-The new year's common settings must be configured first. Duplicate year preparation is rejected.
-No background job changes dates, memberships or publications at rentrée.
+Only permanent administrators with users.manage can write. Teachers with teaching.read and kholleurs
+with kholleur.access may read authorized live promotion calendars and the teaching-only staff view.
+Students cannot use timetable web/catalogue/board APIs. Their personal subscription still works.
+Existing membership, account activation, CSRF, token redaction and no-index/private-cache rules apply.
 
-## Personal subscriptions
+## Compact persistence and personal ICS
 
-Students, teachers and khôlleurs generate a link from `/me`. Each account has one verifier.
-Generation/rotation uses an authenticated, origin-protected POST and a random 256-bit secret;
-only its full SHA-256 verifier is retained. Rotation atomically replaces the verifier. The URL
-is shown only in the successful generation response and current page memory. It is never stored
-in localStorage or returned by later profile/status requests.
+The database stores one annual configuration per calendar, recurring series and bounded dated
+exceptions, not thousands of materialized occurrence rows or per-pupil copies. Annual sources are
+loaded in bulk: one year query and one series query, independent of calendar/occurrence counts.
+Subject, teacher and room labels are fetched in batches. Personal feeds use current memberships and
+group assignments, generate occurrences in memory, filter recipients and decorate once. They never
+query the database inside the occurrence loop. Integration tests enforce an SQL-query budget.
 
-Students receive whole-class, current group and individually targeted events in their active
-promotions. Teaching staff receive
-only events where they are the assigned teacher, within their current active promotions.
-The backend checks current account status, roles, promotion state and memberships on every fetch.
-Removing membership removes those events from future exports; an inactive account's link is denied.
-The secret grants read-only calendar access and never authorizes timetable writes.
+Members generate or rotate their opaque personal link at /me. The original token is never stored;
+the sole verifier is revocable and former tokens stop working. Students receive only their current
+audiences, teachers only their own assignments across authorized promotions. Inactive users and
+removed memberships lose access. Feeds include only diffused calendars whose dates include today.
+No eligible calendar returns a valid empty ICS; archived calendars never leak historical events.
 
-The public BFF route `/calendar-feed/<secret>.ics` retrieves
-`/api/v1/timetable/feed/<secret>.ics` without forwarding browser cookies. It returns RFC 5545
-calendar data with stable occurrence/segment UIDs, UTC instants, publication timestamps and
-escaped text. It exports titles, types, teachers and rooms, without student rosters or profiles.
-The URL must be Internet-accessible over HTTPS for provider servers to retrieve it.
+## Migration and verification
 
-Apple Calendar can subscribe by URL. Google Calendar's documented URL-addition workflow uses
-the desktop website, after which the calendar can sync to Android. Importing a downloaded file
-is a one-time copy. Refresh timing belongs to the client/provider; publication cannot guarantee
-instant phone updates. Test real target applications before depending on urgent changes.
+Revision `0013_custom_group_positions` adds bounded bubble positions to custom groups and arranges
+existing groups beside the full-class source. It preserves all names, memberships and sessions.
+Apply it using the normal migration-role `alembic upgrade head`.
 
-Anyone holding a link can read its exported events, including a provider to which the user adds
-it. Rotation prevents subsequent retrieval with the old URL; it cannot erase downloaded copies.
-A temporary backend failure returns an error, not an intentionally emptied calendar.
+Revision `0012_timetable_audiences` is additive over the annual schema. It preserves existing calendars,
+accounts, subscriptions and sessions, adds named audiences and the global automatic archive policy,
+and detaches former occurrence replacements while retaining their original ICS identifiers.
+Use the normal migration-role `alembic upgrade head`; do not replay `0011` on an existing annual schema.
+The default enabled policy archives and stops all active calendars with an older academic label at
+September rollover. A background check runs every minute and timetable reads/feeds also catch up,
+including after downtime. A transactional year watermark serializes workers and lets manually restored
+calendars remain restored until the next rollover. Enabling the policy also catches up immediately.
+Only administrators can change it. Downgrading `0012` is refused while custom audiences are referenced
+by sessions, avoiding dangling recipient assignments.
 
-## Deployment, limits and verification
+Revision 0011_teacher_availability is intentionally rewritten with the owner's authorization.
+Applying it removes all timetable calendars, series, former template versions/publications, rooms,
+academic labels, availability patterns and subscription verifiers. Accounts, promotions, subjects,
+groups and other application data are retained. No database volume is reset.
 
-Apply additive migrations through `0011_teacher_availability` with the existing migration service
-before starting the new backend. Normal Compose startup runs them. Revision `0007_timetable`
-introduced the timetable tables; `0008_timetable_workspace` adds shared settings, room retirement,
-pause/removal flags and immutable weekly versions. `0009_timetable_instants` adds an aware activation
-timestamp, backfilling existing versions at Paris midnight without rewriting their blocks or publications.
-Existing settings and publications are retained.
-Revision `0011_teacher_availability` adds the annual teacher-pattern table, with foreign keys to teaching
-accounts and configured school years. Existing teachers need no backfill: missing rows use opening hours.
-Downgrading it removes these availability patterns only. The permanent workspace needs no seeded calendar.
-Revision `0010_timetable_optional_fields` makes the three series reference columns nullable without
-rewriting existing events, snapshots or foreign keys. Downgrading it fails transactionally while
-unassigned series remain; assign their missing references before attempting a downgrade.
-When legacy agendas disagree on common settings, the migration preserves every alternative and the
-administrator selects the desired settings explicitly. Backups must include all timetable tables
-and publication snapshots. Downgrading revision 0008 drops version metadata; downgrading revision
-0007 removes timetable-specific data. Downgrading 0009 removes activation-time precision metadata;
-the generated historical sessions and civil version dates remain retained.
+Fresh installations use the normal Alembic upgrade head. If the former version of 0011 is already
+applied, stop the application, use the migration role to stamp 0010_timetable_optional_fields, then
+upgrade head to replay the rewritten revision. This replay procedure is only for the former schema;
+never stamp a database that already uses the new annual schema. Downgrading restores schema shape,
+not discarded timetable data. Existing personal links must be regenerated after this reset.
 
-Use the updated `infra/nginx.conf` subscription location: it omits credential URLs from access
-logs and suppresses error-level request dumps for that location. Uvicorn's existing access filter
-also redacts backend feed URLs. Apply equivalent redaction to any additional ingress, CDN or APM.
-Subscription responses use `no-store`, no indexing and `no-referrer`. No extra Compose service,
-environment file, external API account or paid calendar component is required.
-
-EventCalendar is MIT-licensed and `icalendar` is BSD-2-Clause; retain their notices. Pinning uses
-the existing npm lockfile and backend dependency declaration. Keep dependencies updated.
-
-Annual drafts allow at most 5,000 series, templates at most 250 blocks, and each series at most 100
-exceptions. Template request bodies have a bounded 256 KiB limit; ordinary commands retain the
-existing 16 KiB limit. Limits are enforced server-side. Conflict warnings cover class, teacher and canonical room
-overlaps in the displayed selection. They are an initial aid, not a comprehensive timetable
-validity check or an automatic scheduling solver.
-
-Personal ICS retrieval loads current memberships and current publication snapshots in bulk, then
-resolves subjects/teachers/rooms with three label queries. Its SELECT count is independent of the
-number of authorized agendas and generated occurrences. Integration tests compare one versus seven
-agendas and enforce at most ten SELECTs. Current account and promotion access are still checked on
-every fetch; no persistent cache can retain stale permissions. Teaching-week and slot arithmetic is
-reused while expanding each annual document. Changed template series are upserted in batches of 250;
-unchanged historical series are not rewritten.
-
-Run the usual backend `python -m pytest -q` and `ruff check .`; `python run_tests.py` runs the
-suite against disposable Docker/PostgreSQL services, including migration/publication/feed tests.
-Use PyCharm's configured interpreter. Frontend checks are `npm test`, `npm run check`,
-`npm run lint` and `npm run build`. After building, `node --test tests/timetable-browser.mjs`
-checks agenda/room management, the full-screen grid, template activation and retroactive confirmation,
-teacher sorting, copy/paste, live warnings, drag placement, audience filtering, mobile layout,
-staff/student access and one-time link UI against a synthetic API.
-Real PostgreSQL authorization, shared settings, weekly versions and frozen publications are
-covered independently; real Apple/Google subscription refresh has not been automated.
+Run backend pytest and Ruff, frontend tests/check/lint/build, and the browser timetable scenario.
+backend/run_tests.py provides the existing isolated PostgreSQL/Docker workflow and migration metadata
+checks. Unit tests cover holiday cycles, exceptions, exact durations, lunch, annual makeups and
+audience weighting. PostgreSQL tests cover actual API rights, live feeds, archive restoration,
+uniqueness, stale writes, immutable settings, matching-year availability and bounded feed queries.
+The demo script script/creer_donnees_test.py creates accounts/subjects/groups only; it does not need
+to populate or publish timetables and is not run by this refactor.

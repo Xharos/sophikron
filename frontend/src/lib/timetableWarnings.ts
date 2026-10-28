@@ -1,41 +1,139 @@
 /** Resolve warning targets using stable source identities rather than parsing translated messages. */
-import type { TimetableEvent, TimetableYear, WeeklyBlock } from './timetable';
+import {
+	crossCalendarTeacherConflicts,
+	teacherAvailabilityDetails,
+	timetableConflictDetails,
+	type TimetableBoard,
+	type TimetableBlock,
+	type TimetableIssue,
+	type TimetableEvent,
+	type TimetableYear
+} from './timetable.ts';
+
+export interface DiagnosticEntry extends TimetableIssue {
+	identity?: string;
+	events?: TimetableEvent[];
+	change?: 'added' | 'removed' | 'changed';
+	previous?: DiagnosticEntry;
+}
+
+/** Compose the same structured checks for the board and for an unsaved proposal. */
+export function timetableDiagnostics(
+	board: TimetableBoard,
+	today: string,
+	focus?: {
+		event: TimetableEvent | null;
+		block: TimetableBlock | null;
+		scope: 'one' | 'future';
+		originalSeries: string[];
+	}
+): DiagnosticEntry[] {
+	const events = focus
+		? board.events.filter((event) => {
+				if (!focus.event) return true;
+				const day = event.start.slice(0, 10);
+				const firstDay = [
+					focus.event.start.slice(0, 10),
+					focus.block?.starts_on ?? focus.event.source_date
+				].sort()[0];
+				return focus.scope === 'future'
+					? day >= firstDay
+					: [focus.event.start.slice(0, 10), focus.block?.starts_on].includes(day);
+			})
+		: board.events;
+	const warnings = [
+		...timetableConflictDetails(events, board.groups ?? [], today),
+		...crossCalendarTeacherConflicts(events, board.teacher_commitments ?? [], today),
+		...teacherAvailabilityDetails(
+			events,
+			board.availability ?? [],
+			today,
+			board.years[0]?.school_year
+		)
+	].filter(
+		(warning) =>
+			!focus ||
+			warning.events.some(
+				(event) =>
+					event.series_id === focus.event?.series_id ||
+					(focus.event?.conflict_key && event.conflict_key === focus.event.conflict_key) ||
+					!focus.originalSeries.includes(event.series_id)
+			)
+	);
+	const aliases = new Set(
+		focus
+			? board.years
+					.flatMap((year) => year.series)
+					.filter(
+						(series) =>
+							series.id === focus.event?.series_id || !focus.originalSeries.includes(series.id)
+					)
+					.flatMap((series) => [series.id, series.lineage])
+			: []
+	);
+	if (focus?.event) {
+		aliases.add(focus.event.series_id);
+		if (focus.event.conflict_key) aliases.add(focus.event.conflict_key);
+	}
+	return [
+		...(board.issues ?? []),
+		...warnings.map((warning) => ({
+			...warning,
+			severity: warning.severity ?? ('warning' as const),
+			identity: warning.code.replace(/[a-f0-9]{32}/g, (value) =>
+				aliases.has(value) ? 'edited' : value
+			)
+		}))
+	];
+}
+
+/** Compare logical checks independently of newly generated recurrence node identifiers. */
+export function diagnosticChanges(
+	before: DiagnosticEntry[],
+	after: DiagnosticEntry[]
+): DiagnosticEntry[] {
+	const key = (entry: DiagnosticEntry): string => entry.identity ?? entry.code;
+	const signature = (entry: DiagnosticEntry): string =>
+		JSON.stringify([entry.message, entry.severity, entry.groups, entry.cycles]);
+	const group = (entries: DiagnosticEntry[]): Map<string, DiagnosticEntry> =>
+		new Map(entries.map((entry) => [key(entry), entry]));
+	const previous = group(before),
+		next = group(after);
+	const changes: DiagnosticEntry[] = [];
+	for (const [id, entry] of next) {
+		const old = previous.get(id);
+		if (!old) changes.push({ ...entry, change: 'added' });
+		else if (signature(entry) !== signature(old))
+			changes.push({ ...entry, change: 'changed', previous: old });
+	}
+	for (const [id, entry] of previous)
+		if (!next.has(id)) changes.push({ ...entry, change: 'removed' });
+	return changes.sort(
+		(a, b) =>
+			Number(b.severity === 'critical' && b.change !== 'removed') -
+			Number(a.severity === 'critical' && a.change !== 'removed')
+	);
+}
 
 export interface WarningEventTarget {
 	event: TimetableEvent;
-	templateKey: string | null;
 	recurrenceKey?: string;
 }
 
-/** Exceptions and independent recurring series stay dated; current template blocks open weekly editing. */
-export function warningEventTarget(
-	event: TimetableEvent,
-	year: TimetableYear,
-	blocks: WeeklyBlock[],
-	templateMode: boolean
-): WarningEventTarget {
-	if (templateMode && blocks.some((block) => block.key === event.series_id))
-		return { event, templateKey: event.series_id };
+/** Keep independent exceptions dated and group unchanged recurring assignments by lineage. */
+export function warningEventTarget(event: TimetableEvent, year: TimetableYear): WarningEventTarget {
 	const source = year.series.find((series) => series.id === event.series_id);
-	const key = event.template_key ?? source?.template_key;
 	const exception =
 		event.is_exception ?? Object.hasOwn(source?.exceptions ?? {}, event.source_date);
-	return {
-		event,
-		templateKey: !exception && key && blocks.some((block) => block.key === key) ? key : null,
-		...(!exception && source && source.interval > 0 ? { recurrenceKey: source.lineage } : {})
-	};
+	return { event, ...(!exception && source?.interval ? { recurrenceKey: source.lineage } : {}) };
 }
-
-/** Keep one entry per template block or dated occurrence, merging recess-split segments. */
+/** Merge split segments and recurring references while retaining separate dated exceptions. */
 export function uniqueWarningTargets(targets: WarningEventTarget[]): WarningEventTarget[] {
 	const unique = new Map<string, WarningEventTarget>();
 	for (const target of [...targets].sort((a, b) => a.event.start.localeCompare(b.event.start))) {
-		const key = target.templateKey
-			? `template-${target.templateKey}`
-			: target.recurrenceKey
-				? `recurrence-${target.event.year_id}-${target.recurrenceKey}`
-				: `${target.event.year_id}-${target.event.series_id}-${target.event.source_date}`;
+		const key = target.recurrenceKey
+			? 'recurrence-' + target.event.year_id + '-' + target.recurrenceKey
+			: target.event.year_id + '-' + target.event.series_id + '-' + target.event.source_date;
 		if (!unique.has(key)) unique.set(key, target);
 	}
 	return [...unique.values()];
@@ -52,15 +150,18 @@ export function warningEventWhen(target: WarningEventTarget, year: TimetableYear
 		const [h, m, s = 0] = value.slice(11, 19).split(':').map(Number);
 		return h * 3600 + m * 60 + s;
 	};
-	const start = year.slots[event.start_slot]?.[0] ?? seconds(event.start);
-	const end = year.slots[event.start_slot + event.duration_slots - 1]?.[1] ?? seconds(event.end);
+	const start = event.start_time ?? year.slots[event.start_slot]?.[0] ?? seconds(event.start);
+	const end =
+		event.end_time ??
+		year.slots[event.start_slot + event.duration_slots - 1]?.[1] ??
+		seconds(event.end);
 	const day = new Date(`${event.start.slice(0, 10)}T12:00:00Z`);
 	const label = new Intl.DateTimeFormat('fr-FR', {
 		timeZone: 'UTC',
 		weekday: 'long',
-		...(target.templateKey
-			? {}
-			: { day: 'numeric' as const, month: 'long' as const, year: 'numeric' as const })
+		day: 'numeric',
+		month: 'long',
+		year: 'numeric'
 	}).format(day);
 	return `${label} · ${time(start)}–${time(end)}`;
 }

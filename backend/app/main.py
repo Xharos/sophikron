@@ -25,6 +25,7 @@ from app.services.document_storage import DocumentStorage, document_maintenance
 from app.services.errors import INVALID_REQUEST, AuthError
 from app.services.mail import DisabledMailer, InvitationMailer, SmtpMailer
 from app.services.search import NameSearchCache
+from app.services.timetable_lifecycle import timetable_maintenance
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +82,7 @@ def create_app(
             documents.max_concurrent_downloads, max_value=documents.max_concurrent_downloads
         )
         maintenance = None
+        timetable_task = None
         try:
             async with database.sessions() as session:
                 service = AuthService(session, authentication, cipher, passwords, delivery)
@@ -89,8 +91,13 @@ def create_app(
                 maintenance = asyncio.create_task(
                     document_maintenance(database, DocumentStorage(documents))
                 )
+            timetable_task = asyncio.create_task(timetable_maintenance(database))
             yield
         finally:
+            if timetable_task is not None:
+                timetable_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await timetable_task
             if maintenance is not None:
                 maintenance.cancel()
                 with suppress(asyncio.CancelledError):

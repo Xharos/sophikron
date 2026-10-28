@@ -1,39 +1,71 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { goto, invalidateAll } from '$app/navigation';
+	import { invalidateAll } from '$app/navigation';
 	import Modal from '#lib/components/Modal.svelte';
+	import TimetableSettingsEditor from '#lib/components/TimetableSettings.svelte';
 	import { timetableCommand } from '#lib/timetableClient';
-	import type { TimetableAgenda } from '#lib/timetable';
+	import {
+		defaultTimetableSettings,
+		currentSchoolYear,
+		preferredSchoolYear,
+		type TimetableAgenda,
+		type TimetableSettings
+	} from '#lib/timetable';
 	import type { PageProps } from './$types';
 	let { data }: PageProps = $props();
 	let editing = $state<TimetableAgenda | null>(null);
 	let editorOpen = $state(false);
-	let deleting = $state<TimetableAgenda | null>(null);
 	let name = $state('');
 	let promotionId = $state<number | null>(null);
+	let schoolYear = $state(0);
+	let settings = $state<TimetableSettings>(defaultTimetableSettings(2026));
 	let busy = $state(false);
 	let message = $state('');
+	let archives = $state(false);
+	let detachPromotion = $state(false);
+	let pending = $state<{
+		agenda: TimetableAgenda;
+		action: 'save' | 'toggle' | 'archive' | 'restore';
+	} | null>(null);
+	const agendas = $derived(
+		data.catalog.calendars.filter((item) => !!item.is_archived === archives)
+	);
 	function edit(agenda: TimetableAgenda | null): void {
 		editing = agenda;
 		name = agenda?.name ?? '';
 		promotionId = agenda?.promotion_id ?? null;
+		schoolYear = preferredSchoolYear(
+			(data.catalog.common_years ?? []).filter(
+				(year) => year.school_year >= currentSchoolYear(data.catalog.today)
+			),
+			data.catalog.today
+		);
+		settings = defaultTimetableSettings(schoolYear || new Date().getFullYear());
 		message = '';
 		editorOpen = true;
 	}
-	async function save(): Promise<void> {
+	async function save(confirmed = false): Promise<void> {
+		if (editing && !confirmed) {
+			pending = { agenda: editing, action: 'save' };
+			return;
+		}
 		busy = true;
 		message = '';
 		try {
 			await timetableCommand(
-				editing ? `calendars/${editing.id}` : 'calendars',
+				editing ? 'calendars/' + editing.id : 'calendars',
 				editing ? 'PUT' : 'POST',
 				{
 					name,
 					promotion_id: promotionId,
-					is_paused: editing?.is_paused ?? false,
-					expected_revision: editing?.revision ?? null
+					is_paused: editing?.is_paused ?? true,
+					expected_revision: editing?.revision ?? null,
+					confirmed_live: confirmed,
+					confirmed_assignment: confirmed,
+					...(!editing ? { school_year: schoolYear, settings } : {})
 				}
 			);
+			pending = null;
 			editorOpen = false;
 			await invalidateAll();
 		} catch (cause) {
@@ -42,16 +74,31 @@
 			busy = false;
 		}
 	}
-	async function toggle(agenda: TimetableAgenda): Promise<void> {
+	async function confirm(): Promise<void> {
+		if (!pending) return;
+		if (pending.action === 'save') {
+			await save(true);
+			return;
+		}
+		const { agenda, action } = pending;
 		busy = true;
 		message = '';
 		try {
-			await timetableCommand(`calendars/${agenda.id}`, 'PUT', {
-				name: agenda.name,
-				promotion_id: agenda.promotion_id,
-				expected_revision: agenda.revision,
-				is_paused: !agenda.is_paused
-			});
+			if (action === 'toggle')
+				await timetableCommand('calendars/' + agenda.id, 'PUT', {
+					name: agenda.name,
+					promotion_id: agenda.promotion_id,
+					is_paused: !agenda.is_paused,
+					expected_revision: agenda.revision,
+					confirmed_live: true
+				});
+			else
+				await timetableCommand('calendars/' + agenda.id + '/' + action, 'POST', {
+					expected_revision: agenda.revision,
+					confirmed_live: true,
+					detach_promotion: action === 'restore' ? detachPromotion : undefined
+				});
+			pending = null;
 			await invalidateAll();
 		} catch (cause) {
 			message = cause instanceof Error ? cause.message : 'Modification impossible.';
@@ -59,55 +106,22 @@
 			busy = false;
 		}
 	}
-	async function remove(): Promise<void> {
-		if (!deleting) return;
-		busy = true;
+	function ask(agenda: TimetableAgenda, action: 'toggle' | 'archive' | 'restore'): void {
 		message = '';
-		try {
-			await timetableCommand(`calendars/${deleting.id}`, 'DELETE', {
-				expected_revision: deleting.revision
-			});
-			deleting = null;
-			await invalidateAll();
-		} catch (cause) {
-			message = cause instanceof Error ? cause.message : 'Suppression impossible.';
-		} finally {
-			busy = false;
-		}
-	}
-	async function open(agenda: TimetableAgenda): Promise<void> {
-		busy = true;
-		message = '';
-		try {
-			const shared =
-				data.catalog.common_years?.find(
-					(year) =>
-						year.settings &&
-						year.settings.start <= data.catalog.today &&
-						year.settings.end >= data.catalog.today
-				) ?? data.catalog.common_years?.find((year) => year.settings);
-			if (
-				data.catalog.administrator &&
-				shared?.settings &&
-				!agenda.years.some((year) => year.school_year === shared.school_year)
-			)
-				await timetableCommand(`calendars/${agenda.id}/years`, 'POST', {
-					settings: shared.settings,
-					copy_previous: true
-				});
-			await goto(resolve('/timetable/[id]', { id: String(agenda.id) }));
-		} catch (cause) {
-			message = cause instanceof Error ? cause.message : 'Ouverture impossible.';
-		} finally {
-			busy = false;
-		}
+		detachPromotion =
+			action === 'restore' &&
+			agenda.promotion_id !== null &&
+			data.catalog.calendars.some(
+				(item) => !item.is_archived && item.promotion_id === agenda.promotion_id
+			);
+		pending = { agenda, action };
 	}
 </script>
 
 <svelte:head
 	><title>Agendas — {data.establishmentName}</title><meta
 		name="description"
-		content="Gestion des agendas et des réglages de l’établissement."
+		content="Emplois du temps annuels et diffusion des calendriers."
 	/><meta name="robots" content="noindex, nofollow" /></svelte:head
 >
 <section class="section container agenda-management">
@@ -117,100 +131,99 @@
 			<h1 class="title is-2">Agendas</h1>
 		</div>
 		{#if data.catalog.administrator}<div class="buttons">
-				<a class="button is-light" href={resolve('/timetable/settings')}>Réglages communs</a><button
-					class="button is-primary"
-					disabled={busy}
-					onclick={() => edit(null)}>Nouvel agenda</button
+				<a class="button is-light" href={resolve('/timetable/settings')}
+					>Salles et années scolaires</a
+				><button class="button is-primary" disabled={busy} onclick={() => edit(null)}
+					>Nouvel agenda</button
 				>
 			</div>{/if}
 	</header>
-	{#if message && !editorOpen && !deleting}<p class="notification is-danger is-light" role="alert">
-			{message}
-		</p>{/if}
-	{#if !data.catalog.calendars.length}<div class="workspace-panel empty-agendas">
-			<h2 class="title is-5">Aucun agenda de promotion</h2>
-			<p class="muted">
-				{data.catalog.administrator
-					? 'Créez un agenda, puis associez-lui une promotion.'
-					: 'Les agendas de vos promotions apparaîtront ici.'}
-			</p>
+	{#if data.catalog.administrator}<div class="buttons mb-5">
+			<button class="button" class:is-primary={!archives} onclick={() => (archives = false)}
+				>Actifs</button
+			><button class="button" class:is-primary={archives} onclick={() => (archives = true)}
+				>Archives</button
+			>
 		</div>{/if}
-	{#if data.catalog.administrator && data.catalog.calendars.some((agenda) => agenda.promotion_id === null)}<p
-			class="notification is-warning is-light"
-			role="alert"
-		>
-			Un ou plusieurs agendas n’ont aucune promotion affectée. Vous pouvez les préparer et les
-			sauvegarder ; affectez une promotion pour les diffuser aux élèves et enseignants.
+	{#if message && !editorOpen && !pending}<p class="notification is-danger is-light" role="alert">
+			{message}
 		</p>{/if}
 	<div class="agenda-list">
 		<article class="agenda-row workspace-panel">
-			<a class="agenda-open" href={resolve('/timetable/prof')}>
-				<span class="agenda-symbol" aria-hidden="true">▦</span>
-				<span
+			<a class="agenda-open" href={resolve('/timetable/prof')}
+				><span class="agenda-symbol" aria-hidden="true">▦</span><span
 					><strong>prof</strong><small>Disponibilités et emplois du temps des enseignants</small
 					></span
-				>
-			</a>
-			<span class="tag">Agenda permanent</span>
+				></a
+			><span class="tag">Agenda permanent</span>
 		</article>
-		{#each data.catalog.calendars as agenda (agenda.id)}<article class="agenda-row workspace-panel">
-				<button class="agenda-open" disabled={busy} onclick={() => open(agenda)}
+		{#each agendas as agenda (agenda.id)}<article class="agenda-row workspace-panel">
+				<a class="agenda-open" href={resolve('/timetable/[id]', { id: String(agenda.id) })}
 					><span class="agenda-symbol" aria-hidden="true">▦</span><span
 						><strong>{agenda.name}</strong><small
-							>{data.catalog.promotions.find((promotion) => promotion.id === agenda.promotion_id)
-								?.name ?? 'Aucune promotion affectée'}</small
+							>{agenda.years[0]?.school_year}/{(agenda.years[0]?.school_year ?? 0) + 1} · {data.catalog.promotions.find(
+								(p) => p.id === agenda.promotion_id
+							)?.name ?? 'Aucune promotion affectée'}</small
 						></span
-					></button
+					></a
 				>
-				<div class="agenda-actions">
-					{#if data.catalog.administrator}<label class="pause-switch"
-							><input
-								type="checkbox"
-								role="switch"
-								checked={!agenda.is_paused}
-								aria-label={`Agenda ${agenda.name} actif`}
+				{#if data.catalog.administrator}<div class="agenda-actions">
+						{#if agenda.is_archived}<span class="tag">Archive · lecture seule</span><button
+								class="button is-small is-light"
 								disabled={busy}
-								onchange={() => toggle(agenda)}
-							/><span class="switch-track" aria-hidden="true"></span><span
-								>{agenda.is_paused ? 'En pause' : 'Actif'}</span
-							></label
-						>
-						<button class="button is-small is-light" disabled={busy} onclick={() => edit(agenda)}
-							>Modifier</button
-						><button
-							class="button is-small is-light"
-							disabled={busy}
-							onclick={() => {
-								deleting = agenda;
-								message = '';
-							}}>Supprimer</button
-						>
-					{:else if agenda.is_paused}<span class="tag">Diffusion figée</span>{/if}
-				</div>
+								onclick={() => ask(agenda, 'restore')}>Réactiver</button
+							>{:else}
+							<label class="pause-switch"
+								><input
+									type="checkbox"
+									role="switch"
+									checked={!agenda.is_paused}
+									aria-label={'Diffuser ' + agenda.name}
+									disabled={busy || agenda.promotion_id === null}
+									onclick={(event) => {
+										event.preventDefault();
+										ask(agenda, 'toggle');
+									}}
+								/><span class="switch-track" aria-hidden="true"></span><span
+									>{agenda.is_paused ? 'Diffusion coupée' : 'Diffusé en direct'}</span
+								></label
+							>
+							<button class="button is-small is-light" disabled={busy} onclick={() => edit(agenda)}
+								>Modifier</button
+							><button
+								class="button is-small is-light"
+								disabled={busy}
+								onclick={() => ask(agenda, 'archive')}>Archiver</button
+							>{/if}
+					</div>{/if}
 			</article>{/each}
+		{#if !agendas.length}<p class="workspace-panel empty-agendas">
+				{archives ? 'Aucun calendrier archivé.' : 'Aucun calendrier de promotion.'}
+			</p>{/if}
 	</div>
 </section>
 {#if editorOpen}<Modal
 		title={editing ? 'Modifier l’agenda' : 'Nouvel agenda'}
 		{busy}
 		onclose={() => (editorOpen = false)}
-	>
-		<form
+		><form
 			onsubmit={(event) => {
 				event.preventDefault();
 				void save();
 			}}
 		>
-			{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
-			<label class="label" for="agenda-name">Nom de l’agenda</label><input
+			{#if message && !pending}<p class="notification is-danger is-light" role="alert">
+					{message}
+				</p>{/if}
+			<label class="label" for="agenda-name">Nom unique</label><input
 				id="agenda-name"
 				class="input mb-4"
 				bind:value={name}
 				required
 				maxlength="100"
 			/>
-			<label class="label" for="agenda-promotion">Promotion affectée</label>
-			<div class="select is-fullwidth mb-5">
+			<label class="label" for="agenda-promotion">Promotion</label>
+			<div class="select is-fullwidth mb-4">
 				<select id="agenda-promotion" bind:value={promotionId}
 					><option value={null}>Aucune</option
 					>{#each data.catalog.promotions as promotion (promotion.id)}<option value={promotion.id}
@@ -218,18 +231,69 @@
 						>{/each}</select
 				>
 			</div>
-			<button class="button is-primary" disabled={busy}>Enregistrer</button>
-		</form>
-	</Modal>{/if}
-{#if deleting}<Modal title="Supprimer l’agenda" {busy} onclose={() => (deleting = null)}>
+			{#if !editing}<label class="label" for="agenda-year">Année scolaire obligatoire</label>
+				<div class="select is-fullwidth mb-4">
+					<select
+						id="agenda-year"
+						bind:value={schoolYear}
+						onchange={() => (settings = defaultTimetableSettings(schoolYear))}
+						required
+						><option value={0} disabled>Choisir une année</option
+						>{#each (data.catalog.common_years ?? []).filter((year) => year.school_year >= currentSchoolYear(data.catalog.today)) as year (year.school_year)}<option
+								value={year.school_year}>{year.school_year}/{year.school_year + 1}</option
+							>{/each}</select
+					>
+				</div>
+				{#if !data.catalog.common_years?.length}<p class="notification is-warning is-light">
+						Créez d’abord une année dans « Salles et années scolaires ».
+					</p>{/if}
+				<TimetableSettingsEditor bind:settings />
+				<p class="help mt-4">
+					Le calendrier sera créé avec la diffusion coupée. Horaires, pauses, séance et self seront
+					figés.
+				</p>{/if}
+			<button class="button is-primary mt-5" disabled={busy || (!editing && !schoolYear)}
+				>Enregistrer</button
+			>
+		</form></Modal
+	>{/if}
+{#if pending}<Modal
+		title={pending.action === 'archive'
+			? 'Archiver le calendrier'
+			: pending.action === 'restore'
+				? 'Réactiver l’archive'
+				: 'Confirmer le changement'}
+		{busy}
+		onclose={() => (pending = null)}
+	>
 		{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
-		<p>
-			Retirer « {deleting.name} » de la liste et des abonnements ? Les données historiques seront conservées.
-		</p>
+		<p>Calendrier « {pending.agenda.name} ».</p>
+		{#if pending.action === 'archive'}<p class="mt-3">
+				La diffusion et les abonnements seront coupés. Le calendrier sera en lecture seule et ne
+				participera plus aux emplois du temps et conflits des professeurs.
+			</p>
+		{:else if pending.action === 'restore'}<p class="mt-3">
+				La diffusion restera coupée après réactivation.
+			</p>
+			<label class="checkbox mt-4"
+				><input type="checkbox" bind:checked={detachPromotion} /> Réactiver sans promotion affectée (nécessaire
+				si elle possède déjà un calendrier actif)</label
+			>
+		{:else if pending.action === 'toggle'}<p class="mt-3">
+				{pending.agenda.is_paused
+					? 'Toutes les séances enregistrées seront immédiatement accessibles aux destinataires autorisés et aux abonnements ICS.'
+					: 'Les destinataires ne pourront plus consulter ce calendrier et les abonnements ICS ne renverront plus ses événements.'}
+			</p>
+		{:else}<p class="mt-3">
+				Les changements seront immédiatement appliqués. Changer la promotion retire l’accès aux
+				anciens destinataires, donne accès aux nouveaux et recalcule les contrôles de groupes et de
+				repas.
+			</p>{/if}
 		<div class="buttons mt-5">
-			<button class="button is-danger" disabled={busy} onclick={remove}>Supprimer l’agenda</button
-			><button class="button is-light" disabled={busy} onclick={() => (deleting = null)}
-				>Annuler</button
+			<button class="button is-primary" disabled={busy} onclick={confirm}>Confirmer</button><button
+				class="button is-light"
+				disabled={busy}
+				onclick={() => (pending = null)}>Annuler</button
 			>
 		</div>
 	</Modal>{/if}

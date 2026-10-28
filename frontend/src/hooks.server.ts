@@ -22,7 +22,7 @@ export const handle: Handle = async ({ event, resolve }) => {
 				event.url.pathname !== '/lessons/upload'
 			) {
 				const length = event.request.headers.get('content-length');
-				const bodyLimit = event.url.pathname === '/timetable/template' ? 262144 : 16384;
+				const bodyLimit = 16384;
 				if (length && (!/^\d{1,8}$/.test(length) || Number(length) > bodyLimit))
 					throw new BackendError(413, 'Demande trop volumineuse.');
 				let size = 0;
