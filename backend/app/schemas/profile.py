@@ -1,7 +1,7 @@
 """Validated private school profiles and explicit, bounded editing contracts."""
 
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -191,6 +191,23 @@ class OrientationUpdate(InputModel):
         return SchoolProfile.clean_text(value)
 
 
+class AccountActivity(BaseModel):
+    """Expose the account landmarks available to authorized profile readers."""
+
+    created_at: datetime
+    last_login_at: datetime | None
+    login_count: int
+
+
+class AdminAccountActivity(AccountActivity):
+    """Expose additional security metadata only to the owner or an administrator."""
+
+    updated_at: datetime
+    password_changed_at: datetime | None
+    email_verified_at: datetime | None
+    email_verified: bool
+
+
 class FullProfile(BaseModel):
     """Return private details only to the owner or an explicitly authorized staff member."""
 
@@ -209,3 +226,4 @@ class FullProfile(BaseModel):
     can_edit_all: bool
     can_edit_orientation: bool
     subject_ids: list[int] = Field(default_factory=list)
+    activity: AdminAccountActivity | AccountActivity

@@ -12,9 +12,11 @@ This directory contains the documentation for Sophikron.
 - `site-administration.md`: subjects, public homepage/calendar, khôlleurs and course-right revocation.
 - `lessons.md`: course pages, inherited availability, collaborators, promotion access and audit events.
 - `timetable.md`: whole-class timetables, annual settings, publication and personal ICS subscriptions.
+- `statistics.md`: dashboard statistics, ICS adoption and bounded API monitoring.
 - `lesson-documents.md`: private files, validation, quotas, disk cleanup, backup and restore.
 - `lesson-resources-audit.md`: historical audit preceding document/table implementation.
 - `security-audit.md`: security review, antivirus removal, verified controls and remaining risks.
 - `decisions/`: Architecture Decision Records documenting significant technical decisions.
 
-Additional documentation will be added as the project develops.
+Release verification commands and documentation ownership are centralized in
+[CONTRIBUTING.md](CONTRIBUTING.md#verification-before-a-release).

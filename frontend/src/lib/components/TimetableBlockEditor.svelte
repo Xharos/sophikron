@@ -1,11 +1,13 @@
 <script lang="ts">
 	import Modal from './Modal.svelte';
 	import TimetableChoice from './TimetableChoice.svelte';
+	import TagSelector from './TagSelector.svelte';
 	import {
 		blockKinds,
 		clockSeconds,
 		nearestTimetableSlot,
 		orderedTimetableTeachers,
+		eventTeacherIds,
 		timetableClock,
 		type TimetableBlock,
 		type TimetableCatalog,
@@ -122,22 +124,24 @@
 		block.end_time = block.start_time + duration;
 	}
 	const unavailableTeacher = $derived(
-		block.teacher_id !== null &&
-			!catalog.teachers.some((teacher) => teacher.id === block.teacher_id)
+		eventTeacherIds(block).some((id) => !catalog.teachers.some((teacher) => teacher.id === id))
 	);
 	const teachers = $derived(
 		orderedTimetableTeachers(catalog.teachers, block.subject_id, block.kind)
 	);
 	function chooseKind(kind: TimetableBlock['kind']): void {
-		if (
-			kind !== 'kholle' &&
-			block.teacher_id !== null &&
-			!catalog.teachers
-				.find((teacher) => teacher.id === block.teacher_id)
-				?.roles?.includes('teacher')
-		)
-			block.teacher_id = null;
+		block.teacher_ids = eventTeacherIds(block).filter(
+			(id) =>
+				kind === 'kholle' ||
+				catalog.teachers.find((teacher) => teacher.id === id)?.roles?.includes('teacher')
+		);
+		block.teacher_id = block.teacher_ids[0] ?? null;
 		onkindchange(kind);
+	}
+	let selectedTeacherIds = $derived(eventTeacherIds(block));
+	function setTeachers(ids: number[]): void {
+		block.teacher_ids = ids;
+		block.teacher_id = ids[0] ?? null;
 	}
 	function chooseFamily(value: string): void {
 		block.target_kind = value as TimetableBlock['target_kind'];
@@ -194,16 +198,14 @@
 			onclear={() => (block.subject_id = null)}
 			disabled={busy}
 		/>
-		<TimetableChoice
-			legend="Enseignant ou khôlleur"
+		<TagSelector
+			legend="Enseignants ou khôlleurs"
 			options={teachers.map((teacher) => ({
 				value: teacher.id,
 				label: teacher.name,
-				secondary: block.subject_id !== null && !teacher.subject_ids?.includes(block.subject_id)
+				color: '#244BC1'
 			}))}
-			value={block.teacher_id}
-			onchange={(value) => (block.teacher_id = value)}
-			onclear={() => (block.teacher_id = null)}
+			bind:selected={() => selectedTeacherIds, setTeachers}
 			disabled={busy}
 		/>
 		{#if unavailableTeacher}<p class="help has-text-warning mb-3" role="status">

@@ -21,10 +21,12 @@ from app.models import (
 )
 from app.models.lessons import LessonElement, LessonFile, LessonFileDeletion, LessonUpload
 from app.models.site import Subject
-from app.models.statistics import LoginStatistic
+from app.models.statistics import CalendarUsageTotal, LoginStatistic
+from app.models.timetable import TimetableSubscription
 from app.repositories.statistics import StatisticsRepository
 from app.schemas.statistics import Breakdown, Period, StatisticsResponse, StorageStatistics
 from app.services.auth import AuthService, UserContext
+from app.services.calendar_subscriptions import calendar_eligibility
 from app.services.errors import AuthError
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -186,12 +188,53 @@ class StatisticsService:
                 self.fill_series(response, "logins", "unique_logins", facts, total, unique)
                 await self.authentication(response, start, now)
                 await self.catalogues(response)
+                await self.calendar_usage(response, start, now)
             # Only administrator-wide statistics inspect the physical volume, outside SQL below.
         if scope == "admin":
             physical, temporary = await anyio.to_thread.run_sync(folder_usage, self.settings)
             response.storage.physical_bytes = physical
             response.storage.temporary_bytes = temporary
         return response
+
+    async def calendar_usage(
+        self, response: StatisticsResponse, start: datetime, now: datetime
+    ) -> None:
+        """Count current links and recent owners without disclosing secrets or poll histories."""
+        eligible = (
+            User.status == "active",
+            User.password_hash.is_not(None),
+            User.login_count > 0,
+            ~User.is_bootstrap,
+            TimetableSubscription.revoked_at.is_(None),
+            TimetableSubscription.user_id.is_not(None),
+            calendar_eligibility(now.astimezone(PARIS).date()),
+        )
+        total, recent = (
+            await self.db.execute(
+                select(
+                    func.count(),
+                    func.count().filter(
+                        TimetableSubscription.last_requested_at >= start,
+                        TimetableSubscription.last_requested_at <= now,
+                    ),
+                )
+                .select_from(User)
+                .join(TimetableSubscription)
+                .where(*eligible)
+            )
+        ).one()
+        response.calendar_recent_users = recent
+        response.calendar_eligible_users = total
+        response.calendar_subscriptions = [
+            Breakdown(label="Consulté", value=recent),
+            Breakdown(label="Non consulté sur la période", value=total - recent),
+        ]
+        response.calendar_requests_total = (
+            await self.db.scalar(
+                select(CalendarUsageTotal.requests).where(CalendarUsageTotal.id == 1)
+            )
+            or 0
+        )
 
     def fill_series(
         self,

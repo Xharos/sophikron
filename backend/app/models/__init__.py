@@ -37,7 +37,7 @@ from app.models.site import (
     TimelineEvent,
     TimelineEventBar,
 )
-from app.models.statistics import LoginStatistic
+from app.models.statistics import ApiMetric, CalendarUsageTotal, LoginStatistic
 from app.models.timetable import (
     TeacherAvailability,
     TimetableCalendar,
@@ -50,6 +50,8 @@ from app.models.timetable import (
 )
 
 __all__ = [
+    "ApiMetric",
+    "CalendarUsageTotal",
     "PromotionCustomGroup",
     "PromotionCustomGroupMember",
     "TimetablePreferences",

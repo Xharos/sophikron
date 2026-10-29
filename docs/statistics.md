@@ -53,6 +53,58 @@ downloads; rankings only name current authorized courses/documents. Author views
 currently existing creations. Rankings show five entries; the author link list shows at most 100.
 There is no reconstructed download history before this instrumentation was installed.
 
+## Calendar subscriptions
+
+The administrator-wide panel shows consulted accounts / currently eligible accounts. Accounts must
+be permanent, active, previously connected, have a nonrevoked link and belong to an active promotion
+with a nonarchived current-year calendar. Pupils additionally require diffusion to pupils; staff do
+not need diffusion or an assigned session. Each eligible account is counted once across roles and
+promotions. The numerator uses the latest authorized retrieval within the selected period, limited
+to currently eligible accounts; publication/revocation changes the denominator immediately.
+An authorized empty feed counts. Unknown/revoked/inactive or unpublished-pupil requests do not.
+Regeneration preserves account usage; a separate durable global counter retains successful ICS
+requests across regeneration, revocation and account lifecycle. Prior requests cannot be reconstructed.
+No IP addresses or individual request histories are stored. Polling and manual retrieval cannot
+prove that someone viewed the calendar. Only global administrators receive these aggregates.
+
+## API performance monitoring
+
+Active ICS subscription links accept `AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE` requests (default 5)
+in a fixed 60-second window starting at the first request. Further requests return HTTP 429 with
+`Retry-After`, also forwarded by SvelteKit. Existing PostgreSQL rate budgets share the limit across
+workers; unknown and revoked tokens do not create budgets. No ICS response cache is introduced.
+
+Monitoring mounts immediately and fetches independently after page rendering. The administrator-only
+`GET /api/v1/admin/monitoring` accepts a period, category and optional interval. SvelteKit relays it via
+`/statistics?resource=monitoring`. PostgreSQL reduces stored minutes to minute/day-view, hour/week-view
+and day/month-view before serialization; raw rows are never sent to the frontend. Charts cover the
+current day, seven calendar days or thirty calendar days in Europe/Paris. The autumn clock change
+may produce 1,500 daily minutes or 169 weekly hours. Missing intervals use null latencies, not zeroes.
+The monitoring card sits after the other statistics, directly above the overview activity journal.
+It always combines all operations, without a moving cursor or interval summary. The first chart overlays
+request counts (left axis) with mean, approximate P95 and maximum durations (right axis); legend buttons
+toggle each duration series. The second chart shows HTTP 2xx/3xx/4xx/5xx counts or percentages.
+A table below both charts details request counts, durations and server errors per operation.
+The API still supports protected diagnostic queries. Totals use weighted duration sums/counts;
+P95 merges fixed histogram counts rather than averaging percentiles.
+
+One `api_metrics` row stores minute/category counts, duration sum/maximum, exact HTTP codes, fourteen
+histogram buckets, incomplete transfers and refused ICS counts. Nine fixed categories (eight main
+operations plus other) bound storage independently of URL/token/account/request volume. Attacker
+paths never become labels. No bodies, query strings, identities, IPs, credential URLs or individual
+request records are stored. `/health` probes are excluded. Streaming durations include transfers;
+documents are isolated by category. HTTP 200 empty refused ICS responses have their own counter.
+
+Workers buffer observations and atomically merge batches every thirty seconds. Monitoring adds no
+SQL to HTTP requests. Each flush purges buckets older than 31 days, including during quiet periods.
+Reads select only the requested period. Steady-state storage is bounded around 401,760 minute/category
+rows; the cleanup cadence can temporarily retain an extra minute. Buffers hold at most 1,080 pending
+minute/category entries per worker during outages. Graceful shutdown attempts a final flush; crashes
+or unavailable storage may lose recent observations. The current worker's dropped counter warns of
+incomplete history. Test lifespans flush explicitly. This dashboard is not an external uptime alert.
+
+API metrics are created by `0002_configuration`; lifetime ICS totals are created by `0007_timetable`. Downgrading their feature revision removes its measurements. See [database migrations](database.md#migrations) for the fresh release baseline and compatibility requirements.
+
 ## Storage and catalogues
 
 Published file counts/bytes and format distributions come from `lesson_files`, scoped to the
@@ -72,23 +124,9 @@ not a pie. Active promotion bars count pupils separately from distinct teacher/k
 combined teaching grants are not counted twice. Subject bars show course counts. Catalogue charts
 show up to eight entries; management links open the full existing catalogues.
 
-## Schema and an existing local installation
+## Installation and verification
 
-As explicitly requested during local development, the additive `login_statistics` table is part of
-the amended `0005_lessons`, without creating another migration. Fresh installations receive it
-through `alembic upgrade head`. For an existing database already at 0005, upgrade does not replay
-the amended file. Reuse its narrowly scoped, idempotent helper with the migration service:
-
-```sh
-docker compose build migrate
-docker compose run --rm migrate python -m app.cli upgrade-statistics
-```
-
-Include the existing local Compose overlay when using the local configuration, as for the other
-project commands. This operation creates/seeds only the new table, using migration credentials;
-it does not downgrade, reset or delete existing accounts, courses, files or events. Rebuild/recreate
-backend and frontend services to deploy the matching code. No new environment setting is needed.
-
-Verification covers real PostgreSQL distinct counts and UPSERT concurrency, successful file streams,
-interrupted streams, Paris clock changes, role/collaboration revocation, shared chart geometry,
-legend toggles, periods and desktop/mobile administrator/teacher/course browser flows.
+Apply the fresh release baseline through the existing migration service before starting the API.
+Compatibility and migration commands are centralized in [database migrations](database.md#migrations).
+Verification covers PostgreSQL distinct counts and UPSERT concurrency, successful and interrupted file
+streams, Paris clock changes, authorization, shared chart geometry, legend toggles and browser flows.

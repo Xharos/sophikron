@@ -12,6 +12,11 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		previews = [],
 		errors = [];
 	let role = 'admin';
+	let pupilHasPromotion = true;
+	let releaseMonitoring;
+	let subscriptionToken = 'a'.repeat(86),
+		subscriptionRevoked = false;
+	const subscriptionCommands = [];
 	const settings = {
 		start: '2026-09-01',
 		end: '2027-06-30',
@@ -56,7 +61,8 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		years: [{ id: 1, school_year: 2026, revision }]
 	};
 	const teachers = [
-		{ id: 2, name: 'Mme Test', subject_ids: [1], roles: ['teacher', 'kholleur'] }
+		{ id: 2, name: 'Mme Test', subject_ids: [1], roles: ['teacher', 'kholleur'] },
+		{ id: 4, name: 'M. Partagé', subject_ids: [], roles: ['teacher'] }
 	];
 	const subjects = [
 			{ id: 1, name: 'Mathématiques', color: '#244BC1' },
@@ -79,6 +85,7 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 	};
 	let autoArchive = true;
 	let pattern = null;
+	const kholleHours = new Map();
 	function board(preview = false) {
 		return {
 			calendars: [agenda],
@@ -170,6 +177,107 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		const url = new URL(request.url, 'http://localhost');
 		response.setHeader('Content-Type', 'application/json');
 		const reply = (value) => response.end(JSON.stringify(value));
+		if (url.pathname === '/api/v1/admin/monitoring') {
+			if (url.searchParams.has('interval')) return reply({ statuses: { 200: 9, 503: 1 } });
+			await new Promise((resolve) => {
+				releaseMonitoring = resolve;
+			});
+			return reply({
+				requests: 10,
+				mean_ms: 12,
+				p95_ms: 25,
+				server_error_rate: 10,
+				dropped_measurements: 0,
+				points: [
+					{
+						timestamp: '2026-10-29T10:00:00Z',
+						requests: 10,
+						mean_ms: 12,
+						p95_ms: 25,
+						max_ms: 30,
+						successes: 9,
+						redirects: 0,
+						client_errors: 0,
+						server_errors: 1,
+						incomplete: 0,
+						ics_refused: 0
+					}
+				],
+				categories: [
+					{
+						key: 'other',
+						label: 'Autres',
+						requests: 10,
+						mean_ms: 12,
+						p95_ms: 25,
+						max_ms: 30,
+						server_errors: 1
+					}
+				]
+			});
+		}
+		if (url.pathname === '/api/v1/auth/me/profile') return reply(null);
+		if (url.pathname === '/api/v1/auth/me/promotions') return reply([]);
+		if (url.pathname === '/api/v1/timetable/subscription')
+			return reply({
+				token: role === 'pupil' && !pupilHasPromotion ? null : subscriptionToken,
+				revoked: subscriptionRevoked
+			});
+		if (url.pathname.startsWith('/api/v1/timetable/feed/')) {
+			assert.equal(request.headers.cookie, undefined);
+			response.setHeader('Content-Type', 'text/calendar');
+			return response.end(
+				'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//Test//FR\r\nEND:VCALENDAR\r\n'
+			);
+		}
+		if (url.pathname === '/api/v1/timetable/subscriptions/bulk') {
+			let raw = '';
+			for await (const chunk of request) raw += chunk;
+			const data = JSON.parse(raw);
+			subscriptionCommands.push(data);
+			subscriptionRevoked = data.action === 'revoke';
+			if (!subscriptionRevoked) subscriptionToken = 'b'.repeat(86);
+			return reply({ affected: 2 });
+		}
+		if (url.pathname === '/api/v1/admin/statistics')
+			return reply({
+				scope: 'admin',
+				period: 'week',
+				timestamps: [],
+				generated_at: new Date().toISOString(),
+				series: {},
+				totals: {
+					unique_logins: 0,
+					logins: 0,
+					failures: 0,
+					limited: 0,
+					attempts: 0,
+					downloads: 0,
+					downloaders: 0
+				},
+				storage: {
+					files: 0,
+					bytes: 0,
+					quota_bytes: 0,
+					reserved_bytes: 0,
+					physical_bytes: 0,
+					temporary_bytes: 0,
+					pending_deletions: 0,
+					formats: []
+				},
+				accounts: [],
+				roles: [],
+				promotions: [],
+				promotion_staff: [],
+				subjects: [],
+				popular: [],
+				courses: [],
+				calendar_recent_users: 1,
+				calendar_subscriptions: [
+					{ label: 'Consulté', value: 1 },
+					{ label: 'Jamais consulté', value: 1 }
+				]
+			});
 		if (request.method === 'GET') {
 			if (url.pathname === '/api/v1/promotion-groups/promotions/1') return reply(promotion);
 			if (url.pathname === '/api/v1/admin/promotions')
@@ -217,7 +325,7 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 				roles: [role === 'pupil' ? 'user' : role],
 				permissions:
 					role === 'admin'
-						? ['users.manage', 'users.read', 'promotions.manage']
+						? ['users.manage', 'users.read', 'promotions.manage', 'statistics.read']
 						: role === 'teacher'
 							? ['teaching.read', 'teacher.access']
 							: ['user.access']
@@ -265,6 +373,10 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 						teacher_id: 2,
 						revision: pattern ? revision : null,
 						default: pattern === null,
+						...(kholleHours.get(url.searchParams.get('school_year')) ?? {
+							kholle_min_hours: 0,
+							kholle_max_hours: 0
+						}),
 						ranges:
 							pattern ??
 							Array.from({ length: 6 }, (_, weekday) => ({
@@ -308,7 +420,14 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 				else customGroups[index] = group;
 				return reply({ id, revision });
 			}
-			if (url.pathname.endsWith('/availability')) pattern = data.ranges;
+			if (url.pathname.endsWith('/availability')) {
+				if ('ranges' in data) pattern = data.ranges;
+				if ('kholle_min_hours' in data)
+					kholleHours.set(url.pathname.split('/')[5], {
+						kholle_min_hours: data.kholle_min_hours,
+						kholle_max_hours: data.kholle_max_hours
+					});
+			}
 			if (url.pathname.endsWith('/archive')) {
 				agenda.is_archived = true;
 				agenda.is_paused = true;
@@ -324,7 +443,10 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 					promotion_id: data.promotion_id,
 					is_paused: data.is_paused
 				});
-			if (url.pathname.includes('/series/') && data.block) source.title = data.block.title;
+			if (url.pathname.includes('/series/') && data.block) {
+				source.title = data.block.title;
+				source.teacher_ids = data.block.teacher_ids;
+			}
 			return reply({ id: 1, revision });
 		}
 		response.writeHead(404).end();
@@ -377,9 +499,161 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		]);
 		const page = await context.newPage();
 		page.on('pageerror', (error) => errors.push(error.message));
+		await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+		await page.goto(origin + '/me');
+		const personalUrl = `${origin}/calendar-feed/${subscriptionToken}.ics`;
+		assert.equal(await page.getByLabel('Votre lien personnel').inputValue(), personalUrl);
+		assert.ok(
+			await page
+				.locator('.calendar-subscription')
+				.evaluate(
+					(element) =>
+						element.getBoundingClientRect().top -
+							element.previousElementSibling.getBoundingClientRect().bottom >=
+						20
+				)
+		);
+		const refused = await context.request.post(origin + '/timetable/command', {
+			headers: { Origin: 'http://foreign.invalid' },
+			data: {}
+		});
+		assert.equal(refused.status(), 403);
+		assert.equal((await refused.json()).message, 'Origine de la demande refusée.');
+		await page.getByRole('button', { name: 'Copier le lien', exact: true }).click();
+		await page.getByRole('status').filter({ hasText: 'Lien copié.' }).waitFor();
+		assert.equal(await page.evaluate(() => navigator.clipboard.readText()), personalUrl);
+		await page.evaluate(() =>
+			Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+		);
+		await page.getByRole('button', { name: 'Copier le lien', exact: true }).click();
+		await page.getByRole('status').filter({ hasText: 'Lien copié.' }).waitFor();
+		assert.equal(
+			await page
+				.getByLabel('Votre lien personnel')
+				.evaluate((element) => element.selectionEnd - element.selectionStart),
+			personalUrl.length
+		);
+		await page.evaluate(() => delete navigator.clipboard);
+		await page.reload();
+		assert.equal(await page.getByLabel('Votre lien personnel').inputValue(), personalUrl);
+		const publicFeed = await context.request.get(personalUrl);
+		assert.equal(publicFeed.status(), 200);
+		assert.ok((await publicFeed.text()).includes('BEGIN:VCALENDAR'));
+		await page.goto(origin + '/dashboard?tab=configuration');
+		await page.getByRole('button', { name: 'Révoquer les abonnements', exact: true }).click();
+		await page
+			.getByRole('dialog')
+			.getByRole('button', { name: 'Annuler', exact: true })
+			.click();
+		assert.equal(subscriptionCommands.length, 0);
+		await page.getByRole('button', { name: 'Révoquer les abonnements', exact: true }).click();
+		await page
+			.getByRole('dialog')
+			.getByRole('button', { name: 'Confirmer', exact: true })
+			.click();
+		await page.getByRole('status').filter({ hasText: '2 compte(s) traité(s).' }).waitFor();
+		assert.deepEqual(subscriptionCommands[0], { action: 'revoke', category: 'user' });
+		await page.goto(origin + '/me');
+		await page
+			.getByRole('status')
+			.filter({ hasText: 'Votre abonnement a été révoqué' })
+			.waitFor();
+		await page.goto(origin + '/dashboard?tab=configuration');
+		await page.getByRole('button', { name: 'Générer de nouveaux liens', exact: true }).click();
+		await page
+			.getByRole('dialog')
+			.getByRole('button', { name: 'Confirmer', exact: true })
+			.click();
+		await page.getByRole('status').filter({ hasText: '2 compte(s) traité(s).' }).waitFor();
+		await page.goto(origin + '/me');
+		assert.equal(
+			await page.getByLabel('Votre lien personnel').inputValue(),
+			`${origin}/calendar-feed/${'b'.repeat(86)}.ics`
+		);
+		await page.goto(origin + '/dashboard?tab=statistics');
+		await page.getByRole('status').filter({ hasText: 'Chargement du monitoring' }).waitFor();
+		await page.getByRole('button', { name: 'Voir l’utilisation', exact: true }).waitFor();
+		assert.ok(releaseMonitoring);
+		releaseMonitoring();
+		await page.getByRole('checkbox', { name: 'Afficher en pourcentage' }).waitFor();
+		const monitor = page.locator('.api-monitoring');
+		assert.equal(await monitor.getByRole('slider').count(), 0);
+		assert.equal(await monitor.locator('.monitor-details').count(), 0);
+		assert.equal(await monitor.getByRole('img').count(), 2);
+		const latencyPlot = monitor.getByRole('img').first();
+		assert.equal(await latencyPlot.getAttribute('viewBox'), '0 0 1100 220');
+		assert.equal(await latencyPlot.locator('.request-bar').count(), 1);
+		assert.equal(await latencyPlot.locator('path[data-series]').count(), 3);
+		for (const [label, key] of [
+			['Moyenne', 'mean_ms'],
+			['P95 approximatif', 'p95_ms'],
+			['Maximum', 'max_ms']
+		]) {
+			const legend = monitor.getByRole('button', { name: label, exact: true });
+			await legend.click();
+			assert.equal(await legend.getAttribute('aria-pressed'), 'false');
+			assert.equal(await latencyPlot.locator(`path[data-series="${key}"]`).count(), 0);
+		}
+		assert.equal(await latencyPlot.locator('.request-bar').count(), 1);
+		assert.ok(!(await latencyPlot.innerHTML()).includes('NaN'));
+		for (const label of ['Moyenne', 'P95 approximatif', 'Maximum']) {
+			const legend = monitor.getByRole('button', { name: label, exact: true });
+			await legend.focus();
+			await page.keyboard.press('Enter');
+			assert.equal(await legend.getAttribute('aria-pressed'), 'true');
+		}
+		assert.equal(await latencyPlot.locator('path[data-series]').count(), 3);
+		const operationRow = monitor.getByRole('row', {
+			name: 'Autres 10 12 25 30 1',
+			exact: true
+		});
+		await operationRow.waitFor();
+		assert.equal(await page.getByRole('combobox', { name: 'Opérations API' }).count(), 0);
+		assert.equal(await page.locator('input[type="range"]').count(), 0);
+		assert.equal(
+			await page.getByRole('button', { name: 'Détail des codes HTTP', exact: true }).count(),
+			0
+		);
+		assert.ok(
+			await page
+				.locator('.api-monitoring')
+				.evaluate(
+					(monitor) =>
+						!!monitor.closest('.statistics-panel') &&
+						monitor.closest('.statistics-panel').lastElementChild === monitor
+				)
+		);
+		await page.getByRole('checkbox', { name: 'Afficher en pourcentage' }).check();
+		await page.setViewportSize({ width: 390, height: 844 });
+		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+		await page.setViewportSize({ width: 1440, height: 1000 });
+		await page.getByRole('button', { name: 'Voir l’utilisation', exact: true }).click();
+		await page
+			.getByRole('dialog')
+			.getByRole('heading', { name: 'Utilisation des abonnements calendrier', exact: true })
+			.waitFor();
+		await page
+			.getByRole('dialog')
+			.getByRole('button', { name: 'Fermer la fenêtre', exact: true })
+			.click();
+		await page.setViewportSize({ width: 390, height: 844 });
+		role = 'pupil';
+		await page.goto(origin + '/me');
+		assert.ok(
+			await page.getByRole('button', { name: 'Copier le lien', exact: true }).isVisible()
+		);
+		assert.equal(await page.getByRole('button', { name: 'Générer mon lien' }).count(), 0);
+		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+		pupilHasPromotion = false;
+		await page.reload();
+		assert.equal(await page.getByLabel('Votre lien personnel').count(), 0);
+		assert.equal(await page.locator('.calendar-subscription').count(), 0);
+		assert.ok(!(await page.content()).includes(subscriptionToken));
+		role = 'admin';
+		await page.setViewportSize({ width: 1440, height: 1000 });
 		await page.goto(origin + '/timetable');
 		await page.getByRole('link', { name: 'Salles et années scolaires' }).waitFor();
-		const toggle = page.getByRole('switch', { name: 'Diffuser PTSI annuel' });
+		const toggle = page.getByRole('switch', { name: 'Diffuser aux élèves PTSI annuel' });
 		await toggle.click();
 		await page
 			.getByRole('dialog')
@@ -392,14 +666,14 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 			.getByRole('dialog')
 			.getByRole('button', { name: 'Confirmer', exact: true })
 			.click();
-		await page.getByText('Diffusion coupée', { exact: true }).waitFor();
+		await page.getByText('Diffusion élèves coupée', { exact: true }).waitFor();
 		assert.equal(mutations.at(-1).data.confirmed_live, true);
 		await toggle.click();
 		await page
 			.getByRole('dialog')
 			.getByRole('button', { name: 'Confirmer', exact: true })
 			.click();
-		await page.getByText('Diffusé en direct', { exact: true }).waitFor();
+		await page.getByText('Diffusé aux élèves', { exact: true }).waitFor();
 		await page.getByRole('button', { name: 'Nouvel agenda', exact: true }).click();
 		assert.equal(await page.getByLabel('Année scolaire obligatoire').inputValue(), '2026');
 		assert.equal(await page.getByLabel('Fin de journée').inputValue(), '18:55:00');
@@ -507,6 +781,10 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		await page.getByLabel('Intitulé personnalisé').fill('Rattrapage');
 		await page
 			.getByRole('dialog')
+			.getByRole('checkbox', { name: 'M. Partagé', exact: true })
+			.check();
+		await page
+			.getByRole('dialog')
 			.getByRole('button', { name: 'Enregistrer', exact: true })
 			.click();
 		const confirmation = page.getByRole('dialog', { name: 'Enregistrer la séance' });
@@ -537,6 +815,7 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		assert.equal(mutations.at(-1).data.scope, 'one');
 		assert.equal(mutations.at(-1).data.confirmed_live, true);
 		assert.equal(mutations.at(-1).data.block.title, 'Rattrapage');
+		assert.deepEqual(mutations.at(-1).data.block.teacher_ids, [2, 4]);
 		assert.ok(previews.some((item) => item.data.scope === 'one'));
 		const session = page.locator('.ec-event:not(.ec-bg-event)').first();
 		await session.hover();
@@ -688,9 +967,42 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		);
 		await page.getByRole('button', { name: 'Disponibilités', exact: true }).click();
 		await page.locator('.ec-event:not(.ec-bg-event)').first().waitFor();
+		assert.equal(await page.getByLabel('Minimum (h/semaine)').inputValue(), '0');
+		assert.equal(await page.getByLabel('Maximum (h/semaine)').inputValue(), '0');
+		assert.equal(await page.getByLabel('Minimum (h/semaine)').getAttribute('readonly'), '');
+		assert.equal(await page.getByRole('button', { name: 'Enregistrer les bornes' }).count(), 0);
+		await page.getByRole('button', { name: 'Éditer les disponibilités', exact: true }).click();
+		await page.getByLabel('Minimum (h/semaine)').fill('1');
+		await page.getByLabel('Maximum (h/semaine)').fill('3');
+		const beforeFinish = mutations.length;
+		await page.getByRole('button', { name: 'Actualiser', exact: true }).click();
+		await page.getByLabel('Minimum (h/semaine)').waitFor();
+		assert.equal(await page.getByLabel('Minimum (h/semaine)').inputValue(), '1');
+		assert.equal(mutations.length, beforeFinish);
+		await page.getByLabel('Maximum (h/semaine)').fill('0');
+		await page.getByRole('button', { name: 'Terminer l’édition', exact: true }).click();
+		await page
+			.getByRole('alert')
+			.filter({ hasText: 'Saisissez des heures entières' })
+			.waitFor();
+		assert.equal(mutations.length, beforeFinish);
+		await page.getByLabel('Maximum (h/semaine)').fill('3');
+		await page.getByRole('button', { name: 'Terminer l’édition', exact: true }).click();
+		await page
+			.getByRole('status')
+			.filter({ hasText: 'Bornes de khôlles enregistrées.' })
+			.waitFor();
+		assert.equal(await page.getByLabel('Minimum (h/semaine)').inputValue(), '1');
+		assert.equal(await page.getByLabel('Maximum (h/semaine)').inputValue(), '3');
+		assert.equal(await page.getByLabel('Maximum (h/semaine)').getAttribute('readonly'), '');
+		assert.equal('ranges' in mutations.at(-1).data, false);
 		assert.equal(await page.locator('.ec-body .ec-day').count(), 6);
 		pattern = [];
 		await page.getByRole('combobox', { name: 'Année scolaire' }).selectOption('2027');
+		await page.waitForFunction(
+			() => document.querySelector('#kholle-min-hours')?.value === '0'
+		);
+		assert.equal(await page.getByLabel('Maximum (h/semaine)').inputValue(), '0');
 		await page.getByRole('button', { name: 'Éditer les disponibilités', exact: true }).click();
 		assert.equal(
 			await page.getByRole('button', { name: 'Terminer l’édition', exact: true }).isVisible(),

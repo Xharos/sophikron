@@ -118,8 +118,8 @@ YouTube players and tables with free column titles and optional cells. Documents
 format, quota and access checks remain enforced. See the
 [document operations guide](docs/lesson-documents.md) for quotas, deletion, backups and verification.
 See the [security audit](docs/security-audit.md) for verified controls and remaining risks.
-The authorized amendment of migration `0005_lessons` is for the fresh baseline; installations
-already at 0005 need a separate schema transition before running the updated application.
+The seven feature migrations form a fresh release baseline. Databases using the earlier amended
+history require a separate transition; see [migration compatibility](docs/database.md#migrations).
 
 ## Contributing
 

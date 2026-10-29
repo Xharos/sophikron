@@ -15,6 +15,10 @@
 	import StatCard from './StatCard.svelte';
 	import StatisticChart from './StatisticChart.svelte';
 	import Icon from '../Icon.svelte';
+	import Modal from '../Modal.svelte';
+	import { page } from '$app/state';
+	import { hasPermission } from '#lib/access';
+	import ApiMonitoringPanel from './ApiMonitoringPanel.svelte';
 	let { lessonId, onrefresh = () => {} }: { lessonId?: number; onrefresh?: () => void } = $props();
 	let period = $state<StatisticsPeriod>('week');
 	let statistics = $state<Statistics | null>(null);
@@ -23,6 +27,7 @@
 	let revision = $state(0);
 	let message = $state('');
 	let accountsView = $state<'status' | 'roles'>('status');
+	let calendarOpen = $state(false);
 	let catalogue = $state<'promotions' | 'subjects'>('promotions');
 	onMount(() => {
 		ready = true;
@@ -161,6 +166,26 @@
 					<a class="stat-link" href={resolve('/dashboard?tab=accounts')}
 						>Gérer les comptes <Icon name="arrow" size={13} /></a
 					>
+				</StatCard>
+				<StatCard
+					title="Abonnements calendrier"
+					subtitle="Comptes actuellement éligibles · période sélectionnée"
+					value={`${count(statistics.calendar_recent_users ?? 0)}/${count(statistics.calendar_eligible_users ?? 0)}`}
+					caption="consultés sur la période / comptes actuellement éligibles"
+				>
+					<StatisticChart
+						title="Utilisation des abonnements"
+						kind="donut"
+						series={breakdownSeries(statistics.calendar_subscriptions ?? [])}
+						center="comptes éligibles"
+					/>
+					<button class="button is-light" onclick={() => (calendarOpen = true)}
+						>Voir l’utilisation</button
+					>
+					<p class="stat-note">
+						{count(statistics.calendar_requests_total ?? 0)} requêtes ICS autorisées traitées avec succès
+						depuis le début du suivi.
+					</p>
 				</StatCard>
 				<StatCard
 					title="Connexions"
@@ -366,7 +391,39 @@
 			})}
 		</p>
 	{/if}
+	{#if lessonId === undefined && hasPermission(page.data.user, 'statistics.read')}
+		<ApiMonitoringPanel {period} {revision} />
+	{/if}
 </div>
+
+{#if calendarOpen && statistics?.scope === 'admin'}
+	<Modal
+		title="Utilisation des abonnements calendrier"
+		description="Consultations sur la période parmi les comptes actuellement éligibles."
+		onclose={() => (calendarOpen = false)}
+	>
+		<StatisticChart
+			title="Utilisation des liens actuels"
+			kind="donut"
+			series={breakdownSeries(statistics.calendar_subscriptions ?? [])}
+			center="comptes éligibles"
+		/>
+		<p class="mt-4">
+			<strong>{count(statistics.calendar_recent_users ?? 0)}</strong> abonnement(s) consulté(s) sur la
+			période sélectionnée.
+		</p>
+		<p class="help mt-3">
+			Une consultation correspond à une récupération réussie du flux, même vide. Elle peut provenir
+			d’une application, des serveurs de Google ou d’un téléchargement manuel ; elle ne prouve pas
+			que le calendrier a été regardé.
+		</p>
+		<p class="help mt-2">
+			Chaque compte éligible est compté une seule fois. La régénération conserve l’historique
+			d’utilisation. Les requêtes sans calendrier autorisé ou avec un lien révoqué ne sont pas
+			comptées.
+		</p>
+	</Modal>
+{/if}
 
 <style>
 	.statistics-toolbar {

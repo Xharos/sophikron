@@ -1,7 +1,7 @@
 """Bounded timetable settings, recurring blocks and occurrence edits."""
 
 from datetime import date
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -73,6 +73,9 @@ class SessionFields(InputModel):
     end_time: int | None = Field(default=None, gt=0, le=86400, strict=True)
     subject_id: int | None = Field(default=None, gt=0, strict=True)
     teacher_id: int | None = Field(default=None, gt=0, strict=True)
+    teacher_ids: list[Annotated[int, Field(gt=0, strict=True)]] = Field(
+        default_factory=list, max_length=20
+    )
     room_id: int | None = Field(default=None, gt=0, strict=True)
     kind: Literal["course", "td", "tp", "kholle"] = "course"
     title: str = Field(default="", max_length=150)
@@ -81,6 +84,25 @@ class SessionFields(InputModel):
     )
     target_number: int | None = Field(default=None, ge=1, le=9223372036854775807, strict=True)
     target_user_id: int | None = Field(default=None, gt=0, strict=True)
+
+    @model_validator(mode="before")
+    @classmethod
+    def normalize_teachers(cls, value: object) -> object:
+        """Read legacy single assignments and keep the compatibility field consistent."""
+        if isinstance(value, dict):
+            value = dict(value)
+            if "teacher_ids" not in value:
+                value["teacher_ids"] = [value["teacher_id"]] if value.get("teacher_id") else []
+            identifiers = value["teacher_ids"]
+            if isinstance(identifiers, list):
+                if all(type(item) is int for item in identifiers) and len(set(identifiers)) != len(
+                    identifiers
+                ):
+                    raise ValueError("Un enseignant ne peut être affecté qu’une fois.")
+                if value.get("teacher_id") not in (None, identifiers[0] if identifiers else None):
+                    raise ValueError("Affectations enseignantes incohérentes.")
+                value["teacher_id"] = identifiers[0] if identifiers else None
+        return value
 
     @model_validator(mode="after")
     def valid_free_times(self) -> Self:

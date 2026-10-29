@@ -72,7 +72,7 @@ def write_private_file(path: Path, content: str) -> None:
 
 
 class IdentityCipher:
-    """Encrypt only identity fields, binding each ciphertext to its row and field."""
+    """Encrypt private account fields, binding each ciphertext to its owner and field."""
 
     def __init__(self, active: str, keys: dict[str, bytes], lookup_key: bytes) -> None:
         """Validate a versioned AES-256 keyring and an independent HMAC lookup key."""

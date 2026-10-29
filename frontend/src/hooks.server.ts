@@ -48,6 +48,18 @@ export const handle: Handle = async ({ event, resolve }) => {
 	} catch (cause) {
 		if (!(cause instanceof BackendError)) throw cause;
 		if (cause.status !== 401) {
+			if (event.request.headers.get('content-type')?.startsWith('application/json')) {
+				return Response.json(
+					{ message: cause.message },
+					{
+						status: cause.status,
+						headers: {
+							'Cache-Control': 'no-store',
+							...(cause.retryAfter ? { 'Retry-After': cause.retryAfter } : {})
+						}
+					}
+				);
+			}
 			return new Response(cause.message, {
 				status: cause.status,
 				headers: {

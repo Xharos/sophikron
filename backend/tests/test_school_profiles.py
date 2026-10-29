@@ -208,6 +208,7 @@ async def test_profile_teacher_scope_and_field_permissions(auth_case: Harness) -
         path = f"/api/v1/teaching/users/{student_id}/profile"
         detail = await case.client.get(path)
         assert detail.status_code == 200, detail.text
+        assert set(detail.json()["activity"]) == {"created_at", "login_count", "last_login_at"}
         assert detail.json()["can_edit_orientation"] and not detail.json()["can_edit_all"]
         for field in ["first_name", "email", "phone", "reference_adult", "birth_date"]:
             assert (
@@ -220,6 +221,7 @@ async def test_profile_teacher_scope_and_field_permissions(auth_case: Harness) -
             path, json={"expected_version": 0, "orientation_project": "  École   d’ingénieurs  "}
         )
         assert updated.status_code == 200, updated.text
+        assert set(updated.json()["activity"]) == {"created_at", "login_count", "last_login_at"}
         assert updated.json()["profile"]["orientation_project"] == "École d’ingénieurs"
         assert (
             await case.client.get(f"/api/v1/teaching/users/{outsider_id}/profile")
@@ -242,6 +244,13 @@ async def test_profile_teacher_scope_and_field_permissions(auth_case: Harness) -
         own = await case.client.get("/api/v1/auth/me/profile")
         assert own.status_code == 200 and own.json()["id"] == teacher_id
         assert not own.json()["can_edit_orientation"]
+        assert "password_changed_at" in own.json()["activity"]
+        case.as_admin()
+        admin_detail = await case.client.get(f"/api/v1/admin/users/{student_id}/profile")
+        assert set(admin_detail.json()["activity"]) == {
+            "created_at", "login_count", "last_login_at", "updated_at",
+            "password_changed_at", "email_verified_at", "email_verified",
+        }
     finally:
         await clear_promotions([promotion_id])
 

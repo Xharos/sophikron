@@ -20,6 +20,7 @@ from app.core.database import Database, get_database
 from app.core.documents import DocumentSettings
 from app.core.http import AuthRequestMiddleware, ConfiguredCORSMiddleware, SearchAccessLogFilter
 from app.core.security import IdentityCipher, PasswordCapacityError, PasswordSecurity
+from app.services.api_monitoring import ApiMonitor, ApiMonitoringMiddleware
 from app.services.auth import AuthService
 from app.services.document_storage import DocumentStorage, document_maintenance
 from app.services.errors import INVALID_REQUEST, AuthError
@@ -71,6 +72,7 @@ def create_app(
         )
         database = Database(settings if settings is not None else DatabaseSettings())
         application.state.database = database
+        application.state.api_monitor = ApiMonitor()
         application.state.auth_settings = authentication
         application.state.identity_cipher = cipher
         application.state.passwords = passwords
@@ -83,6 +85,7 @@ def create_app(
         )
         maintenance = None
         timetable_task = None
+        monitor_task = None
         try:
             async with database.sessions() as session:
                 service = AuthService(session, authentication, cipher, passwords, delivery)
@@ -92,8 +95,15 @@ def create_app(
                     document_maintenance(database, DocumentStorage(documents))
                 )
             timetable_task = asyncio.create_task(timetable_maintenance(database))
+            if authentication.environment != "test":
+                monitor_task = asyncio.create_task(application.state.api_monitor.run(database))
             yield
         finally:
+            if monitor_task is not None:
+                monitor_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await monitor_task
+                await application.state.api_monitor.flush(database)
             if timetable_task is not None:
                 timetable_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -129,6 +139,7 @@ def create_app(
 
     application.add_middleware(AuthRequestMiddleware)
     application.add_middleware(ConfiguredCORSMiddleware)
+    application.add_middleware(ApiMonitoringMiddleware)
 
     @application.exception_handler(PasswordCapacityError)
     async def password_capacity_error(

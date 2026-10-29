@@ -73,6 +73,7 @@ services:
       AUTH_LOGIN_IP_LIMIT:
       AUTH_LOGIN_IDENTITY_LIMIT:
       AUTH_RATE_WINDOW_SECONDS:
+      AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE: ${AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE:-5}
       AUTH_LOGIN_RESERVATION_SECONDS:
       AUTH_PASSWORD_QUEUE_SIZE:
       AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS:
@@ -131,7 +132,7 @@ services:
         SITE_ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
+      - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}

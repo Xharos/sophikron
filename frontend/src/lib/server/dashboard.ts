@@ -51,6 +51,10 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	let path: string;
 	switch (resource) {
+		case 'calendarSubscription':
+			requireAccess(event, 'admin');
+			path = `/timetable/subscriptions/users/${identifier(event.url.searchParams.get('id'))}`;
+			break;
 		case 'customPromotionGroups':
 			path = `/promotion-groups/${identifier(event.url.searchParams.get('id'))}/custom/groups`;
 			break;
@@ -135,6 +139,15 @@ export async function commandDashboard(event: RequestEvent): Promise<unknown> {
 	}
 	requireAccess(event, 'admin');
 	switch (input.command) {
+		case 'calendarSubscription':
+			return api(
+				event,
+				`/timetable/subscriptions/users/${identifier(input.id)}`,
+				'POST',
+				input.data
+			);
+		case 'calendarSubscriptionsBulk':
+			return api(event, '/timetable/subscriptions/bulk', 'POST', input.data);
 		case 'previewGroups':
 			return api(
 				event,

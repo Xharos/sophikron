@@ -26,6 +26,10 @@ export interface Statistics {
 	};
 	accounts: Breakdown[];
 	roles: Breakdown[];
+	calendar_subscriptions: Breakdown[];
+	calendar_recent_users: number;
+	calendar_eligible_users: number;
+	calendar_requests_total: number;
 	promotions: Breakdown[];
 	promotion_staff: Breakdown[];
 	subjects: Breakdown[];

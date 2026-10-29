@@ -160,33 +160,34 @@ Add future model imports in `app/models/__init__.py` so Alembic sees them throug
 Metadata uses the explicit `sophikron` schema and stable constraint names. Name check constraints.
 Connections use `search_path=pg_catalog`; qualify application tables explicitly in handwritten SQL.
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
-The initial feature revisions are authentication (including the journal), public configuration,
-promotions, subjects, lessons and independent promotion group partitions (`0001` through `0006`).
-All autonomous IDs are bigint identities; associations use composite keys. This reconstructed
-baseline targets fresh installations and does not upgrade an older, differently stamped history.
+All autonomous IDs are bigint identities; associations use composite keys.
 
-The history ends with a single timetable revision:
+The release baseline contains seven feature migrations:
 
 | Revision | Schema responsibility |
 | --- | --- |
-| `0007_timetable` | Annual calendars, rooms, academic labels, availability, series, subscription verifiers, custom audiences and archive policy |
+| `0001_authentication` | Accounts, identities, roles, sessions, rate budgets and activity journal |
+| `0002_configuration` | Public settings, annual timelines, shared events and minute/category API monitoring |
+| `0003_promotions` | Promotions, memberships and account blocks |
+| `0004_subjects` | Subjects and teacher assignments |
+| `0005_lessons` | Course content, documents, permissions and statistics |
+| `0006_promotion_groups` | Standard promotion partitions and pupil group assignments |
+| `0007_timetable` | Annual calendars, rooms, availability and kholle bounds, compact series, custom audiences, archive policy, encrypted revocable ICS links and lifetime ICS usage totals |
 
-It creates the final schema directly: one annual configuration per calendar, optional subject/teacher/
-room references, unique non-archived promotion assignments, named overlapping groups with bounded
-positions, and the singleton automatic archive preference enabled by default. Recurrences and their
-exceptions are compact JSON documents; no former weekly-version or publication tables are created.
-Upgrade adds these tables without resetting or converting data from earlier features.
+API monitoring has no foreign keys to pedagogical tables, so it can be created in configuration.
+ICS usage belongs to the timetable feature. The timetable migration creates the final schema directly,
+including nullable availability ranges, ordered nonnegative kholle bounds and encrypted token metadata.
+Recurrences and exceptions remain compact JSON documents; shared teachers require no separate table.
 
-The timetable history was consolidated with the owner's authorization after deletion of the previous
-development databases. Fresh installations use `alembic upgrade head`. Databases at the unchanged
-`0006_promotion_groups` revision can also upgrade normally. This is not a transition for a database
-that already applied the former timetable history, even if it reports the old `0007_timetable` ID;
-do not stamp an existing schema to bypass that incompatibility.
+This baseline was consolidated with the owner's authorization after deletion of local development
+storage. It is intended for fresh databases (`alembic upgrade head`), not for upgrading databases
+that applied the previous history, including databases stamped with the same amended revision IDs.
+Do not stamp an existing schema to bypass that incompatibility. Published migrations become immutable;
+subsequent schema changes require new revisions.
 
-Downgrading to `0006_promotion_groups` drops all timetable tables and custom audiences, including
-their data. It preserves the six earlier features, standard promotion partitions and their rows.
-Reapplying `0007` recreates empty timetable storage and initializes its archive preference. After
-this consolidation, deployed revisions remain immutable; subsequent changes require new migrations.
+Downgrading to `0006_promotion_groups` removes timetable data, personal subscriptions, ICS totals
+and custom audiences while preserving standard groups and API metrics. Downgrading below
+`0002_configuration` also removes API metrics. Reapplying migrations recreates these empty stores.
 
 The migration service defaults to `alembic upgrade head`. Supply a full command to override it:
 
@@ -294,7 +295,8 @@ prepared-statement compatibility review.
 
 Usernames, emails, first names and family names in `users` are encrypted in the application before storage. Keyed lookup
 indexes support exact search and uniqueness. Pedagogical resources, integer relationships, roles and
-security/statistics timestamps remain outside this field-encryption scope. See
+security/statistics timestamps remain outside this field-encryption scope. Recoverable calendar
+subscription tokens reuse the same versioned cipher with a dedicated owner-bound field. See
 [authentication](authentication.md) for keys, rotation, restoration, sessions and bootstrap. Keep
 encryption keys separate from PostgreSQL and its backups. Account passwords use Argon2id hashing,
 not reversible encryption. Storage encryption and encrypted backups remain deployment responsibilities.

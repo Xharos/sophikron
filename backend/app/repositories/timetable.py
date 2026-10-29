@@ -22,7 +22,12 @@ class TimetableRepository:
         self.db = db
 
     async def calendars(
-        self, user_id: int | None, *, archives: bool = False
+        self,
+        user_id: int | None,
+        *,
+        archives: bool = False,
+        include_undiffused: bool = False,
+        school_year: int | None = None,
     ) -> list[TimetableCalendar]:
         """Return all admin agendas or only agendas in the caller's active promotions."""
         statement = (
@@ -37,9 +42,13 @@ class TimetableRepository:
                 .where(
                     UserPromotion.user_id == user_id,
                     Promotion.is_active.is_(True),
-                    TimetableCalendar.is_paused.is_(False),
+                    True if include_undiffused else TimetableCalendar.is_paused.is_(False),
                     TimetableCalendar.is_archived.is_(False),
                 )
+            )
+        if school_year is not None:
+            statement = statement.join(TimetableYear).where(
+                TimetableYear.school_year == school_year
             )
         return list(await self.db.scalars(statement))
 

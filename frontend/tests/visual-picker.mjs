@@ -71,6 +71,39 @@ function pickerServer() {
 	});
 }
 
+test('staff profiles hide school sections in account and dashboard views', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage();
+		for (const role of ['user', 'teacher', 'kholleur', 'admin']) {
+			await page.goto(
+				`${server.resolvedUrls.local[0]}__picker?directory&schoolView&memberRole=${role}`
+			);
+			await page
+				.getByRole('heading', { name: 'Informations personnelles', exact: true })
+				.waitFor();
+			for (const name of ['Parcours scolaire', 'Projet d’orientation']) {
+				assert.equal(
+					await page.getByRole('heading', { name, exact: true }).count(),
+					role === 'user' ? 2 : 0
+				);
+			}
+			assert.equal(
+				await page.getByRole('heading', { name: /Adulte référent/ }).count(),
+				role === 'user' ? 2 : 0
+			);
+			await page.getByRole('heading', { name: 'Les repères de votre compte' }).waitFor();
+			assert.equal(await page.getByText('Mot de passe modifié', { exact: true }).count(), 0);
+		}
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
 test('saved group tags appear in promotion rosters, popup cards and full profiles', async () => {
 	const server = await pickerServer();
 	let browser;

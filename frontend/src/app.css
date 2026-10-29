@@ -623,6 +623,29 @@ a.navbar-item[aria-current='page'] {
 .profile-information {
 	border-top: 4px solid var(--profile-accent);
 }
+.profile-identity {
+	grid-column: 1 / -1;
+}
+.identity-fields {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 1rem 1.5rem;
+	align-items: start;
+}
+.identity-fields > .field {
+	min-width: 0;
+	margin-bottom: 0;
+}
+.personal-details {
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 1.5rem;
+}
+.personal-details > div {
+	min-width: 0;
+}
+.personal-details dt {
+	margin-bottom: 0.4rem;
+}
 .accent-blue {
 	--profile-accent: var(--color-info);
 }
@@ -722,7 +745,7 @@ a.navbar-item[aria-current='page'] {
 	border: var(--border-thin);
 	border-radius: 0.9rem;
 	box-shadow: var(--shadow-panel);
-	margin-top: 1.5rem;
+	margin-bottom: 1.5rem;
 }
 .profile-save-bar p {
 	font-size: 0.85rem;
@@ -750,6 +773,10 @@ a.navbar-item[aria-current='page'] {
 	background: var(--color-soft);
 }
 @media (max-width: 850px) {
+	.identity-fields,
+	.personal-details {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
 	.school-profile-grid {
 		grid-template-columns: 1fr;
 	}
@@ -758,6 +785,10 @@ a.navbar-item[aria-current='page'] {
 	}
 }
 @media (max-width: 600px) {
+	.identity-fields,
+	.profile-details.personal-details {
+		grid-template-columns: 1fr;
+	}
 	.personal-hero,
 	.profile-page-hero {
 		flex-wrap: wrap;

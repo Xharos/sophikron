@@ -23,7 +23,23 @@ class AvailabilityRange(InputModel):
 
 
 class AvailabilitySave(InputModel):
-    """Replace one annual pattern; null restores the default and an empty list closes all days."""
+    """Patch annual ranges and integer kholle bounds; null ranges restore opening hours."""
 
     expected_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
-    ranges: list[AvailabilityRange] | None = Field(max_length=100)
+    ranges: list[AvailabilityRange] | None = Field(default=None, max_length=100)
+    kholle_min_hours: int | None = Field(default=None, ge=0, le=2147483647, strict=True)
+    kholle_max_hours: int | None = Field(default=None, ge=0, le=2147483647, strict=True)
+
+    @model_validator(mode="after")
+    def valid_patch(self) -> Self:
+        """Require both ordered hour bounds together and at least one annual change."""
+        bounds = {"kholle_min_hours", "kholle_max_hours"}
+        supplied = self.model_fields_set & bounds
+        if supplied:
+            if supplied != bounds or self.kholle_min_hours is None or self.kholle_max_hours is None:
+                raise ValueError("Renseignez les deux bornes horaires.")
+            if self.kholle_max_hours < self.kholle_min_hours:
+                raise ValueError("Le maximum doit être supérieur ou égal au minimum.")
+        elif "ranges" not in self.model_fields_set:
+            raise ValueError("Aucune modification fournie.")
+        return self

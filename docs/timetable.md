@@ -64,6 +64,16 @@ copy/paste, dragging/resizing, conflict/lunch checks, hour totals and personal I
 optional boundaries in the existing compact series JSON; no extra tables or database migration are
 needed. Standard events continue to use half-session slots and exclude recess and incomplete tails.
 
+Sessions accept `teacher_ids` with up to twenty distinct positive account IDs. Legacy `teacher_id`
+inputs and stored documents remain readable; responses retain the first assignment in `teacher_id`.
+When both fields are supplied they must agree. No instructor means an empty array. The editor uses
+checkboxes, preserving specialist ordering. Roles/activity, availability, archived assignments and
+cross-calendar collisions are checked independently for each teacher. Only teachers can receive
+courses/TD/TP; kholles also allow kholleurs. Each instructor sees the shared session and receives its
+full actual hours. Pupil hours, lunch checks and ICS occurrence IDs count each session once. Single/
+future edits, exceptions, copy/paste and previews preserve all assignments. Compact documents are
+normalized when read/saved without materialized per-teacher copies or destructive conversion.
+
 Courses, TD, TP and kholles can target the whole class, halves A/B or thirds X/Y/Z. Halves and
 thirds can be prepared without a promotion. Numbered kholle groups and named custom groups require a promotion.
 Administrators manage custom groups from the promotion's dashboard group panel. Each name is unique
@@ -134,12 +144,23 @@ Each calendar's own session duration is respected.
 Default availability is 08:00–19:00 Monday–Friday and 08:00–12:00 Saturday, without recess or lunch.
 An absent pattern means that entire grid is available; an explicit empty pattern means unavailable.
 Saving null restores the default. Patterns belong only to their chosen year and are never copied.
+Each teacher and kholleur also has annual minimum and maximum weekly kholle hours, defaulting to
+0 and 0. In the availability view, select one person and the academic-year tag to consult them;
+only administrators can save changes. Values must be whole hours with `0 <= min <= max`.
+The compact toolbar fields are read-only until entering availability editing. Hour bounds are saved
+when clicking "Terminer l’édition"; invalid bounds keep editing open. Availability ranges retain
+their immediate saving behavior, without discarding the hour bounds being edited.
+The existing availability PUT endpoint accepts paired `kholle_min_hours` and `kholle_max_hours`
+with `expected_revision`. Omitted `ranges` preserves availability; omitted hour bounds preserve
+the stored bounds. Resetting availability does not reset hours. Stale writes return 409 and invalid
+bounds return 422. This step stores capacity only; it does not allocate oral-examination sessions.
 Overlapping/touching ranges merge. Out-of-grid submissions, including Saturday afternoon, are refused.
 The Saturday column remains visible in the staff workspace regardless of promotion settings.
 
 Teacher availability and cross-calendar bookings compare matching academic labels only. Archived
 calendars never participate. Administrators can inspect non-archived preparations with diffusion off;
-other staff receive only currently diffused teaching sessions. External booking metadata contains
+other staff also receive their own preparations in their active promotions when pupil diffusion is
+off. Other staff's private preparations remain hidden. External booking metadata contains
 teacher IDs, times and calendar references, never another promotion's pupil roster or course details.
 The availability workspace retains anonymous full-class occupancy hatching, calculated from real
 simultaneous recipients without adding queries per pupil or occurrence.
@@ -151,8 +172,10 @@ recurring pairs and ignore past dates. Warning event links open the actual dated
 
 ## Live diffusion, confirmations and archives
 
-The master switch on /timetable controls web visibility and ICS events. With diffusion off, the
-calendar is administrator-only and contributes no events to personal subscriptions. Enabling diffusion
+The "Diffuser aux élèves" switch controls pupil subscriptions and general staff calendar visibility.
+With diffusion off, teachers and kholleurs still export their own assigned sessions in their active
+promotions and see those sessions in the staff workspace. Pupils receive no link from /me until their
+active promotion's current-year calendar is diffused. Enabling diffusion
 requires a promotion. Every change to an assigned, diffused calendar requires explicit confirmation,
 also enforced by the backend. Reassignment separately confirms the recipient change and recomputes
 group/lunch diagnostics. Calendar and event revisions prevent stale concurrent writes; changing the
@@ -177,11 +200,61 @@ Subject, teacher and room labels are fetched in batches. Personal feeds use curr
 group assignments, generate occurrences in memory, filter recipients and decorate once. They never
 query the database inside the occurrence loop. Integration tests enforce an SQL-query budget.
 
-Members generate or rotate their opaque personal link at /me. The original token is never stored;
-the sole verifier is revocable and former tokens stop working. Students receive only their current
-audiences, teachers only their own assignments across authorized promotions. Inactive users and
-removed memberships lose access. Feeds include only diffused calendars whose dates include today.
-No eligible calendar returns a valid empty ICS; archived calendars never leak historical events.
+Every permanent active account receives a personal link at its first successful login, including
+administrator-only accounts. Existing connected accounts are also provisioned when visiting /me.
+The link remains visible and copyable in /me for staff; members cannot rotate or reactivate it themselves.
+Pupils without an active promotion and diffused current-year calendar receive no token, even if a verifier
+already exists. Their subscription block is hidden and previously known links return an empty feed.
+Membership is checked again on every read. Pupil calendar names use active promotion identifiers
+(joined if several); staff and administrator calendar names use the configured application name.
+Event titles use `<teaching type> - <UPPERCASE SUBJECT>` (Cours, TD, TP or Khôlle), falling back to
+the custom session title when no subject is selected. The room stays in LOCATION. DESCRIPTION
+contains the promotion and audience label, then each assigned teacher on a separate line. Individual
+targets are labelled as individual sessions without disclosing pupil identities. The current model
+supports up to twenty distinct teachers per session. Event UIDs and dates are unaffected.
+New tokens contain 64 random bytes (86 URL-safe characters, 512 bits). Their SHA-256 verifier is
+used for lookup; the recoverable secret uses the existing versioned identity AES-GCM keyring,
+bound to the owner ID and the dedicated `calendar_token` field. Never log subscription URLs.
+
+Only administrators can revoke or regenerate links from /dashboard/user or by active role category
+from the dashboard configuration tab. Responses expose status/counts, never target credentials.
+Category operations affect active accounts with at least one successful login; cumulative staff
+roles overlap. Revocation persists across login and /me visits. Regeneration enables a new link
+immediately and permanently invalidates the old one, retaining account usage history.
+Members must replace the subscription URL in their calendar app after regeneration.
+
+Students receive only their current audiences; teachers and kholleurs receive their own assignments
+across currently authorized promotions. All occurrences of the current academic label (September 1
+through August 31, Europe/Paris) are exported, including past sessions and calendars whose course
+dates no longer include today. UIDs remain stable. Disabled accounts, revoked/unknown tokens and
+missing eligible calendars return HTTP 200 with an empty calendar envelope, not a zero-byte body.
+Archived calendars never supply events. Paused diffusion hides events from pupils; staff still receive
+their assigned sessions. Temporary failures remain HTTP 503.
+Client refresh timing is outside Sophikron's control, and revocation cannot erase downloaded copies.
+
+Active links accept `AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE` requests per fixed 60-second window
+(default 5, configured in `.env` and passed to the backend by Compose). The next request returns
+HTTP 429 with `Retry-After`; SvelteKit preserves that header. PostgreSQL shares the budget across
+workers. Unknown and revoked tokens do not create counters. Empty authorized feeds also consume
+the budget. No ICS file cache is enabled. See [statistics](statistics.md) for usage counting.
+
+Production clients reach `https://<site>/calendar-feed/<token>.ics`. The existing SvelteKit server
+forwards the request to `http://backend:8000/api/v1/timetable/feed/<token>.ics` over Compose's internal
+network, without browser cookies. FastAPI does not need a public port. Use the existing nginx feed
+location, which suppresses credential-bearing access/error logs, and keep HTTPS enabled.
+
+For local Wi-Fi tests, use the same browser origin on the PC and phone. The local Compose overlay
+uses `SOPHIKRON_ORIGIN` for both frontend origin and backend allowed origins, defaulting to
+`http://192.168.1.41:3000`. Override it with the PC's actual Wi-Fi address when needed. This explicit
+local setting avoids an obsolete `AUTH_ALLOWED_ORIGINS` in .env silently excluding the frontend.
+Recreate backend/frontend after changing it; keep the existing public frontend port mapping.
+Activate a promotion, assign the pupil and its calendar, add assigned sessions, and enable calendar
+diffusion. The subscription then exports the current academic year's sessions. A downloaded ICS
+contains `BEGIN:VEVENT` for each exported event; merely detecting a subscription does not prove it
+contains sessions. Google servers cannot reach private Wi-Fi addresses. Use the production HTTPS
+domain for Google subscription tests and omit the local overlay in production.
+
+Fresh subscriptions use encrypted 86-character tokens. Historical 43-character links, if imported, are replaced on the next owner visit because their plaintext cannot be recovered. See the database guide for baseline compatibility.
 
 ## Migration and verification
 

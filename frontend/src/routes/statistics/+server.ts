@@ -11,6 +11,18 @@ export const GET: RequestHandler = async (event) => {
 		if (!['day', 'week', 'month'].includes(period))
 			throw new BackendError(422, 'Période invalide.');
 		const id = event.url.searchParams.get('lessonId');
+		if (event.url.searchParams.get('resource') === 'monitoring') {
+			if (!hasPermission(event.locals.user, 'statistics.read'))
+				throw new BackendError(403, 'Monitoring réservé aux administrateurs.');
+			const query = new URLSearchParams({ period });
+			for (const key of ['category', 'interval']) {
+				const value = event.url.searchParams.get(key);
+				if (value) query.set(key, value);
+			}
+			return Response.json(await api(event, `/admin/monitoring?${query}`), {
+				headers: { 'Cache-Control': 'private, no-store' }
+			});
+		}
 		const path =
 			id !== null
 				? `/lessons/${lessonIdentifier(id)}/statistics`

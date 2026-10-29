@@ -319,6 +319,10 @@ class AuthService:
             user.login_count += 1
             user.last_login_at = now
             user.updated_at = now
+            if not user.is_bootstrap:
+                from app.services.calendar_subscriptions import ensure_subscription
+
+                await ensure_subscription(self.db, self.cipher, user, now)
             context = UserContext(await self._profile(user), session.id)
         return context, token
 

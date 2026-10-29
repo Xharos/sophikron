@@ -43,6 +43,10 @@ class StatisticsResponse(BaseModel):
     storage: StorageStatistics
     accounts: list[Breakdown] = Field(default_factory=list)
     roles: list[Breakdown] = Field(default_factory=list)
+    calendar_subscriptions: list[Breakdown] = Field(default_factory=list)
+    calendar_recent_users: int = 0
+    calendar_eligible_users: int = 0
+    calendar_requests_total: int = 0
     promotions: list[Breakdown] = Field(default_factory=list)
     promotion_staff: list[Breakdown] = Field(default_factory=list)
     subjects: list[Breakdown] = Field(default_factory=list)

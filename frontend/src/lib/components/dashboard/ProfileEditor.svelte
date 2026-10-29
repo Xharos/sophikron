@@ -10,6 +10,7 @@
 	import GroupTags from '../GroupTags.svelte';
 	import type { FullProfile, SchoolProfile } from '#lib/types';
 	import Icon from '../Icon.svelte';
+	import AccountActivity from '../AccountActivity.svelte';
 	import Modal from '../Modal.svelte';
 	import CommunePicker from '../CommunePicker.svelte';
 	import TagSelector from '../TagSelector.svelte';
@@ -204,6 +205,9 @@
 	const adultRequired = $derived(
 		Boolean(draft.adult.first_name || draft.adult.last_name || draft.adult.phone)
 	);
+	const staffProfile = $derived(
+		draft.roles.some((role) => ['teacher', 'kholleur', 'admin'].includes(role))
+	);
 </script>
 
 <header class="profile-page-hero" class:archived-account={current.status === 'disabled'}>
@@ -227,6 +231,29 @@
 		: 'Vous pouvez modifier uniquement le projet d’orientation des élèves de vos promotions.'}
 </p>
 <form onsubmit={save} aria-busy={busy}>
+	<div class="profile-save-bar">
+		<div>
+			{#if message}<p class="has-text-danger" role="alert">{message}</p>{:else if dirty}<p
+					class="muted"
+				>
+					Des modifications ne sont pas encore enregistrées.
+				</p>{:else if success}<p
+					class="has-text-success"
+					role="status"
+					tabindex="-1"
+					bind:this={saveFeedback}
+				>
+					<Icon name="check" />Fiche enregistrée.
+				</p>{:else}<p class="muted">Toutes les modifications sont enregistrées ensemble.</p>{/if}
+		</div>
+		<button
+			class="button is-primary"
+			type="submit"
+			class:is-loading={busy}
+			disabled={busy || !dirty || !current.can_edit_orientation}
+			><Icon name="save" />Enregistrer la fiche</button
+		>
+	</div>
 	{#if current.can_edit_all}
 		<section class="workspace-panel mb-5">
 			<h2 class="title is-5"><Icon name="admin" />Rôles et accès</h2>
@@ -281,30 +308,28 @@
 		{:else}<p class="muted">Aucune promotion affectée.</p>{/each}
 	</section>
 	<div class="school-profile-grid">
-		<section class="workspace-panel profile-information accent-blue">
+		<section class="workspace-panel profile-information profile-identity accent-blue">
 			<h2 class="title is-5"><Icon name="profile" />Identité et coordonnées</h2>
-			<fieldset disabled={busy || !current.can_edit_all}>
-				<div class="form-grid">
-					<div class="field">
-						<label class="label" for="profile-first">Prénom</label><input
-							id="profile-first"
-							class="input"
-							bind:value={draft.first_name}
-							required
-							maxlength="100"
-							autocomplete="given-name"
-						/>
-					</div>
-					<div class="field">
-						<label class="label" for="profile-last">Nom</label><input
-							id="profile-last"
-							class="input"
-							bind:value={draft.last_name}
-							required
-							maxlength="100"
-							autocomplete="family-name"
-						/>
-					</div>
+			<fieldset class="identity-fields" disabled={busy || !current.can_edit_all}>
+				<div class="field">
+					<label class="label" for="profile-first">Prénom</label><input
+						id="profile-first"
+						class="input"
+						bind:value={draft.first_name}
+						required
+						maxlength="100"
+						autocomplete="given-name"
+					/>
+				</div>
+				<div class="field">
+					<label class="label" for="profile-last">Nom</label><input
+						id="profile-last"
+						class="input"
+						bind:value={draft.last_name}
+						required
+						maxlength="100"
+						autocomplete="family-name"
+					/>
 				</div>
 				<div class="field">
 					<label class="label" for="profile-email">Email</label><input
@@ -317,27 +342,25 @@
 						autocomplete="email"
 					/>
 				</div>
-				<div class="form-grid">
-					<div class="field">
-						<label class="label" for="profile-birth">Date de naissance</label><input
-							id="profile-birth"
-							class="input"
-							type="date"
-							bind:value={draft.birth_date}
-							max={new Date().toISOString().slice(0, 10)}
-						/>
-					</div>
-					<div class="field">
-						<label class="label" for="profile-phone">Téléphone</label><input
-							id="profile-phone"
-							class="input"
-							type="tel"
-							bind:value={draft.phone}
-							maxlength="40"
-							autocomplete="tel"
-							placeholder="06… ou +33…"
-						/>
-					</div>
+				<div class="field">
+					<label class="label" for="profile-birth">Date de naissance</label><input
+						id="profile-birth"
+						class="input"
+						type="date"
+						bind:value={draft.birth_date}
+						max={new Date().toISOString().slice(0, 10)}
+					/>
+				</div>
+				<div class="field">
+					<label class="label" for="profile-phone">Téléphone</label><input
+						id="profile-phone"
+						class="input"
+						type="tel"
+						bind:value={draft.phone}
+						maxlength="40"
+						autocomplete="tel"
+						placeholder="06… ou +33…"
+					/>
 				</div>
 				<CommunePicker
 					bind:city={draft.city}
@@ -347,164 +370,144 @@
 				/>
 			</fieldset>
 		</section>
-		<section class="workspace-panel profile-information accent-violet">
-			<h2 class="title is-5"><Icon name="school" />Parcours scolaire</h2>
-			<fieldset disabled={busy || !current.can_edit_all}>
-				<div class="field">
-					<label class="label" for="profile-school">Établissement précédent</label><input
-						id="profile-school"
-						class="input"
-						bind:value={draft.previous_school}
-						maxlength="200"
-					/>
-				</div>
-				<div class="field">
-					<label class="label" for="profile-bac">Intitulé du baccalauréat</label><input
-						id="profile-bac"
-						class="input"
-						bind:value={draft.bac.label}
-						maxlength="100"
-						placeholder="Général, STI2D…"
-					/>
-				</div>
-				<div class="form-grid">
+		{#if !staffProfile}
+			<section class="workspace-panel profile-information accent-violet">
+				<h2 class="title is-5"><Icon name="school" />Parcours scolaire</h2>
+				<fieldset disabled={busy || !current.can_edit_all}>
 					<div class="field">
-						<label class="label" for="profile-year">Année d’obtention</label><input
-							id="profile-year"
+						<label class="label" for="profile-school">Établissement précédent</label><input
+							id="profile-school"
 							class="input"
-							type="number"
-							min="1900"
-							max={new Date().getFullYear()}
-							step="1"
-							bind:value={draft.bac.year}
+							bind:value={draft.previous_school}
+							maxlength="200"
 						/>
 					</div>
 					<div class="field">
-						<label class="label" for="profile-grade">Moyenne générale /20</label><input
-							id="profile-grade"
+						<label class="label" for="profile-bac">Intitulé du baccalauréat</label><input
+							id="profile-bac"
 							class="input"
-							type="number"
-							min="0"
-							max="20"
-							step="any"
-							bind:value={draft.bac.overall_grade}
+							bind:value={draft.bac.label}
+							maxlength="100"
+							placeholder="Général, STI2D…"
 						/>
 					</div>
-				</div>
-				<h3 class="label mt-4">Spécialités et options principales</h3>
-				{#each draft.bac.subjects as subject, index (index)}<div class="subject-editor">
-						<div>
-							<label class="label" for={`subject-name-${index}`}>Option {index + 1}</label><input
-								id={`subject-name-${index}`}
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="profile-year">Année d’obtention</label><input
+								id="profile-year"
 								class="input"
-								bind:value={subject.name}
-								required
-								maxlength="100"
-								placeholder="Mathématiques, SI…"
+								type="number"
+								min="1900"
+								max={new Date().getFullYear()}
+								step="1"
+								bind:value={draft.bac.year}
 							/>
 						</div>
-						<div>
-							<label class="label" for={`subject-grade-${index}`}>Note /20</label><input
-								id={`subject-grade-${index}`}
+						<div class="field">
+							<label class="label" for="profile-grade">Moyenne générale /20</label><input
+								id="profile-grade"
 								class="input"
 								type="number"
 								min="0"
 								max="20"
 								step="any"
-								bind:value={subject.grade}
+								bind:value={draft.bac.overall_grade}
 							/>
 						</div>
-						{#if current.can_edit_all}<button
-								type="button"
-								class="icon-button"
-								aria-label={`Retirer l’option ${index + 1}`}
-								onclick={() => draft.bac.subjects.splice(index, 1)}><Icon name="close" /></button
-							>{/if}
-					</div>{/each}
-				{#if current.can_edit_all}<button
-						type="button"
-						class="button is-light is-small mt-3"
-						disabled={draft.bac.subjects.length >= 20}
-						onclick={() => draft.bac.subjects.push({ name: '', grade: undefined })}
-						><Icon name="plus" />Ajouter une option</button
-					>{/if}
-			</fieldset>
-		</section>
-		<section class="workspace-panel profile-information accent-green">
-			<h2 class="title is-5"><Icon name="orientation" />Projet d’orientation</h2>
-			<label class="label" for="profile-orientation">Projet, filière ou concours envisagés</label>
-			<textarea
-				id="profile-orientation"
-				class="textarea"
-				bind:value={draft.orientation_project}
-				maxlength="200"
-				disabled={busy || !current.can_edit_orientation}
-				rows="4"></textarea>
-			<p class="help has-text-right">{draft.orientation_project.length} / 200 caractères</p>
-		</section>
-		<section class="workspace-panel profile-information accent-orange">
-			<h2 class="title is-5"><Icon name="adult" />Adulte référent à contacter</h2>
-			<fieldset disabled={busy || !current.can_edit_all}>
-				<div class="form-grid">
-					<div class="field">
-						<label class="label" for="adult-first">Prénom du référent</label><input
-							id="adult-first"
-							class="input"
-							bind:value={draft.adult.first_name}
-							required={adultRequired}
-							maxlength="100"
-						/>
+					</div>
+					<h3 class="label mt-4">Spécialités et options principales</h3>
+					{#each draft.bac.subjects as subject, index (index)}<div class="subject-editor">
+							<div>
+								<label class="label" for={`subject-name-${index}`}>Option {index + 1}</label><input
+									id={`subject-name-${index}`}
+									class="input"
+									bind:value={subject.name}
+									required
+									maxlength="100"
+									placeholder="Mathématiques, SI…"
+								/>
+							</div>
+							<div>
+								<label class="label" for={`subject-grade-${index}`}>Note /20</label><input
+									id={`subject-grade-${index}`}
+									class="input"
+									type="number"
+									min="0"
+									max="20"
+									step="any"
+									bind:value={subject.grade}
+								/>
+							</div>
+							{#if current.can_edit_all}<button
+									type="button"
+									class="icon-button"
+									aria-label={`Retirer l’option ${index + 1}`}
+									onclick={() => draft.bac.subjects.splice(index, 1)}><Icon name="close" /></button
+								>{/if}
+						</div>{/each}
+					{#if current.can_edit_all}<button
+							type="button"
+							class="button is-light is-small mt-3"
+							disabled={draft.bac.subjects.length >= 20}
+							onclick={() => draft.bac.subjects.push({ name: '', grade: undefined })}
+							><Icon name="plus" />Ajouter une option</button
+						>{/if}
+				</fieldset>
+			</section>
+			<section class="workspace-panel profile-information accent-green">
+				<h2 class="title is-5"><Icon name="orientation" />Projet d’orientation</h2>
+				<label class="label" for="profile-orientation">Projet, filière ou concours envisagés</label>
+				<textarea
+					id="profile-orientation"
+					class="textarea"
+					bind:value={draft.orientation_project}
+					maxlength="200"
+					disabled={busy || !current.can_edit_orientation}
+					rows="4"></textarea>
+				<p class="help has-text-right">{draft.orientation_project.length} / 200 caractères</p>
+			</section>
+			<section class="workspace-panel profile-information accent-orange">
+				<h2 class="title is-5"><Icon name="adult" />Adulte référent à contacter</h2>
+				<fieldset disabled={busy || !current.can_edit_all}>
+					<div class="form-grid">
+						<div class="field">
+							<label class="label" for="adult-first">Prénom du référent</label><input
+								id="adult-first"
+								class="input"
+								bind:value={draft.adult.first_name}
+								required={adultRequired}
+								maxlength="100"
+							/>
+						</div>
+						<div class="field">
+							<label class="label" for="adult-last">Nom du référent</label><input
+								id="adult-last"
+								class="input"
+								bind:value={draft.adult.last_name}
+								required={adultRequired}
+								maxlength="100"
+							/>
+						</div>
 					</div>
 					<div class="field">
-						<label class="label" for="adult-last">Nom du référent</label><input
-							id="adult-last"
+						<label class="label" for="adult-phone">Téléphone du référent</label><input
+							id="adult-phone"
 							class="input"
-							bind:value={draft.adult.last_name}
+							type="tel"
+							bind:value={draft.adult.phone}
 							required={adultRequired}
-							maxlength="100"
+							maxlength="40"
 						/>
 					</div>
-				</div>
-				<div class="field">
-					<label class="label" for="adult-phone">Téléphone du référent</label><input
-						id="adult-phone"
-						class="input"
-						type="tel"
-						bind:value={draft.adult.phone}
-						required={adultRequired}
-						maxlength="40"
-					/>
-				</div>
-				<p class="help">
-					Contact facultatif. Renseignez les trois champs pour ajouter un référent.
-				</p>
-			</fieldset>
-		</section>
+					<p class="help">
+						Contact facultatif. Renseignez les trois champs pour ajouter un référent.
+					</p>
+				</fieldset>
+			</section>
+		{/if}
 	</div>
-	<footer class="profile-save-bar">
-		<div>
-			{#if message}<p class="has-text-danger" role="alert">{message}</p>{:else if dirty}<p
-					class="muted"
-				>
-					Des modifications ne sont pas encore enregistrées.
-				</p>{:else if success}<p
-					class="has-text-success"
-					role="status"
-					tabindex="-1"
-					bind:this={saveFeedback}
-				>
-					<Icon name="check" />Fiche enregistrée.
-				</p>{:else}<p class="muted">Toutes les modifications sont enregistrées ensemble.</p>{/if}
-		</div>
-		<button
-			class="button is-primary"
-			type="submit"
-			class:is-loading={busy}
-			disabled={busy || !dirty || !current.can_edit_orientation}
-			><Icon name="save" />Enregistrer la fiche</button
-		>
-	</footer>
 </form>
+<AccountActivity activity={current.activity} status={current.status} />
 {#if confirmRoles}
 	<Modal title="Confirmer le changement des accès" onclose={() => (confirmRoles = false)}>
 		<div class="notification is-warning is-light" role="alert">

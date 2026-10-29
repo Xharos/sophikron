@@ -16,6 +16,8 @@ from app.repositories.groups import GroupsRepository
 from app.schemas.administration import PromotionBadge
 from app.schemas.profile import (
     PRIVATE_PROFILE_FIELDS,
+    AccountActivity,
+    AdminAccountActivity,
     AdminProfileUpdate,
     FullProfile,
     OrientationUpdate,
@@ -93,7 +95,21 @@ class ProfileService:
         today = self.auth.clock().date()
         age = calculate_age(profile.birth_date, today)
         cipher = self.auth.cipher
+        activity = AccountActivity(
+            created_at=user.created_at,
+            last_login_at=user.last_login_at,
+            login_count=user.login_count,
+        )
+        if owner or "admin" in await self.auth.repo.roles(actor.id):
+            activity = AdminAccountActivity(
+                **activity.model_dump(),
+                updated_at=user.updated_at,
+                password_changed_at=user.password_changed_at,
+                email_verified_at=user.email_verified_at,
+                email_verified=user.email_verified_at is not None,
+            )
         return FullProfile(
+            activity=activity,
             id=user.id,
             username=cipher.decrypt(user.id, "username", user.username_encrypted),
             first_name=cipher.decrypt(user.id, "first_name", user.first_name_encrypted),

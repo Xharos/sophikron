@@ -8,15 +8,16 @@ services:
       AUTH_ENVIRONMENT: ${AUTH_ENVIRONMENT:-development}
       AUTH_COOKIE_SECURE: "false"
       AUTH_CORS_ENABLED: "true"
-      AUTH_ALLOWED_ORIGINS: ${AUTH_ALLOWED_ORIGINS:-["http://localhost:3000","http://localhost:8000","http://127.0.0.1:8000"]}
+      # Match the frontend origin even when .env still lists the former localhost origin.
+      AUTH_ALLOWED_ORIGINS: '["${SOPHIKRON_ORIGIN:-http://192.168.1.41:3000}","http://localhost:3000","http://localhost:8000","http://127.0.0.1:8000"]'
     ports:
       - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
   frontend:
     build:
       args:
-        SITE_ORIGIN: http://localhost:3000
+        SITE_ORIGIN: ${SOPHIKRON_ORIGIN:-http://192.168.1.41:3000}
     environment:
-      ORIGIN: http://localhost:3000
+      ORIGIN: ${SOPHIKRON_ORIGIN:-http://192.168.1.41:3000}
       # Ignore all browser-supplied forwarding headers in local direct access.
       ADDRESS_HEADER: ""
 

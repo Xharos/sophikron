@@ -2,6 +2,8 @@
 	import { resolve } from '$app/paths';
 	import ProfileEditor from '#lib/components/dashboard/ProfileEditor.svelte';
 	import Icon from '#lib/components/Icon.svelte';
+	import CalendarSubscriptionAdmin from '#lib/components/dashboard/CalendarSubscriptionAdmin.svelte';
+	import { hasPermission } from '#lib/access';
 	import type { PageProps } from './$types';
 	let { data }: PageProps = $props();
 </script>
@@ -20,4 +22,7 @@
 			profile={data.profile}
 			currentUserId={data.user?.id ?? 0}
 		/>{/key}
+	{#if hasPermission(data.user, 'users.manage')}
+		{#key data.profile.id}<CalendarSubscriptionAdmin userId={data.profile.id} />{/key}
+	{/if}
 </section>

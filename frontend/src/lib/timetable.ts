@@ -21,6 +21,7 @@ export interface AnnualSubjectHours {
 	weekly: { course: number; td: number; tp: number; kholle: number; total: number };
 }
 export interface TimetableBlock {
+	teacher_ids?: number[];
 	starts_on: string;
 	start_slot: number;
 	duration_slots: number;
@@ -43,6 +44,8 @@ export interface TimetableSeries extends TimetableBlock {
 	exceptions: Record<string, Omit<TimetableBlock, 'interval' | 'until'> | null>;
 }
 export interface TimetableEvent {
+	teacher_ids?: number[];
+	teachers?: { id: number; name: string; available: boolean; roles?: string[] }[];
 	start_time?: number | null;
 	end_time?: number | null;
 	id: string;
@@ -378,6 +381,24 @@ function timetableAudiencesOverlap(
 }
 
 /** Keep stable event references alongside each deduplicated conflict for warning navigation. */
+export function eventTeacherIds(event: {
+	teacher_id: number | null;
+	teacher_ids?: number[];
+}): number[] {
+	return event.teacher_ids ?? (event.teacher_id === null ? [] : [event.teacher_id]);
+}
+
+/** Expand teacher checks only; keep occurrence IDs unchanged for navigation and pupil totals. */
+export function individualTeacherEvents(events: TimetableEvent[]): TimetableEvent[] {
+	return events.flatMap((event) =>
+		eventTeacherIds(event).map((id) => ({
+			...event,
+			teacher_id: id,
+			teacher: event.teachers?.find((teacher) => teacher.id === id)?.name ?? event.teacher
+		}))
+	);
+}
+
 export function timetableConflictDetails(
 	events: TimetableEvent[],
 	groups: TimetableGroup[] = [],
@@ -411,24 +432,32 @@ export function timetableConflictDetails(
 					field === 'promotion_id'
 						? event.calendar_id === other.calendar_id ||
 							(event.promotion_id !== null && event.promotion_id === other.promotion_id)
-						: event[field] !== null && event[field] === other[field];
+						: field === 'teacher_id'
+							? eventTeacherIds(event).some((id) => eventTeacherIds(other).includes(id))
+							: event[field] !== null && event[field] === other[field];
 				if (sameResource) {
 					const pair = [
 						event.conflict_key ?? event.series_id,
 						other.conflict_key ?? other.series_id
 					].sort();
-					const key = JSON.stringify([field, event[field] ?? event.calendar_id, pair]);
-					if (!warnings.has(key))
-						warnings.set(key, {
-							code: `conflict-${key}`,
-							severity: field === 'room_id' ? 'warning' : 'critical',
-							message: `Conflit de ${label} le ${event.start.slice(0, 10)} : ${other.title} / ${event.title}.`,
-							summary:
-								field === 'promotion_id'
-									? 'Les mêmes élèves ont plusieurs séances simultanées et ne peuvent pas être dans deux salles à la fois.'
-									: `Conflit de ${label} entre ces séances.`,
-							events: [other, event]
-						});
+					const resources =
+						field === 'teacher_id'
+							? eventTeacherIds(event).filter((id) => eventTeacherIds(other).includes(id))
+							: [event[field] ?? event.calendar_id];
+					for (const resource of resources) {
+						const key = JSON.stringify([field, resource, pair]);
+						if (!warnings.has(key))
+							warnings.set(key, {
+								code: `conflict-${key}`,
+								severity: field === 'room_id' ? 'warning' : 'critical',
+								message: `Conflit de ${label} le ${event.start.slice(0, 10)} : ${other.title} / ${event.title}.`,
+								summary:
+									field === 'promotion_id'
+										? 'Les mêmes élèves ont plusieurs séances simultanées et ne peuvent pas être dans deux salles à la fois.'
+										: `Conflit de ${label} entre ces séances.`,
+								events: [other, event]
+							});
+					}
 				}
 			}
 		}
@@ -452,7 +481,9 @@ export function crossCalendarTeacherConflicts(
 		bookings.set(key, items);
 	}
 	const warnings = new Map<string, TimetableWarning>();
-	for (const event of [...events].sort((a, b) => a.start.localeCompare(b.start))) {
+	for (const event of individualTeacherEvents(events).sort((a, b) =>
+		a.start.localeCompare(b.start)
+	)) {
 		if (event.teacher_id === null || event.start.slice(0, 10) < today) continue;
 		for (const booking of bookings.get(`${event.teacher_id}:${event.start.slice(0, 10)}`) ?? []) {
 			if (
@@ -491,7 +522,9 @@ export function teacherAvailabilityDetails(
 	schoolYear?: number
 ): TimetableWarning[] {
 	const warnings = new Map<string, TimetableWarning>();
-	for (const event of [...events].sort((a, b) => a.start.localeCompare(b.start))) {
+	for (const event of individualTeacherEvents(events).sort((a, b) =>
+		a.start.localeCompare(b.start)
+	)) {
 		if (today && event.start.slice(0, 10) < today) continue;
 		const pattern = patterns.find(
 			(item) =>

@@ -374,11 +374,17 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
         run_alembic("downgrade", "0001_authentication")
         async with migration.sessions() as session:
             assert await session.scalar(text("SELECT to_regclass('sophikron.activity_events')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')")) is None
             assert (
                 await session.scalar(text("SELECT to_regclass('sophikron.site_settings')")) is None
             )
         run_alembic("upgrade", "0002_configuration")
         async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')"))
+            assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.calendar_usage_totals')"))
+                is None
+            )
             assert (
                 await session.scalar(
                     text("SELECT holiday_color FROM sophikron.site_settings WHERE id = 1")
@@ -408,5 +414,25 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
         async with migration.sessions() as session:
             assert await session.scalar(text("SELECT to_regclass('sophikron.teacher_subjects')"))
             assert await session.scalar(text("SELECT to_regclass('sophikron.lessons')")) is None
+        run_alembic("upgrade", "0006_promotion_groups")
+        async with migration.sessions() as session:
+            assert (
+                await session.scalar(
+                    text("SELECT to_regclass('sophikron.timetable_subscriptions')")
+                )
+                is None
+            )
+        run_alembic("upgrade", "head")
+        async with migration.sessions() as session:
+            assert await session.scalar(
+                text("SELECT to_regclass('sophikron.calendar_usage_totals')")
+            )
+            assert await session.scalar(
+                text("""
+                SELECT is_nullable = 'YES' FROM information_schema.columns
+                WHERE table_schema = 'sophikron' AND table_name = 'teacher_availability'
+                AND column_name = 'ranges'
+            """)
+            )
     finally:
         run_alembic("upgrade", "head")

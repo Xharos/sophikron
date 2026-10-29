@@ -2,9 +2,10 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 
 from app.dependencies.auth import AuthenticatedUser, AuthServiceDependency
+from app.schemas.auth import InputModel
 from app.schemas.teacher_availability import AvailabilitySave
 from app.schemas.timetable import (
     CalendarRestore,
@@ -18,10 +19,24 @@ from app.schemas.timetable import (
     SettingsSave,
     Version,
 )
+from app.services.calendar_subscriptions import Action, CalendarSubscriptionService, Category
 from app.services.errors import AuthError
 from app.services.teacher_availability import TeacherAvailabilityService
 from app.services.timetable import TimetableService
 from app.services.timetable_configuration import TimetableConfigurationService
+
+
+class SubscriptionCommand(InputModel):
+    """Allow only administrator revocation or regeneration commands."""
+
+    action: Action
+
+
+class SubscriptionBulkCommand(SubscriptionCommand):
+    """Select a supported member category without accepting arbitrary role names."""
+
+    category: Category
+
 
 router = APIRouter(prefix="/timetable", tags=["Timetables"])
 
@@ -218,22 +233,40 @@ async def edit_occurrence(
 
 
 @router.get("/subscription")
-async def subscription_status(actor: AuthenticatedUser, service: Service) -> dict:
-    """Return whether a subscription exists, never its original token."""
-    return await service.subscription(actor)
+async def subscription_status(actor: AuthenticatedUser, auth: AuthServiceDependency) -> dict:
+    """Return the authenticated owner's encrypted-at-rest personal credential only."""
+    return await CalendarSubscriptionService(auth).personal(actor)
 
 
-@router.post("/subscription")
-async def generate_subscription(actor: AuthenticatedUser, service: Service) -> dict:
-    """Generate one personal token and atomically invalidate its predecessor."""
-    return await service.subscription(actor, generate=True)
+@router.get("/subscriptions/users/{user_id}")
+async def member_subscription(
+    user_id: int, actor: AuthenticatedUser, auth: AuthServiceDependency
+) -> dict:
+    """Read administrator-only status without exposing the target's secret."""
+    return await CalendarSubscriptionService(auth).manage(actor, user_id)
+
+
+@router.post("/subscriptions/users/{user_id}")
+async def change_member_subscription(
+    user_id: int, data: SubscriptionCommand, actor: AuthenticatedUser, auth: AuthServiceDependency
+) -> dict:
+    """Revoke or regenerate a member's credential without returning its value."""
+    return await CalendarSubscriptionService(auth).manage(actor, user_id, data.action)
+
+
+@router.post("/subscriptions/bulk")
+async def change_category_subscriptions(
+    data: SubscriptionBulkCommand, actor: AuthenticatedUser, auth: AuthServiceDependency
+) -> dict:
+    """Change all eligible category members atomically with backend administrator checks."""
+    return await CalendarSubscriptionService(auth).bulk(actor, data.category, data.action)
 
 
 @router.get("/feed/{token}.ics", include_in_schema=False)
-async def feed(token: str, service: Service) -> Response:
+async def feed(token: str, service: Service, request: Request) -> Response:
     """Serve currently broadcast events using a revocable token instead of browser cookies."""
     return Response(
-        await service.feed(token),
+        await service.feed(token, outcome=request.scope),
         media_type="text/calendar; charset=utf-8",
         headers={
             "Cache-Control": "private, no-store",

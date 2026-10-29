@@ -7,8 +7,9 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.http import SearchAccessLogFilter
-from app.schemas.timetable import BlockFields, SeriesData, YearDocument, YearSettings
+from app.schemas.timetable import BlockFields, SeriesData, SeriesFields, YearDocument, YearSettings
 from app.services.errors import AuthError
+from app.services.teacher_availability import availability_warnings
 from app.services.timetable_engine import (
     current_school_year,
     daily_slots,
@@ -256,3 +257,29 @@ def test_optional_references_still_reject_zero_and_negative_ids(field: str) -> N
     for value in [0, -1]:
         with pytest.raises(ValidationError):
             series(title="Réunion", **{field: value})
+
+
+def test_multiple_teacher_validation_and_per_teacher_availability() -> None:
+    """Normalize old documents, reject ambiguous inputs and warn for a secondary teacher."""
+    legacy = SeriesFields(starts_on="2026-09-07", title="Maths", teacher_id=1)
+    assert legacy.teacher_ids == [1]
+    shared = SeriesFields(starts_on="2026-09-07", title="Maths", teacher_ids=[1, 2])
+    assert shared.teacher_id == 1
+    for identifiers in ([1, 1], [1, "2"], [1, {}], [-1], [True]):
+        with pytest.raises(ValidationError):
+            SeriesFields(starts_on="2026-09-07", title="Maths", teacher_ids=identifiers)
+    settings = YearSettings(start="2026-09-01", end="2027-08-31", breaks=[])
+    document = YearDocument(
+        settings=settings,
+        series=[
+            SeriesData(
+                **shared.model_dump(),
+                id="a" * 32,
+                lineage="a" * 32,
+            )
+        ],
+    )
+    events = [{**item, "school_year": 2026, "teacher": "A et B"} for item in occurrences(document)]
+    assert len(events) > 40 and events[0]["teacher_ids"] == [1, 2]
+    warnings = availability_warnings(events, {(2, 2026): []}, date(2026, 9, 1))
+    assert len(warnings) == 1

@@ -181,6 +181,89 @@ async def workspace(auth_case: Harness) -> AsyncIterator[Workspace]:
 
 
 @pytest.mark.asyncio
+async def test_annual_kholle_bounds_permissions_and_availability_preservation(
+    workspace: Workspace,
+) -> None:
+    """Keep annual bounds independent from ranges and enforce admin writes and stale revisions."""
+    w = workspace
+    endpoint = f"/api/v1/timetable/staff/{w.school_year}/{w.teacher_id}/availability"
+    board_endpoint = "/api/v1/timetable/staff/board"
+    params = {"school_year": w.school_year, "teacher_ids": w.teacher_id}
+    initial = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
+    assert initial["kholle_min_hours"] == initial["kholle_max_hours"] == 0
+    response = await w.case.client.put(
+        endpoint, json={"kholle_min_hours": 1, "kholle_max_hours": 4}
+    )
+    assert response.status_code == 200, response.text
+    revision = response.json()["revision"]
+    pattern = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
+    assert pattern["default"] and pattern["ranges"] == initial["ranges"]
+    assert (pattern["kholle_min_hours"], pattern["kholle_max_hours"]) == (1, 4)
+    assert (
+        await w.case.client.put(endpoint, json={"kholle_min_hours": 2, "kholle_max_hours": 5})
+    ).status_code == 409
+    for ranges in ([], None):
+        response = await w.case.client.put(
+            endpoint, json={"expected_revision": revision, "ranges": ranges}
+        )
+        assert response.status_code == 200, response.text
+        revision = response.json()["revision"]
+        pattern = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
+        assert (pattern["kholle_min_hours"], pattern["kholle_max_hours"]) == (1, 4)
+        assert pattern["default"] == (ranges is None)
+    for role in ("teacher", "kholleur"):
+        _, username = await w.case.create(role)
+        await w.login(username)
+        assert (
+            await w.case.client.put(
+                endpoint,
+                json={
+                    "expected_revision": revision,
+                    "kholle_min_hours": 2,
+                    "kholle_max_hours": 5,
+                },
+            )
+        ).status_code == 403
+        assert (await w.case.client.get(board_endpoint, params=params)).status_code == 200
+    w.case.as_admin()
+    future_year = w.school_year + 1
+    response = await w.case.client.post(
+        "/api/v1/timetable/school-years", json={"school_year": future_year}
+    )
+    assert response.status_code == 201, response.text
+    try:
+        future = (
+            await w.case.client.get(board_endpoint, params={**params, "school_year": future_year})
+        ).json()["availability"][0]
+        assert future["kholle_min_hours"] == future["kholle_max_hours"] == 0
+        response = await w.case.client.put(
+            endpoint,
+            json={"expected_revision": revision, "kholle_min_hours": 0, "kholle_max_hours": 0},
+        )
+        assert response.status_code == 200 and response.json()["revision"] is None
+        async with w.case.database.sessions.begin() as session:
+            for minimum, maximum in ((-1, 0), (2, 1)):
+                with pytest.raises(IntegrityError):
+                    async with session.begin_nested():
+                        session.add(
+                            TeacherAvailability(
+                                user_id=w.teacher_id,
+                                school_year=future_year,
+                                ranges=None,
+                                revision="a" * 32,
+                                kholle_min_hours=minimum,
+                                kholle_max_hours=maximum,
+                            )
+                        )
+                        await session.flush()
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(
+                delete(TimetableSchoolYear).where(TimetableSchoolYear.school_year == future_year)
+            )
+
+
+@pytest.mark.asyncio
 async def test_live_confirmation_stale_write_and_removed_endpoints(workspace: Workspace) -> None:
     """Confirm every live mutation and refuse stale edits, publication and template endpoints."""
     w = workspace
@@ -350,7 +433,7 @@ async def test_live_feed_private_scope_pause_archive_and_query_budget(workspace:
     await w.login(w.pupil_name)
     assert (await w.case.client.get("/api/v1/timetable/catalog")).status_code == 403
     assert (await w.case.client.get("/api/v1/timetable/staff/catalog")).status_code == 403
-    response = await w.case.client.post("/api/v1/timetable/subscription")
+    response = await w.case.client.get("/api/v1/timetable/subscription")
     token = response.json()["token"]
     statements = []
 
@@ -396,7 +479,10 @@ async def test_live_feed_private_scope_pause_archive_and_query_budget(workspace:
         },
     )
     assert response.status_code == 200, response.text
-    assert "Replacement" in (await w.case.client.get(f"/api/v1/timetable/feed/{token}.ics")).text
+    assert (
+        "Cours - REPLACEMENT"
+        in (await w.case.client.get(f"/api/v1/timetable/feed/{token}.ics")).text
+    )
     agenda = (await w.board())["calendars"][0]
     response = await w.case.client.put(
         f"/api/v1/timetable/calendars/{w.calendar_id}",
@@ -643,12 +729,14 @@ async def test_free_schedule_round_trips_through_recurrence_edits_and_personal_i
     )
     assert response.status_code == 200, response.text
     await w.login(w.pupil_name)
-    response = await w.case.client.post("/api/v1/timetable/subscription")
+    response = await w.case.client.get("/api/v1/timetable/subscription")
     token = response.json()["token"]
     response = await w.case.client.get(f"/api/v1/timetable/feed/{token}.ics")
     assert response.status_code == 200, response.text
     events = Calendar.from_ical(response.content).walk("VEVENT")
-    changed = next(event for event in events if str(event["summary"]) == "Changed exact occurrence")
+    changed = next(
+        event for event in events if str(event["summary"]) == "Cours - CHANGED EXACT OCCURRENCE"
+    )
     assert changed.decoded("dtstart").astimezone(PARIS).strftime("%H:%M:%S") == "14:11:00"
     assert changed.decoded("dtend").astimezone(PARIS).strftime("%H:%M:%S") == "14:29:00"
 
@@ -757,7 +845,7 @@ async def test_named_groups_overlap_validate_roster_and_drive_personal_feeds(
     assert (
         await w.case.client.put(path + "/0", json={**body, "expected_revision": None})
     ).status_code == 403
-    token = (await w.case.client.post("/api/v1/timetable/subscription")).json()["token"]
+    token = (await w.case.client.get("/api/v1/timetable/subscription")).json()["token"]
     feed = await w.case.client.get(f"/api/v1/timetable/feed/{token}.ics")
     assert len(Calendar.from_ical(feed.content).walk("VEVENT")) > 40
     await w.login(w.teacher_name)
@@ -836,7 +924,7 @@ async def test_custom_group_layout_and_retirement_preserve_existing_sessions(
     version = {"expected_revision": group["revision"]}
     assert (await w.case.client.request("DELETE", endpoint, json=version)).status_code == 409
     await w.login(w.pupil_name)
-    token = (await w.case.client.post("/api/v1/timetable/subscription")).json()["token"]
+    token = (await w.case.client.get("/api/v1/timetable/subscription")).json()["token"]
     feed = await w.case.client.get(f"/api/v1/timetable/feed/{token}.ics")
     count = len(Calendar.from_ical(feed.content).walk("VEVENT"))
     assert count > 40

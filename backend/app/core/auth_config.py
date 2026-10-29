@@ -36,6 +36,7 @@ class AuthSettings(BaseSettings):
     request_body_timeout_seconds: float = Field(default=10, gt=0, le=60, allow_inf_nan=False)
     login_reservation_seconds: int = Field(default=120, ge=60, le=300)
     rate_window_seconds: int = Field(default=900, ge=1, le=3600)
+    calendar_feed_limit_per_minute: int = Field(default=5, ge=1, le=10000)
     login_identity_limit: int = Field(default=5, ge=1, le=1000)
     login_ip_limit: int = Field(default=20, ge=1, le=10000)
     mail_transport: Literal["disabled", "smtp"] = "disabled"

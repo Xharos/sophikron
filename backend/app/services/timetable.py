@@ -1,13 +1,14 @@
 """Private annual timetable authorization, live mutations and personal calendar feeds."""
 
+import math
 import re
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
 from icalendar import Calendar, Event
-from sqlalchemy import delete, literal, select
+from sqlalchemy import delete, literal, select, update
 
-from app.core.security import new_token, token_digest
+from app.core.security import token_digest
 from app.models import (
     Promotion,
     PromotionCustomGroup,
@@ -28,6 +29,7 @@ from app.models import (
     UserPromotion,
     UserRole,
 )
+from app.models.site import SiteSettings
 from app.repositories.timetable import TimetableRepository
 from app.schemas.timetable import (
     CalendarSave,
@@ -41,7 +43,9 @@ from app.schemas.timetable import (
 )
 from app.services.activity import record_event
 from app.services.auth import AuthService, UserContext
+from app.services.calendar_subscriptions import student_promotions
 from app.services.errors import AuthError
+from app.services.timetable_assignments import assigned_teachers, individual_assignments
 from app.services.timetable_engine import (
     PARIS,
     apply_event_change,
@@ -122,6 +126,17 @@ class TimetableService:
         allow_unavailable_teacher: bool = False,
     ) -> None:
         """Validate live subject, teaching role and canonical room independently of the UI."""
+        if len(block.teacher_ids) > 1:
+            for identifier in block.teacher_ids:
+                await self._references(
+                    block.model_copy(
+                        update={"teacher_id": identifier, "teacher_ids": [identifier]}
+                    ),
+                    calendar,
+                    historical=historical,
+                    allow_unavailable_teacher=allow_unavailable_teacher,
+                )
+            return
         subject = (
             await self.db.get(Subject, block.subject_id) if block.subject_id is not None else None
         )
@@ -154,6 +169,7 @@ class TimetableService:
                         and (
                             teacher.status == "disabled"
                             or not {"teacher", "kholleur"}.intersection(roles)
+                            or (block.kind != "kholle" and "teacher" not in roles)
                         )
                     )
                 )
@@ -590,7 +606,11 @@ class TimetableService:
         teachers = {
             item.id: {"name": self._identity(item)["name"], "available": item.status != "disabled"}
             for item in await self.db.scalars(
-                select(User).where(User.id.in_({event["teacher_id"] for event in events}))
+                select(User).where(
+                    User.id.in_(
+                        {teacher for event in events for teacher in assigned_teachers(event)}
+                    )
+                )
             )
         }
         teacher_roles: dict[int, list[str]] = {}
@@ -641,14 +661,30 @@ class TimetableService:
                 "color": subjects[event["subject_id"]].color
                 if event["subject_id"] is not None
                 else "#64748B",
-                "teacher": teachers[event["teacher_id"]]["name"]
-                if event["teacher_id"] is not None
-                else "",
-                "teacher_available": teachers[event["teacher_id"]]["available"]
-                if event["teacher_id"] is not None
-                else True,
+                "teachers": [
+                    {
+                        "id": identifier,
+                        **teachers[identifier],
+                        "roles": teacher_roles.get(identifier, []),
+                    }
+                    for identifier in assigned_teachers(event)
+                ],
+                "teacher": "\n".join(
+                    teachers[identifier]["name"] for identifier in assigned_teachers(event)
+                ),
+                "teacher_available": all(
+                    teachers[identifier]["available"] for identifier in assigned_teachers(event)
+                ),
                 **(
-                    {"teacher_roles": sorted(teacher_roles.get(event["teacher_id"], []))}
+                    {
+                        "teacher_roles": sorted(
+                            {
+                                role
+                                for identifier in assigned_teachers(event)
+                                for role in teacher_roles.get(identifier, [])
+                            }
+                        )
+                    }
                     if include_roles
                     else {}
                 ),
@@ -887,7 +923,11 @@ class TimetableService:
                 }
                 for teacher, number in (
                     set(explicit)
-                    | {(event["teacher_id"], event["school_year"]) for event in events}
+                    | {
+                        (teacher, event["school_year"])
+                        for event in events
+                        for teacher in assigned_teachers(event)
+                    }
                 )
                 if teacher is not None
             ]
@@ -917,7 +957,7 @@ class TimetableService:
             ]
             unavailable = {
                 event["teacher_id"]: event["teacher"]
-                for event in events
+                for event in individual_assignments(events)
                 if not event["teacher_available"]
                 and datetime.fromisoformat(event["end"]) > self.auth.clock()
             }
@@ -941,9 +981,7 @@ class TimetableService:
                     admin,
                     None
                     if admin
-                    else {
-                        event["teacher_id"] for event in events if event["teacher_id"] is not None
-                    },
+                    else {teacher for event in events for teacher in assigned_teachers(event)},
                 )
                 if years
                 else []
@@ -1037,13 +1075,13 @@ class TimetableService:
                 document.series = [
                     source
                     for source in document.series
-                    if source.teacher_id in teacher_ids
+                    if set(source.teacher_ids).intersection(teacher_ids)
                     or any(
-                        block and block.teacher_id in teacher_ids
+                        block and set(block.teacher_ids).intersection(teacher_ids)
                         for block in source.exceptions.values()
                     )
                 ]
-            for event in occurrences(document):
+            for event in individual_assignments(occurrences(document)):
                 if event["teacher_id"] is None or event["start"][:10] < today:
                     continue
                 if teacher_ids is not None and event["teacher_id"] not in teacher_ids:
@@ -1105,7 +1143,11 @@ class TimetableService:
                         and room_halves < 2
                     ):
                         continue
-                    same_resource = event.get(field) is not None and event[field] == other[field]
+                    same_resource = (
+                        bool(set(assigned_teachers(event)).intersection(assigned_teachers(other)))
+                        if field == "teacher_id"
+                        else event.get(field) is not None and event[field] == other[field]
+                    )
                     if field == "promotion_id" and event.get("calendar_id") is not None:
                         same_resource = same_resource or event["calendar_id"] == other.get(
                             "calendar_id"
@@ -1127,37 +1169,42 @@ class TimetableService:
                                 )
                             )
                         )
-                        warnings.setdefault(
-                            (field, event[field], identities),
-                            f"Conflit de {label} le {event['start'][:10]} : "
-                            f"{other['title']} / {event['title']}.",
+                        resources = (
+                            set(assigned_teachers(event)).intersection(assigned_teachers(other))
+                            if field == "teacher_id"
+                            else [event[field]]
                         )
+                        for identifier in resources:
+                            teacher_name = (
+                                next(
+                                    (
+                                        item["name"]
+                                        for item in event.get("teachers", [])
+                                        if item["id"] == identifier
+                                    ),
+                                    "",
+                                )
+                                if field == "teacher_id"
+                                else ""
+                            )
+                            warnings.setdefault(
+                                (field, identifier, identities),
+                                f"Conflit de {label} le {event['start'][:10]} : "
+                                f"{other['title']} / {event['title']}."
+                                + (f" ({teacher_name})" if teacher_name else ""),
+                            )
             active.append(event)
         return sorted(warnings.values())[:100]
 
-    async def subscription(self, actor: UserContext, *, generate: bool = False) -> dict:
-        """Return status only, or rotate the member's sole verifier and reveal its token once."""
-        async with self.db.begin():
-            user = await self.auth._actor(actor)
-            roles = await self.auth.repo.roles(user.id)
-            if user.is_bootstrap or not {"user", "teacher", "kholleur"}.intersection(roles):
-                raise AuthError(
-                    403, "Cet abonnement est réservé aux élèves et à l’équipe enseignante."
-                )
-            row = await self.db.get(TimetableSubscription, user.id)
-            if not generate:
-                return {"exists": row is not None}
-            token = new_token()
-            if row is None:
-                row = TimetableSubscription(user_id=user.id)
-                self.db.add(row)
-            row.token_hash, row.created_at = token_digest(token), self.auth.clock()
-            return {"token": token}
-
-    async def feed(self, token: str) -> bytes:
+    async def feed(self, token: str, *, outcome: dict | None = None) -> bytes:
         """Authorize by verifier and current membership, exporting only current publications."""
-        if not re.fullmatch(r"[A-Za-z0-9_-]{43}", token):
-            raise AuthError(404, "Abonnement introuvable.")
+        calendar = Calendar()
+        calendar.add("prodid", "-//Sophikron//Emploi du temps//FR")
+        calendar.add("version", "2.0")
+        if outcome is not None:
+            outcome["ics_outcome"] = "refused"
+        if not re.fullmatch(r"(?:[A-Za-z0-9_-]{43}|[A-Za-z0-9_-]{86})", token):
+            return calendar.to_ical()
         async with self.db.begin():
             row = await self.db.scalar(
                 select(TimetableSubscription).where(
@@ -1165,16 +1212,66 @@ class TimetableService:
                 )
             )
             user = await self.db.get(User, row.user_id) if row else None
-            if user is None or not self.auth._active(user, self.auth.clock()) or user.is_bootstrap:
-                raise AuthError(404, "Abonnement introuvable.")
+            if (
+                user is None
+                or not self.auth._active(user, self.auth.clock())
+                or user.is_bootstrap
+                or user.login_count == 0
+                or row.revoked_at is not None
+            ):
+                return calendar.to_ical()
+            now = self.auth.clock()
+            limit = self.auth.settings.calendar_feed_limit_per_minute
+            attempts, expiry = await self.auth.repo.reserve_attempt(
+                self.auth.cipher.lookup("rate:calendar-feed", row.token_hash.hex()),
+                limit,
+                now,
+                60,
+            )
+            if attempts > limit:
+                raise AuthError(
+                    429,
+                    "Trop de demandes. Réessayez dans une minute.",
+                    max(1, math.ceil((expiry - now).total_seconds())),
+                )
             roles = await self.auth.repo.roles(user.id)
-            if not {"user", "teacher", "kholleur"}.intersection(roles):
-                raise AuthError(404, "Abonnement introuvable.")
+            promotions = await student_promotions(self.db, user.id)
+            promotion_names = {promotion.id: promotion.identifier for promotion in promotions}
+            if "user" in roles:
+                if not promotions:
+                    return calendar.to_ical()
+                name = " / ".join(dict.fromkeys(promotion.identifier for promotion in promotions))
+            else:
+                settings = await self.db.get(SiteSettings, 1)
+                name = settings.name if settings is not None else "Sophikron"
+            calendar.add("x-wr-calname", name)
             from app.services.timetable_lifecycle import rollover
 
+            # Acquire a possible lifecycle lock before the subscription update lock.
             await rollover(self.db, self.today())
+            calendars = {
+                calendar.id: calendar
+                for calendar in await self.repo.calendars(
+                    user.id,
+                    include_undiffused="user" not in roles,
+                    school_year=current_school_year(self.today()),
+                )
+            }
+            if not calendars:
+                return calendar.to_ical()
+            # Also recheck the verifier in case an administrator just rotated or revoked it.
+            requested = await self.db.execute(
+                update(TimetableSubscription)
+                .where(
+                    TimetableSubscription.user_id == user.id,
+                    TimetableSubscription.token_hash == token_digest(token),
+                    TimetableSubscription.revoked_at.is_(None),
+                )
+                .values(last_requested_at=self.auth.clock())
+            )
+            if requested.rowcount == 0:
+                return calendar.to_ical()
             events = []
-            calendars = {calendar.id: calendar for calendar in await self.repo.calendars(user.id)}
             if calendars:
                 assignments: dict[int, set[tuple[str, int]]] = {}
                 promotion_ids = {calendar.promotion_id for calendar in calendars.values()}
@@ -1204,25 +1301,26 @@ class TimetableService:
                     await self.db.scalars(
                         select(TimetableYear).where(
                             TimetableYear.calendar_id.in_(calendars),
-                            TimetableYear.starts_on <= self.today(),
-                            TimetableYear.ends_on >= self.today(),
+                            TimetableYear.school_year == current_school_year(self.today()),
                         )
                     )
                 )
                 for year, document in (await self.repo.documents(annual_rows)).values():
                     memberships = assignments.get(calendars[year.calendar_id].promotion_id, set())
                     events.extend(
-                        {**event, "updated_at": year.updated_at}
+                        {
+                            **event,
+                            "updated_at": year.updated_at,
+                            "promotion_label": promotion_names.get(
+                                calendars[year.calendar_id].promotion_id, ""
+                            ),
+                        }
                         for event in occurrences(document)
                         if ("user" in roles and student_receives(event, user.id, memberships))
-                        or ("user" not in roles and event["teacher_id"] == user.id)
+                        or ("user" not in roles and user.id in assigned_teachers(event))
                     )
 
             events = await self._decorate(events)
-            calendar = Calendar()
-            calendar.add("prodid", "-//Sophikron//Emploi du temps//FR")
-            calendar.add("version", "2.0")
-            calendar.add("x-wr-calname", "Mon emploi du temps — Sophikron")
             for item in events:
                 event = Event()
                 event.add("uid", item["id"] + "@sophikron")
@@ -1232,14 +1330,49 @@ class TimetableService:
                 event.add("last-modified", item["updated_at"])
                 event.add("dtstart", datetime.fromisoformat(item["start"]).astimezone(timezone.utc))
                 event.add("dtend", datetime.fromisoformat(item["end"]).astimezone(timezone.utc))
-                event.add("summary", item["title"])
+                summary, notes = calendar_event_text(item)
+                event.add("summary", summary)
                 if item["room"]:
                     event.add("location", item["room"])
-                event.add(
-                    "description", " — ".join(filter(None, [item["kind"].upper(), item["teacher"]]))
-                )
+                event.add("description", notes)
                 calendar.add_component(event)
-            return calendar.to_ical()
+            result = calendar.to_ical()
+            from sqlalchemy.dialects.postgresql import insert
+
+            from app.models.statistics import CalendarUsageTotal
+
+            statement = insert(CalendarUsageTotal).values(id=1, requests=1)
+            await self.db.execute(
+                statement.on_conflict_do_update(
+                    index_elements=[CalendarUsageTotal.id],
+                    set_={"requests": CalendarUsageTotal.requests + 1},
+                )
+            )
+        if outcome is not None:
+            outcome["ics_outcome"] = "success"
+        return result
+
+
+def calendar_event_text(item: dict) -> tuple[str, str]:
+    """Return an ICS title and audience-first notes from already-authorized labels."""
+    kind = {"course": "Cours", "td": "TD", "tp": "TP", "kholle": "Khôlle"}[item["kind"]]
+    subject = item["subject_label"] if item["subject_id"] is not None else item["title"]
+    target = item.get("target_kind", "promotion")
+    number = item.get("target_number")
+    audience = {
+        "promotion": "Classe entière",
+        "halves": "Demi-groupe",
+        "thirds": "Tiers de groupe",
+        "kholles": "Groupe de khôlle",
+        "custom": item.get("audience_label") or "Groupe personnalisé",
+        "student": "Séance individuelle",
+    }[target]
+    if number and target in {"halves", "thirds"}:
+        audience += " " + chr((64 if target == "halves" else 87) + number)
+    elif number and target == "kholles":
+        audience += f" {number:03d}"
+    audience = " — ".join(filter(None, [item.get("promotion_label"), audience]))
+    return f"{kind} - {subject.upper()}", "\n".join(filter(None, [audience, item["teacher"]]))
 
 
 def student_receives(event: dict, user_id: int, memberships: set[tuple[str, int]]) -> bool:

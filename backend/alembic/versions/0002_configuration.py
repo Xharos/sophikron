@@ -1,7 +1,8 @@
-"""Create public site configuration, annual timelines and shared events."""
+"""Create site configuration, shared calendar events and bounded API monitoring."""
 
 import sqlalchemy as sa
 from alembic import op
+from sqlalchemy.dialects import postgresql
 
 revision: str = "0002_configuration"
 down_revision: str = "0001_authentication"
@@ -10,7 +11,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    """Create public settings and calendar tables, including the shared holiday color."""
+    """Create settings, public calendars and independent minute/category API aggregates."""
     op.create_table(
         "site_settings",
         sa.Column("id", sa.BigInteger(), primary_key=True),
@@ -62,9 +63,40 @@ def upgrade() -> None:
         schema="sophikron",
     )
 
+    columns = [
+        sa.Column(name, sa.BigInteger(), nullable=False)
+        for name in (
+            "requests",
+            "duration_us",
+            "max_us",
+            "successes",
+            "redirects",
+            "client_errors",
+            "server_errors",
+            "incomplete",
+            "ics_refused",
+        )
+    ]
+    op.create_table(
+        "api_metrics",
+        sa.Column("bucket", sa.DateTime(timezone=True), primary_key=True),
+        sa.Column("category", sa.String(24), primary_key=True),
+        *columns,
+        sa.Column("statuses", postgresql.JSONB(), nullable=False),
+        sa.Column("histogram", postgresql.JSONB(), nullable=False),
+        sa.CheckConstraint(
+            "category IN ('auth','timetable_read','timetable_check','timetable_write',"
+            "'ics','administration','documents','statistics','other')",
+            name="category",
+        ),
+        sa.CheckConstraint("requests >= 0 AND duration_us >= 0 AND max_us >= 0", name="counts"),
+        schema="sophikron",
+    )
+
 
 def downgrade() -> None:
-    """Remove calendar associations before events, timelines and public settings."""
+    """Remove API measurements and calendar associations before events and settings."""
+    op.drop_table("api_metrics", schema="sophikron")
     op.drop_table("timeline_event_bars", schema="sophikron")
     op.drop_table("timeline_events", schema="sophikron")
     op.drop_table("timelines", schema="sophikron")

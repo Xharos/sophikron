@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import { enhance } from '$app/forms';
-	import { formatDate, statusLabels } from '#lib/dashboard';
+	import AccountActivity from '#lib/components/AccountActivity.svelte';
 	import RoleBadges from '#lib/components/RoleBadges.svelte';
 	import FormMessage from '#lib/components/FormMessage.svelte';
 	import PasswordFields from '#lib/components/PasswordFields.svelte';
@@ -66,45 +66,9 @@
 	{/if}
 	{#if data.profile}<SchoolProfileView account={data.profile} />{/if}
 	{#if data.calendarSubscription}<CalendarSubscription
-			exists={data.calendarSubscription.exists}
+			subscription={data.calendarSubscription}
 		/>{/if}
-	<section class="workspace-panel account-activity">
-		<p class="eyebrow">Activité et sécurité</p>
-		<h2 class="title is-5"><Icon name="clock" />Les repères de votre compte</h2>
-		<div class="activity-grid">
-			<div>
-				<span>Dernière connexion</span><strong>{formatDate(data.account.last_login_at)}</strong>
-			</div>
-			<div>
-				<span
-					>Connexion{data.account.login_count === 1 ? '' : 's'} réussie{data.account.login_count ===
-					1
-						? ''
-						: 's'}</span
-				><strong>{data.account.login_count}</strong>
-			</div>
-			<div><span>Compte créé le</span><strong>{formatDate(data.account.created_at)}</strong></div>
-			<div>
-				<span>Dernière mise à jour</span><strong>{formatDate(data.account.updated_at)}</strong>
-			</div>
-			<div>
-				<span>Mot de passe modifié</span><strong
-					>{formatDate(data.account.password_changed_at)}</strong
-				>
-			</div>
-			<div>
-				<span>Email vérifié</span><strong
-					>{data.account.email_verified
-						? formatDate(data.account.email_verified_at)
-						: 'Non vérifié'}</strong
-				>
-			</div>
-		</div>
-		<p class="help mt-4">
-			{statusLabels[data.account.status]} · Dates à l’heure de Paris. La dernière connexion correspond
-			à une authentification réussie.
-		</p>
-	</section>
+	<AccountActivity activity={data.account} status={data.account.status} />
 </section>
 {#if passwordOpen && !data.account.is_bootstrap}<Modal
 		title="Changer mon mot de passe"

@@ -24,6 +24,7 @@ from app.schemas.timetable import YearSettings
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.timetable import TimetableService
+from app.services.timetable_assignments import assigned_teachers, individual_assignments
 from app.services.timetable_engine import PARIS, daily_slots, occurrences
 from app.services.timetable_occupancy import fully_occupied_ranges
 
@@ -118,7 +119,7 @@ def availability_warnings(
         One warning per teacher and recurring assignment, naming its first conflicting date.
     """
     warnings: dict[tuple, str] = {}
-    for event in sorted(events, key=lambda item: item["start"]):
+    for event in sorted(individual_assignments(events), key=lambda item: item["start"]):
         start, end = (
             datetime.fromisoformat(event[field]).astimezone(PARIS) for field in ("start", "end")
         )
@@ -278,7 +279,7 @@ class TeacherAvailabilityService:
             }
             events = []
             documents = await self.timetable.repo.teaching_documents(
-                school_year, include_private=admin
+                school_year, include_private=True
             )
             calendar_rows = (
                 list(
@@ -303,6 +304,26 @@ class TeacherAvailabilityService:
                 for calendar, promotion, promotion_year, _ in calendar_rows
             }
             calendar_names = {calendar.id: calendar.name for calendar, _, _, _ in calendar_rows}
+            private_calendars = {
+                calendar.id for calendar, _, _, _ in calendar_rows if calendar.is_paused
+            }
+            if not admin:
+                memberships = set(
+                    await self.db.scalars(
+                        select(UserPromotion.promotion_id)
+                        .join(Promotion)
+                        .where(UserPromotion.user_id == actor.id, Promotion.is_active.is_(True))
+                    )
+                )
+                allowed = {
+                    calendar.id
+                    for calendar, _, _, active in calendar_rows
+                    if active is not False
+                    and (not calendar.is_paused or calendar.promotion_id in memberships)
+                }
+                documents = [
+                    (year, document) for year, document in documents if year.calendar_id in allowed
+                ]
             participating = {
                 calendar.id: calendar.promotion_id
                 for calendar, _, _, active in calendar_rows
@@ -320,9 +341,9 @@ class TeacherAvailabilityService:
                 document.series = [
                     series
                     for series in document.series
-                    if series.teacher_id in teacher_ids
+                    if set(series.teacher_ids).intersection(teacher_ids)
                     or any(
-                        block and block.teacher_id in teacher_ids
+                        block and set(block.teacher_ids).intersection(teacher_ids)
                         for block in series.exceptions.values()
                     )
                 ]
@@ -336,7 +357,12 @@ class TeacherAvailabilityService:
                         "session_minutes": document.settings.session_minutes,
                     }
                     for event in (generated if generated is not None else occurrences(document))
-                    if event["teacher_id"] in teacher_ids
+                    if set(assigned_teachers(event)).intersection(teacher_ids)
+                    and (
+                        admin
+                        or year.calendar_id not in private_calendars
+                        or actor.id in assigned_teachers(event)
+                    )
                 )
             occupied = (
                 await self._occupied_ranges(occupancy_events, participating, settings)
@@ -354,7 +380,14 @@ class TeacherAvailabilityService:
                         "revision": patterns[identifier].revision
                         if identifier in patterns
                         else None,
-                        "default": identifier not in patterns,
+                        "default": identifier not in patterns
+                        or patterns[identifier].ranges is None,
+                        "kholle_min_hours": patterns[identifier].kholle_min_hours
+                        if identifier in patterns
+                        else 0,
+                        "kholle_max_hours": patterns[identifier].kholle_max_hours
+                        if identifier in patterns
+                        else 0,
                         "ranges": effective_ranges(
                             patterns[identifier].ranges if identifier in patterns else None,
                             settings,
@@ -452,12 +485,12 @@ class TeacherAvailabilityService:
         school_year, teacher_id
             Annual teaching pattern identity.
         data
-            Observed revision and replacement ranges, or null to restore opening hours.
+            Observed revision and optional ranges and paired weekly kholle hour bounds.
 
         Returns
         -------
         dict
-            New revision; null after restoring the implicit default.
+            New revision; null when both availability and kholle bounds use their defaults.
         """
         async with self.db.begin():
             await self.auth._lifecycle_lock()
@@ -475,21 +508,36 @@ class TeacherAvailabilityService:
                     409, "Les disponibilités ont changé. Rechargez-les avant de continuer."
                 )
             common.used = True
-            if data.ranges is None:
-                if row:
-                    await self.db.delete(row)
-                return {"revision": None}
             settings = availability_settings(school_year)
             if any(
                 item.start < 28800 or item.end > (43200 if item.weekday == 5 else 68400)
-                for item in data.ranges
+                for item in (data.ranges or [])
             ):
                 raise AuthError(
                     422, "Les disponibilités doivent rester dans les horaires d’ouverture."
                 )
             if row is None:
-                row = TeacherAvailability(user_id=teacher_id, school_year=school_year)
+                row = TeacherAvailability(
+                    user_id=teacher_id,
+                    school_year=school_year,
+                    ranges=None,
+                    kholle_min_hours=0,
+                    kholle_max_hours=0,
+                    revision=uuid4().hex,
+                )
                 self.db.add(row)
-            row.ranges = effective_ranges([item.model_dump() for item in data.ranges], settings)
+            if "ranges" in data.model_fields_set:
+                row.ranges = (
+                    effective_ranges([item.model_dump() for item in data.ranges], settings)
+                    if data.ranges is not None
+                    else None
+                )
+            if "kholle_min_hours" in data.model_fields_set:
+                row.kholle_min_hours = data.kholle_min_hours
+                row.kholle_max_hours = data.kholle_max_hours
+            if row.ranges is None and row.kholle_min_hours == row.kholle_max_hours == 0:
+                await self.db.flush()
+                await self.db.delete(row)
+                return {"revision": None}
             row.revision = uuid4().hex
             return {"revision": row.revision}

@@ -1,4 +1,4 @@
-"""Create annual live timetables, availability and overlapping promotion audiences."""
+"""Create annual timetables, kholle bounds, audiences and revocable ICS subscriptions."""
 
 from uuid import uuid4
 
@@ -13,7 +13,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    """Create the final timetable schema and archive policy without altering prior feature data."""
+    """Create timetable storage, availability bounds, archive policy and personal calendar links."""
     op.create_table(
         "timetable_calendars",
         sa.Column("id", sa.BigInteger(), sa.Identity(), primary_key=True),
@@ -60,7 +60,16 @@ def upgrade() -> None:
         "teacher_availability",
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("school_year", sa.Integer(), nullable=False),
-        sa.Column("ranges", postgresql.JSONB(), nullable=False),
+        sa.Column("ranges", postgresql.JSONB(), nullable=True),
+        sa.Column("kholle_min_hours", sa.Integer(), nullable=False, server_default="0"),
+        sa.Column("kholle_max_hours", sa.Integer(), nullable=False, server_default="0"),
+        sa.CheckConstraint(
+            "kholle_min_hours >= 0", name=op.f("ck_teacher_availability_kholle_min_hours")
+        ),
+        sa.CheckConstraint(
+            "kholle_max_hours >= kholle_min_hours",
+            name=op.f("ck_teacher_availability_kholle_max_hours"),
+        ),
         sa.Column("revision", sa.String(32), nullable=False),
         sa.PrimaryKeyConstraint("user_id", "school_year"),
         sa.ForeignKeyConstraint(["user_id"], ["sophikron.users.id"], ondelete="CASCADE"),
@@ -112,6 +121,9 @@ def upgrade() -> None:
         "timetable_subscriptions",
         sa.Column("user_id", sa.BigInteger(), primary_key=True),
         sa.Column("token_hash", sa.LargeBinary(), nullable=False, unique=True),
+        sa.Column("token_encrypted", sa.LargeBinary(), nullable=True),
+        sa.Column("revoked_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("last_requested_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
         sa.CheckConstraint(
             "octet_length(token_hash) = 32", name=op.f("ck_timetable_subscriptions_token_length")
@@ -187,6 +199,14 @@ def upgrade() -> None:
     )
     op.bulk_insert(preferences, [{"id": 1, "revision": uuid4().hex}])
 
+    op.create_table(
+        "calendar_usage_totals",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column("requests", sa.BigInteger(), nullable=False, server_default="0"),
+        sa.CheckConstraint("id = 1 AND requests >= 0", name="counts"),
+        schema="sophikron",
+    )
+
 
 def downgrade() -> None:
     """Remove timetable and custom audience tables, retaining prior features and partitions."""
@@ -194,6 +214,7 @@ def downgrade() -> None:
         "timetable_preferences",
         "promotion_custom_group_members",
         "promotion_custom_groups",
+        "calendar_usage_totals",
         "timetable_subscriptions",
         "timetable_series",
         "timetable_years",

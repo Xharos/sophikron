@@ -180,6 +180,7 @@
 			end_time: event.end_time ?? null,
 			subject_id: event.subject_id,
 			teacher_id: event.teacher_id,
+			teacher_ids: event.teacher_ids ?? (event.teacher_id === null ? [] : [event.teacher_id]),
 			room_id: event.room_id,
 			kind: event.kind,
 			title: source?.exceptions[event.source_date]?.title ?? source?.title ?? event.title,

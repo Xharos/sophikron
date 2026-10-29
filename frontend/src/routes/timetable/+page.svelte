@@ -178,14 +178,14 @@
 									type="checkbox"
 									role="switch"
 									checked={!agenda.is_paused}
-									aria-label={'Diffuser ' + agenda.name}
+									aria-label={'Diffuser aux élèves ' + agenda.name}
 									disabled={busy || agenda.promotion_id === null}
 									onclick={(event) => {
 										event.preventDefault();
 										ask(agenda, 'toggle');
 									}}
 								/><span class="switch-track" aria-hidden="true"></span><span
-									>{agenda.is_paused ? 'Diffusion coupée' : 'Diffusé en direct'}</span
+									>{agenda.is_paused ? 'Diffusion élèves coupée' : 'Diffusé aux élèves'}</span
 								></label
 							>
 							<button class="button is-small is-light" disabled={busy} onclick={() => edit(agenda)}
@@ -281,8 +281,8 @@
 			>
 		{:else if pending.action === 'toggle'}<p class="mt-3">
 				{pending.agenda.is_paused
-					? 'Toutes les séances enregistrées seront immédiatement accessibles aux destinataires autorisés et aux abonnements ICS.'
-					: 'Les destinataires ne pourront plus consulter ce calendrier et les abonnements ICS ne renverront plus ses événements.'}
+					? 'Les élèves affectés à cette promotion pourront récupérer leur lien dans /me et recevoir leurs séances par abonnement ICS.'
+					: 'Les élèves ne recevront plus le lien ni les événements de ce calendrier. Les enseignants et khôlleurs conserveront leurs propres séances et abonnements.'}
 			</p>
 		{:else}<p class="mt-3">
 				Les changements seront immédiatement appliqués. Changer la promotion retire l’accès aux

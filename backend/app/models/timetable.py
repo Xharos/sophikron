@@ -70,6 +70,10 @@ class TeacherAvailability(Base):
     """Store an explicit weekly availability pattern for one teacher and school year."""
 
     __tablename__ = "teacher_availability"
+    __table_args__ = (
+        CheckConstraint("kholle_min_hours >= 0", name="kholle_min_hours"),
+        CheckConstraint("kholle_max_hours >= kholle_min_hours", name="kholle_max_hours"),
+    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
     )
@@ -77,7 +81,9 @@ class TeacherAvailability(Base):
         ForeignKey("sophikron.timetable_school_years.school_year", ondelete="CASCADE"),
         primary_key=True,
     )
-    ranges: Mapped[list] = mapped_column(JSONB)
+    ranges: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
+    kholle_min_hours: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    kholle_max_hours: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     revision: Mapped[str] = mapped_column(String(32))
 
 
@@ -124,7 +130,7 @@ class TimetableSeries(Base):
 
 
 class TimetableSubscription(Base):
-    """Keep exactly one random-token verifier per member, never the original link."""
+    """Keep one revocable verifier and an owner-only encrypted subscription secret."""
 
     __tablename__ = "timetable_subscriptions"
     __table_args__ = (CheckConstraint("octet_length(token_hash) = 32", name="token_length"),)
@@ -132,7 +138,10 @@ class TimetableSubscription(Base):
         ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
     )
     token_hash: Mapped[bytes] = mapped_column(LargeBinary, unique=True)
+    token_encrypted: Mapped[bytes | None] = mapped_column(LargeBinary)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class TimetablePreferences(Base):

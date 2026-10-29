@@ -146,6 +146,7 @@ export interface SchoolProfile {
 	reference_adult: ReferenceAdult | null;
 }
 export interface FullProfile {
+	activity: AccountActivity;
 	subject_ids: number[];
 	id: number;
 	username: string;
@@ -187,3 +188,20 @@ export interface TeachingTeam {
 	teacher_count: number;
 	kholleur_count: number;
 }
+
+/** Profile activity is filtered by the backend according to the reader's role. */
+export type AccountActivity =
+	| {
+			created_at: string;
+			last_login_at: string | null;
+			login_count: number;
+	  }
+	| {
+			created_at: string;
+			last_login_at: string | null;
+			login_count: number;
+			updated_at: string;
+			password_changed_at: string | null;
+			email_verified_at: string | null;
+			email_verified: boolean;
+	  };

@@ -211,6 +211,7 @@ def occurrences(document: YearDocument) -> list[dict]:
                         "end_time": block.end_time,
                         "subject_id": block.subject_id,
                         "teacher_id": block.teacher_id,
+                        "teacher_ids": block.teacher_ids,
                         "room_id": block.room_id,
                         "kind": block.kind,
                         "title": block.title,

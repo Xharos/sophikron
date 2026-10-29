@@ -6,6 +6,7 @@
 	import TextEditor from '../TextEditor.svelte';
 	import ColorPicker from '../ColorPicker.svelte';
 	import CalendarPanel from './CalendarPanel.svelte';
+	import CalendarSubscriptionAdmin from './CalendarSubscriptionAdmin.svelte';
 	let site = $state<PublicSite | null>(null),
 		name = $state(''),
 		text = $state(''),
@@ -118,4 +119,5 @@
 			>
 		</fieldset>
 	</form>
-	<CalendarPanel {site} onchanged={calendarChanged} />{/if}
+	<CalendarPanel {site} onchanged={calendarChanged} />
+	<CalendarSubscriptionAdmin />{/if}

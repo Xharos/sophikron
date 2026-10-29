@@ -18,6 +18,12 @@ export async function timetableCommand<T = TimetableCommandResult>(
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify({ path, method, data })
 	});
+	if (!response.headers.get('content-type')?.includes('application/json')) {
+		const message = await response.text();
+		throw new Error(
+			response.ok ? 'Réponse du serveur invalide.' : message || 'Enregistrement impossible.'
+		);
+	}
 	const result = (await response.json()) as T & { message?: string };
 	if (!response.ok) throw new Error(result.message ?? 'Enregistrement impossible.');
 	return result;

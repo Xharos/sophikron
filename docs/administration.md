@@ -221,6 +221,14 @@ statistics are reserved for future features; the first draft does not invent act
 
 ## Complete school profiles
 
+The `/me` and `/dashboard/user?id=…` pages hide school history, orientation and reference-adult
+sections for accounts with any `teacher`, `kholleur` or `admin` role. Personal contact details remain
+visible. Both pages display account activity landmarks. Profile responses include an `activity`
+object after checking the reader's current access: authorized teachers receive only `created_at`,
+`login_count` and `last_login_at`. Administrators and the account owner also receive `updated_at`,
+`password_changed_at`, `email_verified` and `email_verified_at`. These fields are omitted entirely
+for other readers, including in profile update responses. Existing student-scope restrictions apply.
+
 The full detail page `/dashboard/user?id=123` loads private information separately from account
 lists and the compact account drawer. Integer IDs identify the target; they never grant access.
 The username is immutable, even after first/family-name edits. Existing setup and account creation

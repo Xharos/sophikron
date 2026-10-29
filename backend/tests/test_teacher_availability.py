@@ -17,6 +17,36 @@ from tests.test_timetable import settings
 
 
 @pytest.mark.parametrize(
+    "values",
+    [
+        {},
+        {"kholle_min_hours": 1},
+        {"kholle_max_hours": 2},
+        {"kholle_min_hours": None, "kholle_max_hours": None},
+        {"kholle_min_hours": -1, "kholle_max_hours": 2},
+        {"kholle_min_hours": 3, "kholle_max_hours": 2},
+        {"kholle_min_hours": 1.5, "kholle_max_hours": 2},
+        {"kholle_min_hours": 1, "kholle_max_hours": 2.0},
+        {"kholle_min_hours": True, "kholle_max_hours": 2},
+        {"kholle_min_hours": "1", "kholle_max_hours": 2},
+        {"kholle_min_hours": 0, "kholle_max_hours": 2147483648},
+    ],
+)
+def test_kholle_bounds_reject_invalid_patches(values: dict) -> None:
+    """Require paired nonnegative ordered strict integers that fit database storage."""
+    with pytest.raises(ValidationError):
+        AvailabilitySave.model_validate(values)
+
+
+@pytest.mark.parametrize("minimum,maximum", [(0, 0), (0, 4), (2, 2), (2, 5)])
+def test_kholle_bounds_can_be_saved_without_changing_ranges(minimum: int, maximum: int) -> None:
+    """Distinguish omitted availability from an explicit reset while accepting zero hours."""
+    data = AvailabilitySave(kholle_min_hours=minimum, kholle_max_hours=maximum)
+    assert "ranges" not in data.model_fields_set
+    assert data.kholle_min_hours == minimum and data.kholle_max_hours == maximum
+
+
+@pytest.mark.parametrize(
     "event, expected",
     [
         ({}, "Classe entière"),
