@@ -27,6 +27,7 @@
 		editableGroups,
 		copyMembers = false,
 		ontransfer,
+		oncreate,
 		onmove,
 		actions
 	}: {
@@ -39,6 +40,7 @@
 		editableGroups?: number[];
 		copyMembers?: boolean;
 		ontransfer: (student: number, source: number | null, target: number) => void;
+		oncreate?: (students: number[], x: number, y: number) => void;
 		onmove: (number: number, x: number, y: number) => void;
 		actions?: Snippet<[GroupMapNode]>;
 	} = $props();
@@ -67,13 +69,30 @@
 	}
 	function drop(event: DragEvent, number: number): void {
 		event.preventDefault();
+		event.stopPropagation();
 		if (!accepts(number)) return;
 		const id = Number(event.dataTransfer?.getData('application/x-sophikron-student'));
-		if (!names.has(id) || (copyMembers && names.get(id)?.archived)) return;
+		if (!names.has(id)) return;
 		selectedStudent = id;
 		const source = event.dataTransfer?.getData('application/x-sophikron-group');
 		selectedGroup = source ? Number(source) : null;
 		transfer(number);
+	}
+	function createFromDrop(event: DragEvent, group?: GroupMapNode, pupil?: number): void {
+		if (!oncreate || !editing || busy) return;
+		if (!group && (event.target as HTMLElement).closest('.group-bubble')) return;
+		event.preventDefault();
+		event.stopPropagation();
+		const id = Number(event.dataTransfer?.getData('application/x-sophikron-student'));
+		if (!names.has(id) || id === pupil) return;
+		const board = (event.currentTarget as HTMLElement).getBoundingClientRect();
+		oncreate(
+			pupil === undefined ? [id] : [id, pupil],
+			group ? group.x + 30 : event.clientX - board.left,
+			group ? boardHeight + 20 : event.clientY - board.top
+		);
+		selectedStudent = null;
+		selectedGroup = null;
 	}
 	function startMoving(event: PointerEvent, group: GroupMapNode): void {
 		if (listView || busy || event.button !== 0) return;
@@ -123,6 +142,12 @@
 >
 	<div
 		class="group-board"
+		role="group"
+		aria-label="Disposition des groupes"
+		ondragover={(event) => {
+			if (oncreate && editing && !busy) event.preventDefault();
+		}}
+		ondrop={(event) => createFromDrop(event)}
 		style={listView ? '' : `width:${boardWidth}px;min-height:${boardHeight}px`}
 	>
 		{#each groups as group (group.number)}
@@ -165,9 +190,19 @@
 							class:chosen={selectedStudent === id &&
 								(selectedGroup === group.number || !copyMembers)}
 							class:archived-account={names.get(id)?.archived}
+							aria-label={`${names.get(id)?.name ?? 'Élève'}${names.get(id)?.archived ? ' · Archivé' : ''}`}
 							title={names.get(id)?.archived ? 'Compte archivé, exclu des effectifs' : undefined}
-							disabled={!editing || busy || (copyMembers && names.get(id)?.archived)}
-							draggable={editing && !busy && !(copyMembers && names.get(id)?.archived)}
+							disabled={!editing || busy}
+							draggable={editing && !busy}
+							ondragover={(event) => {
+								if (oncreate && editing && !busy) {
+									event.preventDefault();
+									event.stopPropagation();
+								}
+							}}
+							ondrop={(event) => {
+								if (oncreate) createFromDrop(event, group, id);
+							}}
 							aria-pressed={selectedStudent === id &&
 								(selectedGroup === group.number || !copyMembers)}
 							ondragstart={(event) => {
@@ -186,7 +221,9 @@
 								selectedStudent =
 									selectedStudent === id && selectedGroup === group.number ? null : id;
 								selectedGroup = group.number;
-							}}>{names.get(id)?.name ?? 'Élève'}</button
+							}}
+							><span class="student-name">{names.get(id)?.name ?? 'Élève'}</span
+							>{#if names.get(id)?.archived}<span class="text-small"> · Archivé</span>{/if}</button
 						>{/each}
 					{#if !group.student_ids.length}<p class="muted text-small">Groupe vide</p>{/if}
 					{#if accepts(group.number)}<button
@@ -291,6 +328,9 @@
 		color: var(--color-muted);
 		border-style: dashed;
 		background: var(--color-subtle);
+	}
+	.archived-account .student-name {
+		text-decoration: line-through;
 	}
 	.over-limit {
 		border: 2px solid var(--color-danger);

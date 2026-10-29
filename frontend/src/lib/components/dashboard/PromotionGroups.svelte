@@ -2,7 +2,13 @@
 	import { untrack } from 'svelte';
 	import { beforeNavigate } from '$app/navigation';
 	import { command, read } from '#lib/dashboard';
-	import { groupError, groupLabel, moveStudent, partitionLabels } from '#lib/groups';
+	import {
+		createKholleGroup,
+		groupError,
+		groupLabel,
+		moveStudent,
+		partitionLabels
+	} from '#lib/groups';
 	import type { GroupDraft, Partition, PartitionKind, PromotionGroupsData } from '#lib/groups';
 	import type { Promotion } from '#lib/types';
 	import Icon from '../Icon.svelte';
@@ -200,11 +206,22 @@
 		}
 	}
 	function transfer(number: number): void {
-		if (!editing || busy || selectedStudent === null) return;
+		if (!editing || busy || stale || selectedStudent === null) return;
 		const name = names.get(selectedStudent);
 		groups = moveStudent(groups, selectedStudent, number);
 		selectedStudent = null;
 		success = `${name} a été déplacé vers ${groupLabel(kind, number)}. Modification non enregistrée.`;
+	}
+	function createFromStudents(ids: number[], x: number, y: number): void {
+		if (!editing || busy || stale || kind !== 'kholles' || ids.some((id) => !names.has(id))) return;
+		const updated = createKholleGroup(groups, ids, x, y);
+		if (updated === groups) {
+			message = 'Impossible de créer une khôlle supplémentaire (limite de 1 000 groupes).';
+			return;
+		}
+		groups = updated;
+		selectedStudent = null;
+		success = 'Khôlle créée. Modification non enregistrée.';
 	}
 	function arrange(): void {
 		groups = groups.map((group, index) => ({
@@ -246,8 +263,8 @@
 				Répartitions et groupes personnalisés. Déplacez les bulles pour explorer les groupes.
 			</p>
 			<p class="muted text-small">
-				Les élèves grisés sont archivés : leurs groupes sont conservés, mais ils sont exclus des
-				effectifs et de l’équilibrage.
+				Les élèves au nom barré sont archivés : leurs groupes sont conservés, mais ils sont exclus
+				des effectifs et de l’équilibrage.
 			</p>
 		</div>
 		<button
@@ -390,6 +407,12 @@
 							: 'À la sauvegarde, les effectifs non archivés doivent avoir au maximum un élève d’écart.'}
 						Chaque élève doit être affecté une fois.
 					</p>
+					{#if kind === 'kholles'}<p class="mt-2">
+							Déposez un élève sur un autre pour créer une khôlle à deux, ou sur le fond de la carte
+							pour créer une khôlle individuelle. Les groupes sources devenus vides sont retirés.
+							Pour rejoindre un groupe existant, déposez l’élève sur « Déplacer ici ». Au clavier,
+							sélectionnez un élève, créez sa khôlle puis utilisez « Déplacer ici ».
+						</p>{/if}
 				</div>{/if}
 			{#if groups.length}
 				<div class="group-toolbar mt-4">
@@ -411,28 +434,59 @@
 								class="button is-small is-light"
 								disabled={busy || groups.length >= 1000}
 								onclick={addGroup}><Icon name="plus" />Ajouter un groupe</button
+							>
+							<button
+								class="button is-small is-light"
+								disabled={busy || stale || selectedStudent === null}
+								onclick={() => {
+									if (selectedStudent !== null)
+										createFromStudents(
+											[selectedStudent],
+											Math.max(...groups.map((group) => group.x)) + 300,
+											20
+										);
+								}}>Créer une khôlle avec la sélection</button
 							>{/if}
 					</div>
 				</div>
 				{#if unassigned.length}<div class="notification is-warning is-light mt-4">
 						<p class="has-text-weight-semibold">Élèves à affecter ({unassigned.length})</p>
 						<p class="text-small mb-2">
-							La promotion a évolué depuis l’enregistrement de cette répartition.
+							{editing
+								? 'Glissez un élève vers un groupe, ou sélectionnez son nom puis « Déplacer ici ».'
+								: 'La promotion a évolué. Modifiez les groupes pour affecter ces élèves sans régénérer.'}
 						</p>
+						{#if editable && !editing}<button class="button is-small is-light mb-2" onclick={edit}>
+								Affecter ces élèves
+							</button>{/if}
 						<div class="student-chips">
 							{#each unassigned as student (student.id)}
 								<button
 									class="student-chip"
 									class:chosen={selectedStudent === student.id}
 									class:archived-account={archived.has(student.id)}
+									aria-label={`${names.get(student.id)}${archived.has(student.id) ? ' · Archivé' : ''}`}
 									title={archived.has(student.id)
 										? 'Compte archivé, exclu des effectifs'
 										: undefined}
 									disabled={!editing || busy}
+									draggable={editing && !busy && !stale}
+									ondragstart={(event) => {
+										selectedStudent = student.id;
+										event.dataTransfer?.setData(
+											'application/x-sophikron-student',
+											String(student.id)
+										);
+										if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move';
+									}}
+									ondragend={() => (selectedStudent = null)}
 									aria-pressed={selectedStudent === student.id}
 									onclick={() =>
 										(selectedStudent = selectedStudent === student.id ? null : student.id)}
-									>{names.get(student.id)}</button
+									><span class="student-name">{names.get(student.id)}</span
+									>{#if archived.has(student.id)}<span class="text-small">
+											· Archivé</span
+										>{/if}</button
 								>
 							{/each}
 						</div>
@@ -448,10 +502,11 @@
 						name: names.get(student.id) ?? '',
 						archived: archived.has(student.id)
 					}))}
-					{editing}
+					editing={editing && !stale}
 					{busy}
 					{listView}
 					bind:selectedStudent
+					oncreate={kind === 'kholles' ? createFromStudents : undefined}
 					ontransfer={(id, _source, target) => {
 						selectedStudent = id;
 						transfer(target);
@@ -530,6 +585,9 @@
 	.student-chip.archived-account {
 		color: var(--color-muted);
 		border-style: dashed;
+	}
+	.archived-account .student-name {
+		text-decoration: line-through;
 	}
 	.group-save {
 		position: sticky;

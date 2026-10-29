@@ -297,7 +297,7 @@ and khôlle (`kholles`) partitions. Half labels are Groupe A/B; thirds use Group
 (violet), and khôlle labels are
 Groupe 01, 02, etc. Each created partition covers all permanent pupils currently attached to
 the promotion, including pending and archived accounts, and excludes teaching staff.
-Archived pupils keep their promotion/group links and remain visible, grey and movable. Only
+Archived pupils keep their promotion/group links and remain visible, grey, struck through and movable. Only
 non-archived pupils count for randomization, balance, the khôlle target and its division remainder.
 Pending-activation pupils are non-archived and remain included in effective counts.
 
@@ -376,6 +376,39 @@ lock with membership and role changes. New pupils remain unassigned in existing 
 administrator action; removing a promotion membership cascades its group assignments. A former
 pupil's assignments are excluded when reading after a role change; saving replaces those stale rows.
 No automatic reshuffle occurs. The current roster and revision are checked again on save.
+
+The promotion dashboard includes a **Feuille de présence** section below the member directory.
+**Ouvrir le PDF** opens a private document in a new tab for saving or printing. The export always
+uses the entire current pupil roster, ignoring directory filters and pagination; staff are excluded.
+Archived pupils are sorted alphabetically after non-archived pupils and have both names struck
+through. Removed promotion memberships are not reconstructed from activity events.
+
+`GET /api/v1/promotion-groups/{id}/attendance` returns `application/pdf` with inline disposition,
+no-store caching and no indexing. Administrators with `users.read` can export any existing
+promotion; teachers with `teaching.read` must currently share the promotion (otherwise 404).
+Students, kholleur-only accounts and bootstrap accounts cannot export; inactive sessions remain
+rejected. The same checks apply to the BFF at `/dashboard/attendance?promotionId={id}`.
+
+Python's open-source ReportLab toolkit generates the PDF in memory, outside the database
+transaction. No extra Docker service, external conversion service, persistent PDF or schema change
+is needed. A regular embedded font preserves accented names. A4 pages use a promotion-colored
+centered title, compact surname/first-name columns, a blank remarks column and alternating white
+and very light grey rows. The title includes the promotion identifier and year, separated by a dash.
+A green badge before each surname denotes an active account; red denotes pending or archived accounts.
+The normal 45-pupil roster fits one page; longer names can wrap and larger
+rosters paginate automatically. Title, column headings, requester identity and generation timestamp
+(Europe/Paris) repeat on each page. Requester identity and timestamp come exclusively from the
+authenticated backend, never browser-supplied values. Rebuild the existing backend image after
+updating its dependencies; local Python environments should reinstall the project dependencies.
+
+The unassigned-pupil area is available above both the bubble and list views. Administrators can
+enter edit mode there, then drag a newcomer into a group or select their name and use “Déplacer ici”.
+In khôlle edit mode, dropping a pupil onto another pupil creates a new pair; dropping onto the
+board background creates a singleton. Only source groups emptied by this extraction are removed;
+other group numbers and assignments remain unchanged. Keyboard users can create a khôlle from
+the selected pupil and add others using “Déplacer ici”. Empty groups can also be added and removed
+with buttons. These operations only change the draft: the usual exact target/remainder rules still
+apply on save, so multiple singleton groups may require manual consolidation first.
 
 Migration `0006_promotion_groups` adds `promotion_partitions`, `promotion_groups` and
 `promotion_group_members`; it preserves existing accounts, memberships and applied migrations.

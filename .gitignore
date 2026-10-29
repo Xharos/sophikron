@@ -16,7 +16,6 @@ env/
 .env
 .env.*
 credentials/
-/script/
 *.pem
 *.key
 *.p12

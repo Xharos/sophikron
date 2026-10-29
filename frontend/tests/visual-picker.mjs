@@ -104,6 +104,84 @@ test('staff profiles hide school sections in account and dashboard views', async
 	}
 });
 
+test('attendance PDF opens from below the promotion roster with the selected identifier', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		for (const role of ['admin', 'teacher', 'kholleur']) {
+			const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
+			await page.route('**/dashboard/data?**', (route) => {
+				const resource = new URL(route.request().url()).searchParams.get('resource');
+				return route.fulfill({
+					json:
+						resource === 'promotionGroups'
+							? { students: [], partitions: [] }
+							: resource === 'promotions'
+								? {
+										items: [
+											{
+												id: 1,
+												identifier: 'PT',
+												year: 2026,
+												color: '#244BC1',
+												is_active: true
+											}
+										],
+										total: 1,
+										offset: 0,
+										limit: 12
+									}
+								: { items: [], total: 0, offset: 0, limit: 50 }
+				});
+			});
+			await page.goto(
+				`${server.resolvedUrls.local[0]}__picker?directory&promotionView${role === 'admin' ? '' : '&teacher'}${role === 'kholleur' ? '&kholleur' : ''}`
+			);
+			await page.getByRole('heading', { name: 'PT', exact: true }).waitFor();
+			const link = page.getByRole('link', { name: 'Ouvrir le PDF', exact: true });
+			if (role === 'kholleur') {
+				assert.equal(await link.count(), 0);
+			} else {
+				await link.waitFor();
+				assert.equal(
+					await link.getAttribute('href'),
+					'/dashboard/attendance?promotionId=1'
+				);
+				assert.equal(await link.getAttribute('target'), '_blank');
+				const section = page.getByRole('region', {
+					name: 'Feuille de présence',
+					exact: true
+				});
+				assert.equal(
+					await section.evaluate(
+						(element) =>
+							element.previousElementSibling?.querySelector('.eyebrow')
+								?.textContent === 'Membres de la promotion'
+					),
+					true
+				);
+				await page
+					.context()
+					.route('**/dashboard/attendance?**', (route) =>
+						route.fulfill({ contentType: 'text/plain', body: 'Synthetic PDF endpoint' })
+					);
+				const opened = page.waitForEvent('popup');
+				await link.click();
+				const popup = await opened;
+				await popup.waitForLoadState();
+				assert.match(popup.url(), /\/dashboard\/attendance\?promotionId=1$/);
+				await popup.close();
+			}
+			await page.close();
+		}
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
 test('saved group tags appear in promotion rosters, popup cards and full profiles', async () => {
 	const server = await pickerServer();
 	let browser;
@@ -291,7 +369,16 @@ test('archived pupils stay grey and movable outside effective khôlle sizes', as
 		const archivedGroup = page.getByRole('region', { name: 'Groupe 15', exact: true });
 		await archivedGroup.waitFor();
 		assert.equal(await archivedGroup.locator('.bubble-handle .tag').textContent(), '0');
-		const archivedStudent = page.getByRole('button', { name: 'Farah Martin', exact: true });
+		const archivedStudent = page.getByRole('button', {
+			name: 'Farah Martin · Archivé',
+			exact: true
+		});
+		assert.equal(
+			await archivedStudent
+				.locator('.student-name')
+				.evaluate((element) => getComputedStyle(element).textDecorationLine),
+			'line-through'
+		);
 		assert.equal(
 			await archivedStudent.evaluate((element) => getComputedStyle(element).filter),
 			'grayscale(1)'
@@ -304,7 +391,9 @@ test('archived pupils stay grey and movable outside effective khôlle sizes', as
 			true
 		);
 		const secondGroup = page.getByRole('region', { name: 'Groupe 02', exact: true });
-		await archivedStudent.dragTo(secondGroup.locator('.bubble-members'));
+		await archivedStudent.dragTo(
+			secondGroup.getByRole('button', { name: 'Déplacer ici', exact: true })
+		);
 		assert.equal(await secondGroup.locator('.student-chip').count(), 3);
 		assert.equal(await secondGroup.locator('.bubble-handle .tag').textContent(), '2');
 		await archivedGroup
@@ -321,6 +410,182 @@ test('archived pupils stay grey and movable outside effective khôlle sizes', as
 			false
 		);
 		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
+test('newcomers join existing groups in both views and khôlles can be paired and split', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		const students = ['Alice', 'Benoît', 'Camille', 'Diane'].map((name, index) => ({
+			id: index + 1,
+			first_name: name,
+			last_name: 'Martin',
+			status: 'active'
+		}));
+		const partition = {
+			kind: 'kholles',
+			revision: 'a'.repeat(32),
+			target_size: 2,
+			groups: [
+				{ number: 1, x: 20, y: 20, student_ids: [1, 2] },
+				{ number: 2, x: 320, y: 20, student_ids: [3] }
+			]
+		};
+		const writes = [];
+		await page.route('**/dashboard/data?**', (route) =>
+			route.fulfill({ json: { students, partitions: [partition] } })
+		);
+		await page.route('**/dashboard/command', async (route) => {
+			const input = route.request().postDataJSON();
+			writes.push(input);
+			await route.fulfill({ json: { ...partition, groups: input.data.groups } });
+		});
+		await page.goto(`${server.resolvedUrls.local[0]}__picker?groups`);
+		await page.getByRole('button', { name: 'Groupes de khôlle', exact: true }).click();
+		const bubble = (name) => page.getByRole('region', { name, exact: true });
+		const pupil = (name) => page.getByRole('button', { name: `${name} Martin`, exact: true });
+		const save = page.getByRole('button', { name: 'Enregistrer', exact: true });
+		await page.getByRole('button', { name: 'Affecter ces élèves', exact: true }).click();
+		assert.equal(await save.isDisabled(), true);
+		await pupil('Diane').dragTo(bubble('Groupe 02').locator('.bubble-members'));
+		assert.equal(await save.isEnabled(), true);
+		assert.equal(await bubble('Groupe 01').locator('.student-chip').count(), 2);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		await page.getByRole('button', { name: 'Vue liste', exact: true }).click();
+		await page.getByRole('button', { name: 'Affecter ces élèves', exact: true }).click();
+		await pupil('Diane').focus();
+		await page.keyboard.press('Enter');
+		await bubble('Groupe 02')
+			.getByRole('button', { name: 'Déplacer ici', exact: true })
+			.click();
+		assert.equal(await save.isEnabled(), true);
+		await save.click();
+		await page.getByText('Répartition enregistrée.', { exact: true }).waitFor();
+		assert.deepEqual(
+			writes[0].data.groups.map((group) => group.student_ids),
+			[
+				[1, 2],
+				[3, 4]
+			]
+		);
+		assert.equal(writes.length, 1);
+		await page.getByRole('button', { name: 'Vue bulles', exact: true }).click();
+		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
+		await pupil('Alice').dragTo(pupil('Camille'));
+		assert.equal(await bubble('Groupe 03').locator('.student-chip').count(), 2);
+		assert.equal(
+			await bubble('Groupe 01').locator('.student-chip').textContent(),
+			'Benoît Martin'
+		);
+		assert.equal(
+			await bubble('Groupe 02').locator('.student-chip').textContent(),
+			'Diane Martin'
+		);
+		assert.equal(await save.isDisabled(), true);
+		await pupil('Alice').dragTo(page.locator('.group-board'), {
+			targetPosition: { x: 650, y: 320 }
+		});
+		assert.equal(await page.locator('.group-bubble').count(), 4);
+		assert.equal(
+			await bubble('Groupe 03').locator('.student-chip').textContent(),
+			'Camille Martin'
+		);
+		assert.equal(
+			await bubble('Groupe 04').locator('.student-chip').textContent(),
+			'Alice Martin'
+		);
+		assert.equal(await save.isDisabled(), true);
+		await pupil('Alice').click();
+		await bubble('Groupe 03')
+			.getByRole('button', { name: 'Déplacer ici', exact: true })
+			.click();
+		await bubble('Groupe 04')
+			.getByRole('button', { name: 'Retirer ce groupe vide', exact: true })
+			.click();
+		await pupil('Diane').click();
+		await bubble('Groupe 01')
+			.getByRole('button', { name: 'Déplacer ici', exact: true })
+			.click();
+		await bubble('Groupe 02')
+			.getByRole('button', { name: 'Retirer ce groupe vide', exact: true })
+			.click();
+		assert.equal(await save.isEnabled(), true);
+		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
+		assert.equal(await page.locator('.group-bubble').count(), 2);
+		assert.equal(writes.length, 1);
+		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
+test('custom group editing preserves archived pupils and lets them be removed and added', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
+		const students = [
+			{ id: 1, first_name: 'Alice', last_name: 'Martin', status: 'active' },
+			{ id: 2, first_name: 'Farah', last_name: 'Martin', status: 'disabled' }
+		];
+		let groups = [
+			{
+				id: 12,
+				name: 'Allemand',
+				revision: 'a'.repeat(32),
+				student_ids: [1, 2],
+				x: 320,
+				y: 20
+			}
+		];
+		const writes = [];
+		await page.route('**/dashboard/data?**', (route) =>
+			route.fulfill({
+				json: route.request().url().includes('customPromotionGroups')
+					? { groups, live: false }
+					: { students, partitions: [] }
+			})
+		);
+		await page.route('**/dashboard/command', async (route) => {
+			const input = route.request().postDataJSON();
+			writes.push(input);
+			groups = [{ ...groups[0], ...input.data }];
+			await route.fulfill({ json: groups[0] });
+		});
+		await page.goto(`${server.resolvedUrls.local[0]}__picker?groups`);
+		await page.getByRole('button', { name: 'Groupes personnalisés', exact: true }).click();
+		const custom = page.getByRole('region', { name: 'Allemand', exact: true });
+		const source = page.getByRole('region', { name: 'Classe entière', exact: true });
+		const archived = (region) =>
+			region.getByRole('button', { name: 'Farah Martin · Archivé', exact: true });
+		await custom.getByRole('button', { name: 'Modifier', exact: true }).click();
+		assert.equal(await archived(custom).isEnabled(), true);
+		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+		await custom.getByRole('button', { name: 'Modifier', exact: true }).waitFor();
+		assert.deepEqual(writes[0].data.student_ids, [1, 2]);
+		await custom.getByRole('button', { name: 'Modifier', exact: true }).click();
+		await archived(custom).dragTo(source.locator('.bubble-members'));
+		assert.equal(await custom.locator('.student-chip').count(), 1);
+		await archived(source).click();
+		await custom.getByRole('button', { name: 'Ajouter ici', exact: true }).click();
+		assert.equal(await custom.locator('.student-chip').count(), 2);
+		await page.getByRole('button', { name: 'Vue liste', exact: true }).click();
+		await archived(custom).dragTo(source.locator('.bubble-members'));
+		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
+		await custom.getByRole('button', { name: 'Modifier', exact: true }).waitFor();
+		assert.deepEqual(writes[1].data.student_ids, [1]);
 	} finally {
 		await browser?.close();
 		await server.close();

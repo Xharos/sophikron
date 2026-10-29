@@ -41,6 +41,35 @@ export function moveStudent(groups: GroupDraft[], studentId: number, target: num
 	}));
 }
 
+/** Extract selected pupils into a new khôlle, retaining all other assignments and numbers. */
+export function createKholleGroup(
+	groups: GroupDraft[],
+	studentIds: number[],
+	x: number,
+	y: number
+): GroupDraft[] {
+	const selected = new Set(studentIds);
+	if (!selected.size || selected.size !== studentIds.length) return groups;
+	const remaining = groups.flatMap((group) => {
+		const members = group.student_ids.filter((id) => !selected.has(id));
+		if (members.length === group.student_ids.length) return [group];
+		return members.length ? [{ ...group, student_ids: members }] : [];
+	});
+	const used = new Set(remaining.map((group) => group.number));
+	let number = 1;
+	while (used.has(number)) number += 1;
+	if (number > 1000) return groups;
+	return [
+		...remaining,
+		{
+			number,
+			x: Math.round(Math.max(0, Math.min(1000000, x))),
+			y: Math.round(Math.max(0, Math.min(1000000, y))),
+			student_ids: [...studentIds]
+		}
+	].sort((left, right) => left.number - right.number);
+}
+
 /** Give immediate feedback while the backend remains authoritative. */
 export function groupError(
 	kind: PartitionKind,

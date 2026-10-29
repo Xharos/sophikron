@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { groupError, groupLabel, moveStudent } from '../src/lib/groups.ts';
+import { createKholleGroup, groupError, groupLabel, moveStudent } from '../src/lib/groups.ts';
 import { promotionCounts } from '../src/lib/dashboard.ts';
 
 test('partition names distinguish letters from padded khôlle numbers', () => {
@@ -10,6 +10,58 @@ test('partition names distinguish letters from padded khôlle numbers', () => {
 	assert.equal(groupLabel('thirds', 3), 'Groupe Z');
 	assert.equal(groupLabel('kholles', 1), 'Groupe 01');
 	assert.equal(groupLabel('kholles', 12), 'Groupe 12');
+});
+
+test('extracting a pair or a singleton keeps other khôlles and their numbers intact', () => {
+	const initial = [
+		{ number: 1, x: 20, y: 20, student_ids: [1, 2] },
+		{ number: 7, x: 320, y: 20, student_ids: [3, 4, 5] }
+	];
+	const split = createKholleGroup(initial, [1], 620, 20);
+	assert.deepEqual(
+		split.map((group) => group.student_ids),
+		[[2], [1], [3, 4, 5]]
+	);
+	assert.deepEqual(
+		split.find((group) => group.number === 7),
+		initial[1]
+	);
+	assert.deepEqual(initial[0].student_ids, [1, 2]);
+	const pair = createKholleGroup(split, [1, 3], 500, 350);
+	assert.deepEqual(pair.find((group) => group.number === 2)?.student_ids, [1, 3]);
+	assert.deepEqual(pair.find((group) => group.number === 7)?.student_ids, [4, 5]);
+	assert.equal(new Set(pair.flatMap((group) => group.student_ids)).size, 5);
+	assert.ok(groupError('kholles', split, [1, 2, 3, 4, 5]));
+	assert.equal(groupError('kholles', pair, [1, 2, 3, 4, 5], 2), '');
+});
+
+test('khôlle creation admits newcomers and archived pupils without duplicating assignments', () => {
+	const initial = [{ number: 8, x: 20, y: 20, student_ids: [1, 2, 3] }];
+	const added = createKholleGroup(initial, [4], 320, 20);
+	assert.equal(groupError('kholles', added, [1, 2, 3, 4]), '');
+	const archived = createKholleGroup(added, [5, 6], 620, 20);
+	assert.equal(groupError('kholles', archived, [1, 2, 3, 4, 5, 6], 3, [5, 6]), '');
+	assert.deepEqual(
+		archived.find((group) => group.number === 8),
+		initial[0]
+	);
+	assert.equal(createKholleGroup(initial, [1, 1], 0, 0), initial);
+	assert.equal(createKholleGroup(initial, [], 0, 0), initial);
+});
+
+test('khôlle creation respects number limits and preserves deliberately empty bubbles', () => {
+	const full = Array.from({ length: 1000 }, (_, index) => ({
+		number: index + 1,
+		x: 0,
+		y: 0,
+		student_ids: [index + 1]
+	}));
+	assert.equal(createKholleGroup(full, [1001], 0, 0), full);
+	const moved = createKholleGroup(full, [1], -5, 1000001);
+	assert.equal(moved.length, 1000);
+	assert.deepEqual(moved[0], { number: 1, x: 0, y: 1000000, student_ids: [1] });
+	const empty = { number: 1, x: 0, y: 0, student_ids: [] };
+	assert.deepEqual(createKholleGroup([empty], [2], 1, 2)[0], empty);
 });
 
 test('archived assignments remain movable but never affect balancing', () => {

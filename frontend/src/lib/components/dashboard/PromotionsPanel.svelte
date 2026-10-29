@@ -8,6 +8,7 @@
 	import PromotionEditor from './PromotionEditor.svelte';
 	import MembershipPicker from './MembershipPicker.svelte';
 	import PromotionGroups from './PromotionGroups.svelte';
+	import PromotionAttendance from './PromotionAttendance.svelte';
 	let {
 		administrator,
 		currentUserId,
@@ -307,7 +308,9 @@
 			{currentUserId}
 			promotionId={selected.id}
 			onchanged={changed}
-		/>{/key}{/if}
+		/>{/key}
+	<PromotionAttendance promotionId={selected.id} />
+{/if}
 {#if editor}<PromotionEditor
 		promotion={editor === 'new' ? undefined : editor}
 		onclose={() => (editor = null)}

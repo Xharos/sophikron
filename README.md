@@ -22,6 +22,7 @@ Share teaching materials, publish educational pages and create interactive conte
 - 🧩 Create interactive educational pages.
 - 🌐 Publish public or private content.
 - 🤝 Reuse and share resources with other teachers.
+- Generate colored A4 attendance PDFs from promotion rosters, with archived pupils retained.
 
 ## Technology stack
 

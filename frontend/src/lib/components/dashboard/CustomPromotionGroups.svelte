@@ -51,7 +51,7 @@
 			archived: student.status === 'disabled'
 		}))
 	);
-	const pupils = $derived(students.filter((student) => student.status !== 'disabled'));
+	const pupils = $derived(students);
 	const nodes = $derived<GroupMapNode[]>([
 		{
 			number: 0,
@@ -121,7 +121,7 @@
 		draft = group
 			? {
 					...group,
-					student_ids: group.student_ids.filter((id) => pupils.some((student) => student.id === id))
+					student_ids: [...group.student_ids]
 				}
 			: {
 					id: 0,
@@ -319,8 +319,8 @@
 				Supprimer « {deleting?.name} » des groupes proposés ? Les séances déjà affectées à ce groupe conserveront
 				leurs destinataires.
 			</p>{:else}<p>
-				Les séances de « {draft?.name} » seront immédiatement proposées aux {draft?.student_ids
-					.length} élèves sélectionnés.
+				La composition de « {draft?.name} » sera immédiatement appliquée aux séances diffusées. Les comptes
+				archivés restent sans accès au calendrier.
 			</p>{/if}
 		{#if live}<p class="notification is-warning is-light mt-3">
 				<Icon name="info" />Un calendrier de cette promotion est diffusé en direct.

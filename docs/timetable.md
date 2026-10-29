@@ -77,8 +77,12 @@ normalized when read/saved without materialized per-teacher copies or destructiv
 Courses, TD, TP and kholles can target the whole class, halves A/B or thirds X/Y/Z. Halves and
 thirds can be prepared without a promotion. Numbered kholle groups and named custom groups require a promotion.
 Administrators manage custom groups from the promotion's dashboard group panel. Each name is unique
-inside its promotion and membership contains at least one current non-archived pupil, up to the entire
-roster. These groups can overlap one another and the standard partitions. Replacing live group
+inside its promotion and membership contains at least one current pupil, including archived accounts,
+up to the entire roster. Archived pupils retain their memberships when editing, have struck-through
+names and can be added or removed like other pupils. A group containing only archived pupils remains
+editable. This never restores their login or calendar-subscription access; they remain excluded from
+effective timetable audiences and counts. Removing a promotion membership cascades into custom
+memberships too. These groups can overlap one another and the standard partitions. Replacing live group
 membership requires explicit backend-checked confirmation and refreshes calendar revisions/ICS dates.
 Their sessions participate in recipient filtering, collisions, meal checks and actual hour totals,
 but never in half/third group balance checks. A group from another promotion cannot be assigned.

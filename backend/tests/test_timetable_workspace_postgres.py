@@ -802,6 +802,78 @@ async def test_saved_unique_event_becomes_recurring_and_detached_nodes_stay_inde
 
 
 @pytest.mark.asyncio
+async def test_archived_custom_members_remain_editable_without_calendar_access(
+    workspace: Workspace,
+) -> None:
+    """Keep archived memberships movable while denying login, subscription and feed contents."""
+    w = workspace
+    path = f"/api/v1/promotion-groups/{w.promotion_id}/custom"
+    response = await w.case.client.put(
+        path + "/0",
+        json={"name": "Preserved", "student_ids": [w.pupil_id], "expected_revision": None},
+    )
+    assert response.status_code == 200, response.text
+    group = response.json()
+    await w.add(title="Preserved option", target_kind="custom", target_number=group["id"])
+    await w.broadcast()
+    await w.login(w.pupil_name)
+    token = (await w.case.client.get("/api/v1/timetable/subscription")).json()["token"]
+    student_cookie = dict(w.case.client.cookies)
+    feed_path = f"/api/v1/timetable/feed/{token}.ics"
+    assert Calendar.from_ical((await w.case.client.get(feed_path)).content).walk("VEVENT")
+    w.case.as_admin()
+    response = await w.case.client.patch(
+        f"/api/v1/admin/users/{w.pupil_id}/archive", json={"archived": True}
+    )
+    assert response.status_code == 204, response.text
+    groups = (await w.case.client.get(path + "/groups")).json()["groups"]
+    assert groups[0]["student_ids"] == [w.pupil_id]
+    response = await w.case.client.put(
+        path + f"/{group['id']}",
+        json={
+            "name": "Preserved renamed",
+            "student_ids": [w.pupil_id],
+            "expected_revision": group["revision"],
+            "confirmed_live": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    response = await w.case.client.put(
+        path + "/0",
+        json={"name": "Moved archived", "student_ids": [w.pupil_id], "expected_revision": None},
+    )
+    assert response.status_code == 200, response.text
+    for invalid in ([w.teacher_id], [w.pupil_id, w.pupil_id]):
+        response = await w.case.client.put(
+            path + "/0",
+            json={"name": "Invalid", "student_ids": invalid, "expected_revision": None},
+        )
+        assert response.status_code == 422, response.text
+    w.case.client.cookies.clear()
+    w.case.client.cookies.update(student_cookie)
+    assert (await w.case.client.get("/api/v1/timetable/subscription")).status_code == 401
+    assert not Calendar.from_ical((await w.case.client.get(feed_path)).content).walk("VEVENT")
+    response = await w.case.client.post(
+        "/api/v1/auth/login", json={"identifier": w.pupil_name, "password": PASSWORD}
+    )
+    assert response.status_code == 401, response.text
+    w.case.as_admin()
+    response = await w.case.client.delete(
+        f"/api/v1/admin/users/{w.pupil_id}/promotions/{w.promotion_id}"
+    )
+    assert response.status_code == 204, response.text
+    assert all(
+        w.pupil_id not in item["student_ids"]
+        for item in (await w.case.client.get(path + "/groups")).json()["groups"]
+    )
+    response = await w.case.client.put(
+        path + "/0",
+        json={"name": "Former pupil", "student_ids": [w.pupil_id], "expected_revision": None},
+    )
+    assert response.status_code == 422, response.text
+
+
+@pytest.mark.asyncio
 async def test_named_groups_overlap_validate_roster_and_drive_personal_feeds(
     workspace: Workspace,
 ) -> None:

@@ -78,11 +78,7 @@ class CustomGroupsService(GroupsService):
                 raise AuthError(404, "Groupe introuvable.")
             if (row.revision if row else None) != data.expected_revision:
                 raise AuthError(409, "Ce groupe a changé. Rechargez les groupes.")
-            pupils = {
-                pupil.id
-                for pupil in await self.repo.pupils(promotion_id)
-                if pupil.status != "disabled"
-            }
+            pupils = {pupil.id for pupil in await self.repo.pupils(promotion_id)}
             selected = set(data.student_ids)
             if len(selected) != len(data.student_ids) or not selected <= pupils:
                 raise AuthError(422, "Sélectionnez des élèves distincts de cette promotion.")

@@ -1,5 +1,6 @@
 <script lang="ts">
 	import AccountsPanel from '../../src/lib/components/dashboard/AccountsPanel.svelte';
+	import PromotionsPanel from '../../src/lib/components/dashboard/PromotionsPanel.svelte';
 	import ProfileEditor from '../../src/lib/components/dashboard/ProfileEditor.svelte';
 	import SchoolProfileView from '../../src/lib/components/SchoolProfileView.svelte';
 	import type { FullProfile } from '../../src/lib/types';
@@ -48,9 +49,18 @@
 </script>
 
 <main style="padding: 1rem; max-width: 1200px; margin: auto; width: 100%;">
-	<AccountsPanel {administrator} currentUserId={99} promotionId={1} />
-	<ProfileEditor {profile} currentUserId={99} />
-	{#if new URL(window.location.href).searchParams.has('schoolView')}
-		<SchoolProfileView account={profile} />
+	{#if new URL(window.location.href).searchParams.has('promotionView')}
+		<PromotionsPanel
+			{administrator}
+			currentUserId={99}
+			initialPromotion={promotions[0]}
+			canReadStudents={!new URL(window.location.href).searchParams.has('kholleur')}
+		/>
+	{:else}
+		<AccountsPanel {administrator} currentUserId={99} promotionId={1} />
+		<ProfileEditor {profile} currentUserId={99} />
+		{#if new URL(window.location.href).searchParams.has('schoolView')}
+			<SchoolProfileView account={profile} />
+		{/if}
 	{/if}
 </main>

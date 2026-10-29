@@ -21,6 +21,7 @@ dependencies = [
     "rapidfuzz>=3.14,<4",
     "Pillow>=12,<14",
     "pypdf>=6,<7",
+    "reportlab>=4.4,<6",
     "defusedxml>=0.7,<1",
     "icalendar>=7.3,<8",
 ]
