@@ -19,8 +19,8 @@
 		"@fortawesome/free-solid-svg-icons": "^7.3.1",
 		"@sveltejs/kit": "^3.0.0",
 		"bulma": "^1.0.4",
-		"svelte": "^5.57.1",
-		"vite": "^8.3.0"
+		"svelte": "^5.57.3",
+		"vite": "^8.3.5"
 	},
 	"devDependencies": {
 		"@eslint/js": "^10.0.1",
@@ -37,7 +37,7 @@
 		"prettier-plugin-svelte": "^4.1.0",
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
-		"typescript-eslint": "^8.60.1"
+		"typescript-eslint": "^8.72.1"
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",
