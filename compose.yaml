@@ -4,8 +4,25 @@ x-database-environment: &database-environment
   DB_NAME: ${DB_NAME:-sophikron}
   DB_SSLMODE: disable
 
+x-app-hardening: &app-hardening
+  init: true
+  read_only: true
+  cap_drop:
+    - ALL
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777
+
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
   db:
+    logging: *bounded-logging
     build:
       context: .
       dockerfile: infra/postgres/Dockerfile
@@ -32,12 +49,16 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-      start_period: 10s
+      start_period: 5s
 
   backend:
+    <<: *app-hardening
+    logging: *bounded-logging
     build: &backend-build
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        SOPHIKRON_BUILD_REVISION: ${SOPHIKRON_BUILD_REVISION:-unknown}
     restart: "on-failure:3"
     environment:
       <<: *database-environment
@@ -52,47 +73,58 @@ services:
       DOCUMENT_TOTAL_QUOTA_BYTES: ${DOCUMENT_TOTAL_QUOTA_BYTES:-21474836480}
       DOCUMENT_RESERVE_BYTES: ${DOCUMENT_RESERVE_BYTES:-268435456}
       DOCUMENT_MAX_CONCURRENT_DOWNLOADS: ${DOCUMENT_MAX_CONCURRENT_DOWNLOADS:-16}
-      # Allowlisted settings from .env; shell variables take precedence.
-      # Empty YAML values inherit configuration instead of injecting the entire file.
-      DB_POOL_SIZE:
-      DB_MAX_OVERFLOW:
-      DB_POOL_TIMEOUT:
-      DB_POOL_RECYCLE:
-      DB_CONNECT_TIMEOUT:
-      DB_STATEMENT_TIMEOUT_MS:
-      DB_LOCK_TIMEOUT_MS:
-      DB_IDLE_TRANSACTION_TIMEOUT_MS:
-      DB_HEALTH_TIMEOUT:
+      # Explicit allowlist: shell values override .env; defaults match the backend.
+      DB_POOL_SIZE: ${DB_POOL_SIZE:-5}
+      DB_MAX_OVERFLOW: ${DB_MAX_OVERFLOW:-5}
+      DB_POOL_TIMEOUT: ${DB_POOL_TIMEOUT:-5}
+      DB_POOL_RECYCLE: ${DB_POOL_RECYCLE:-1800}
+      DB_CONNECT_TIMEOUT: ${DB_CONNECT_TIMEOUT:-5}
+      DB_STATEMENT_TIMEOUT_MS: ${DB_STATEMENT_TIMEOUT_MS:-10000}
+      DB_LOCK_TIMEOUT_MS: ${DB_LOCK_TIMEOUT_MS:-2000}
+      DB_IDLE_TRANSACTION_TIMEOUT_MS: ${DB_IDLE_TRANSACTION_TIMEOUT_MS:-30000}
+      DB_HEALTH_TIMEOUT: ${DB_HEALTH_TIMEOUT:-2}
       AUTH_ENVIRONMENT: production
       AUTH_ALLOWED_ORIGINS: '["${SOPHIKRON_ORIGIN:-https://sophikron.invalid}"]'
       AUTH_COOKIE_SECURE: "true"
       AUTH_CORS_ENABLED: "false"
       AUTH_MANUAL_INVITATIONS_ENABLED: ${AUTH_MANUAL_INVITATIONS_ENABLED:-true}
-      AUTH_SESSION_SECONDS:
-      AUTH_IDLE_SECONDS:
-      AUTH_LOGIN_IP_LIMIT:
-      AUTH_LOGIN_IDENTITY_LIMIT:
-      AUTH_RATE_WINDOW_SECONDS:
+      AUTH_SESSION_SECONDS: ${AUTH_SESSION_SECONDS:-28800}
+      AUTH_IDLE_SECONDS: ${AUTH_IDLE_SECONDS:-1800}
+      AUTH_LOGIN_IP_LIMIT: ${AUTH_LOGIN_IP_LIMIT:-20}
+      AUTH_LOGIN_IDENTITY_LIMIT: ${AUTH_LOGIN_IDENTITY_LIMIT:-5}
+      AUTH_RATE_WINDOW_SECONDS: ${AUTH_RATE_WINDOW_SECONDS:-900}
       AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE: ${AUTH_CALENDAR_FEED_LIMIT_PER_MINUTE:-5}
-      AUTH_LOGIN_RESERVATION_SECONDS:
-      AUTH_PASSWORD_QUEUE_SIZE:
-      AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS:
-      AUTH_REQUEST_MAX_BYTES:
-      AUTH_REQUEST_BODY_TIMEOUT_SECONDS:
-      AUTH_MAIL_TRANSPORT:
-      AUTH_SMTP_HOST:
-      AUTH_SMTP_PORT:
-      AUTH_SMTP_SECURITY:
-      AUTH_SMTP_USERNAME:
-      AUTH_SMTP_SENDER:
-      AUTH_ACTIVATION_URL:
-      AUTH_BOOTSTRAP_USERNAME:
+      AUTH_LOGIN_RESERVATION_SECONDS: ${AUTH_LOGIN_RESERVATION_SECONDS:-120}
+      AUTH_PASSWORD_QUEUE_SIZE: ${AUTH_PASSWORD_QUEUE_SIZE:-8}
+      AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS: ${AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS:-5}
+      AUTH_REQUEST_MAX_BYTES: ${AUTH_REQUEST_MAX_BYTES:-16384}
+      AUTH_REQUEST_BODY_TIMEOUT_SECONDS: ${AUTH_REQUEST_BODY_TIMEOUT_SECONDS:-10}
+      AUTH_MAIL_TRANSPORT: ${AUTH_MAIL_TRANSPORT:-disabled}
+      AUTH_SMTP_HOST: ${AUTH_SMTP_HOST:-}
+      AUTH_SMTP_PORT: ${AUTH_SMTP_PORT:-587}
+      AUTH_SMTP_SECURITY: ${AUTH_SMTP_SECURITY:-starttls}
+      AUTH_SMTP_USERNAME: ${AUTH_SMTP_USERNAME:-}
+      AUTH_SMTP_SENDER: ${AUTH_SMTP_SENDER:-}
+      AUTH_ACTIVATION_URL: ${AUTH_ACTIVATION_URL:-}
+      AUTH_BOOTSTRAP_USERNAME: ${AUTH_BOOTSTRAP_USERNAME:-setup_operator}
     secrets:
       - db_app_password
       - identity_keys
       - bootstrap_password
       - smtp_password
-    command: [uvicorn, app.main:app, --host, 0.0.0.0, --port, "8000", --proxy-headers, --forwarded-allow-ips, "${BFF_ADDRESS:-172.30.85.2}", --timeout-keep-alive, "5"]
+    # Trust client addresses supplied by this BFF only.
+    command:
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - ${BFF_ADDRESS:-172.30.85.2}
+      - --timeout-keep-alive
+      - "5"
     volumes:
       - documents_data:/var/lib/sophikron/documents
     networks:
@@ -106,6 +138,8 @@ services:
         condition: service_completed_successfully
 
   migrate:
+    <<: *app-hardening
+    logging: *bounded-logging
     build: *backend-build
     restart: "no"
     command: [alembic, upgrade, head]
@@ -125,14 +159,17 @@ services:
         condition: service_healthy
 
   frontend:
+    <<: *app-hardening
+    logging: *bounded-logging
     build:
       context: .
       dockerfile: frontend/Dockerfile
       args:
         SITE_ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}
+        SOPHIKRON_BUILD_REVISION: ${SOPHIKRON_BUILD_REVISION:-unknown}
     restart: unless-stopped
     ports:
-      - "0.0.0.0:${FRONTEND_PORT:-3000}:3000"
+      - "127.0.0.1:${FRONTEND_PORT:-3000}:3000"
     environment:
       NODE_ENV: production
       ORIGIN: ${SOPHIKRON_ORIGIN:-https://sophikron.invalid}

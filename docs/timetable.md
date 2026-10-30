@@ -9,6 +9,13 @@ copy/paste, contextual menu, dragging and resizing remain available.
 
 ## Weekly PDF export
 
+Administrators see active and archived calendars in the catalogue. Teachers also have an Archives
+tab, restricted to their promotion memberships (including archived promotions); archived calendars
+are read-only and PDF export remains available. Khôlleur-only accounts cannot list or open archives,
+including through direct board/PDF requests. Their promotion and group views expose active promotions
+and active pupils only; custom group memberships and promotion counts use the same restriction.
+Combined teacher/khôlleur accounts retain teacher archive rights.
+
 The small PDF icon on `/timetable/{id}` opens the displayed week and selected tree audience
 in a new tab for saving or printing. The export is one landscape A4 page: weekday names only
 (Saturday when enabled), a time axis, marked breaks and self-service lunch, and pale subject-colored
@@ -294,7 +301,7 @@ including after downtime. A transactional year watermark serializes workers and 
 calendars remain restored until the next rollover. Enabling the policy also catches up immediately.
 Only administrators can change it.
 
-See [release verification](CONTRIBUTING.md#verification-before-a-release) for the backend, frontend,
+See [release verification](../CONTRIBUTING.md#verification-before-a-release) for the backend, frontend,
 PostgreSQL and browser commands. Unit tests cover holiday cycles, exceptions, exact durations, lunch, annual makeups and
 audience weighting. PostgreSQL tests cover actual API rights, live feeds, archive restoration,
 uniqueness, stale writes, immutable settings, matching-year availability and bounded feed queries.
@@ -328,4 +335,4 @@ after an error. The script uses the local HTTP API and its authorization rules, 
 
 The `script/demo_data/` modules separate transport (`client`), configuration, identities, catalogue,
 groups, pure weekly allocation (`planning`), calendar writes (`timetables`) and orchestration (`runner`).
-For validation commands, see [release verification](CONTRIBUTING.md#verification-before-a-release).
+For validation commands, see [release verification](../CONTRIBUTING.md#verification-before-a-release).

@@ -9,28 +9,18 @@ from app.models.site import (
     SiteSettings,
     Subject,
     TeacherSubject,
-    Timeline,
-    TimelineEvent,
-    TimelineEventBar,
 )
 from app.schemas.site import (
-    EventFields,
-    EventResponse,
-    EventUpdate,
     PublicSite,
     SettingsResponse,
     SettingsUpdate,
     SubjectFields,
     SubjectResponse,
     SubjectUpdate,
-    TimelineFields,
-    TimelineResponse,
-    TimelineUpdate,
 )
 from app.services.activity import SubjectSnapshot, record_event, record_subject_changes
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
-from app.services.lessons import PARIS
 
 
 class SiteService:
@@ -250,56 +240,13 @@ class SiteService:
             raise AuthError(409, "Cet élément a été modifié. Rechargez-le avant de réessayer.")
 
     async def public(self) -> PublicSite:
-        """Publish only intentionally public text, dates and visual metadata."""
+        """Publish only the site identity, welcome text and presentation settings."""
         async with self.db.begin():
             settings = await self.db.get(SiteSettings, 1)
-            bars = (
-                await self.db.scalars(select(Timeline).order_by(Timeline.starts_on, Timeline.id))
-            ).all()
-            links: dict[int, list[int]] = {}
-            for event_id, timeline_id in await self.db.execute(
-                select(TimelineEventBar.event_id, TimelineEventBar.timeline_id).order_by(
-                    TimelineEventBar.timeline_id
-                )
-            ):
-                links.setdefault(event_id, []).append(timeline_id)
-            events = (
-                await self.db.scalars(
-                    select(TimelineEvent).order_by(TimelineEvent.starts_on, TimelineEvent.id)
-                )
-            ).all()
             return PublicSite(
                 settings=SettingsResponse.model_validate(settings, from_attributes=True)
                 if settings
-                else SettingsResponse(name="Sophikron", home_text=""),
-                timelines=[
-                    TimelineResponse.model_validate(row, from_attributes=True) for row in bars
-                ],
-                events=[
-                    EventResponse.model_validate(
-                        {
-                            **{
-                                key: getattr(row, key)
-                                for key in (
-                                    "id",
-                                    "name",
-                                    "color",
-                                    "starts_on",
-                                    "ends_on",
-                                    "kind",
-                                    "version",
-                                )
-                            },
-                            "color": settings.holiday_color
-                            if row.kind == "holiday" and settings
-                            else row.color,
-                            "timeline_ids": links[row.id],
-                        }
-                    )
-                    for row in events
-                    if links.get(row.id)
-                ],
-                today=self.auth.clock().astimezone(PARIS).date(),
+                else SettingsResponse(name="Sophikron", home_text="")
             )
 
     async def settings_save(self, actor: UserContext, data: SettingsUpdate) -> SettingsResponse:
@@ -315,14 +262,6 @@ class SiteService:
                 return SettingsResponse.model_validate(row, from_attributes=True)
             for key, value in values.items():
                 setattr(row, key, value)
-            if "holiday_color" in changed_fields:
-                await self.db.execute(
-                    update(TimelineEvent)
-                    .where(
-                        TimelineEvent.kind == "holiday", TimelineEvent.color != row.holiday_color
-                    )
-                    .values(color=row.holiday_color, version=TimelineEvent.version + 1)
-                )
             row.version += 1
             await self._event(
                 actor,
@@ -336,186 +275,3 @@ class SiteService:
                 },
             )
             return SettingsResponse.model_validate(row, from_attributes=True)
-
-    async def calendar_save(
-        self,
-        actor: UserContext,
-        data: TimelineFields | TimelineUpdate | EventFields | EventUpdate,
-        *,
-        event: bool,
-        identifier: int | None = None,
-    ) -> TimelineResponse | EventResponse:
-        """Save a bar or event and its shared associations in one locked transaction."""
-        async with self.db.begin():
-            await self._admin(actor)
-            model = TimelineEvent if event else Timeline
-            values = data.model_dump(exclude={"expected_version", "timeline_ids", "icon"})
-            if event and data.kind == "holiday":
-                settings = await self.db.get(SiteSettings, 1)
-                values["color"] = settings.holiday_color
-            previous_values = {}
-            previous_links = []
-            if identifier is None:
-                if (await self.db.scalar(select(func.count()).select_from(model))) >= (
-                    200 if event else 20
-                ):
-                    raise AuthError(422, "La limite du calendrier est atteinte.")
-                row = model(**values)
-                self.db.add(row)
-            else:
-                row = await self.db.get(model, identifier, with_for_update=True)
-                if row is None:
-                    raise AuthError(404, "Élément du calendrier introuvable.")
-                self._version(row, data.expected_version)
-                previous_values = {key: getattr(row, key) for key in values}
-                if event:
-                    previous_links = list(
-                        await self.db.scalars(
-                            select(TimelineEventBar.timeline_id).where(
-                                TimelineEventBar.event_id == row.id
-                            )
-                        )
-                    )
-                for key, value in values.items():
-                    setattr(row, key, value)
-                row.version += 1
-            await self.db.flush()
-            if event:
-                bars = (
-                    await self.db.scalars(
-                        select(Timeline).where(Timeline.id.in_(data.timeline_ids))
-                    )
-                ).all()
-                if len(bars) != len(data.timeline_ids):
-                    raise AuthError(422, "Une timeline sélectionnée n’existe plus.")
-                if any(
-                    data.starts_on < bar.starts_on or data.ends_on > bar.ends_on for bar in bars
-                ):
-                    raise AuthError(
-                        422,
-                        "L’événement doit être compris dans les dates "
-                        "de chaque timeline sélectionnée.",
-                    )
-                await self.db.execute(
-                    delete(TimelineEventBar).where(TimelineEventBar.event_id == row.id)
-                )
-                self.db.add_all(
-                    [TimelineEventBar(event_id=row.id, timeline_id=bar.id) for bar in bars]
-                )
-                result = EventResponse.model_validate(
-                    {
-                        **{
-                            key: getattr(row, key)
-                            for key in (
-                                "id",
-                                "name",
-                                "color",
-                                "starts_on",
-                                "ends_on",
-                                "kind",
-                                "version",
-                            )
-                        },
-                        "timeline_ids": data.timeline_ids,
-                    }
-                )
-            else:
-                invalid = await self.db.scalar(
-                    select(TimelineEvent.id)
-                    .join(TimelineEventBar)
-                    .where(
-                        TimelineEventBar.timeline_id == row.id,
-                        (TimelineEvent.starts_on < row.starts_on)
-                        | (TimelineEvent.ends_on > row.ends_on),
-                    )
-                    .limit(1)
-                )
-                if invalid:
-                    raise AuthError(
-                        409,
-                        "Ces dates excluent un événement associé. Modifiez d’abord l’événement.",
-                    )
-                result = TimelineResponse.model_validate(row, from_attributes=True)
-            changed_fields = [
-                key for key, value in previous_values.items() if value != getattr(row, key)
-            ]
-            if identifier is not None and event and set(previous_links) != set(data.timeline_ids):
-                changed_fields.append("timeline_ids")
-            await self._event(
-                actor,
-                "calendar.saved",
-                "calendar",
-                row.id,
-                {
-                    "entry_type": "event" if event else "timeline",
-                    "action": "created" if identifier is None else "updated",
-                    "name": row.name,
-                    "starts_on": row.starts_on,
-                    "ends_on": row.ends_on,
-                    "kind": row.kind if event else None,
-                    "changed_fields": changed_fields,
-                    "timeline_count": len(data.timeline_ids) if event else None,
-                },
-            )
-            return result
-
-    async def calendar_delete(
-        self, actor: UserContext, identifier: int, version: int, *, event: bool
-    ) -> None:
-        """Delete a calendar entry, preserving shared events still used by another bar."""
-        async with self.db.begin():
-            await self._admin(actor)
-            model = TimelineEvent if event else Timeline
-            row = await self.db.get(model, identifier, with_for_update=True)
-            if row is None:
-                raise AuthError(404, "Élément du calendrier introuvable.")
-            self._version(row, version)
-            deleted_events = retained_events = 0
-            if not event:
-                affected = list(
-                    await self.db.scalars(
-                        select(TimelineEventBar.event_id).where(
-                            TimelineEventBar.timeline_id == identifier
-                        )
-                    )
-                )
-                await self.db.execute(
-                    delete(TimelineEventBar).where(TimelineEventBar.timeline_id == identifier)
-                )
-                await self.db.execute(
-                    update(TimelineEvent)
-                    .where(TimelineEvent.id.in_(affected))
-                    .values(version=TimelineEvent.version + 1)
-                )
-                deleted_events = await self.db.scalar(
-                    select(func.count())
-                    .select_from(TimelineEvent)
-                    .where(
-                        TimelineEvent.id.in_(affected),
-                        ~TimelineEvent.id.in_(select(TimelineEventBar.event_id)),
-                    )
-                )
-                retained_events = len(affected) - deleted_events
-                await self.db.execute(
-                    delete(TimelineEvent).where(
-                        TimelineEvent.id.in_(affected),
-                        ~TimelineEvent.id.in_(select(TimelineEventBar.event_id)),
-                    )
-                )
-            await self.db.delete(row)
-            await self._event(
-                actor,
-                "calendar.deleted",
-                "calendar",
-                identifier,
-                {
-                    "entry_type": "event" if event else "timeline",
-                    "action": "deleted",
-                    "name": row.name,
-                    "starts_on": row.starts_on,
-                    "ends_on": row.ends_on,
-                    "kind": row.kind if event else None,
-                    "deleted_events": deleted_events,
-                    "retained_events": retained_events,
-                },
-            )

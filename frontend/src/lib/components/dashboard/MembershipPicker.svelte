@@ -1,9 +1,10 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { command, promotionCandidates, statusLabels } from '#lib/dashboard';
+	import { command, promotionCandidates } from '#lib/dashboard';
 	import type { DirectoryUser, Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
+	import AccountIdentity from '../AccountIdentity.svelte';
 	let {
 		promotion,
 		onclose,
@@ -66,7 +67,7 @@
 	{busy}
 	{onclose}
 >
-	<div class="list-toolbar">
+	<div class="account-picker-toolbar">
 		<div class="search-field">
 			<Icon name="search" /><input
 				class="input"
@@ -85,12 +86,9 @@
 	<div class="member-picker" aria-busy={loading}>
 		{#if loading}<p class="loading-state">Recherche…</p>{:else}{#each users as user (user.id)}<label
 					class="member-choice"
+					class:selected={selected.includes(user.id)}
 					><input type="checkbox" value={user.id} bind:group={selected} disabled={busy} />
-					<span
-						><strong>{user.first_name} {user.last_name}</strong><span class="muted text-small block"
-							>@{user.username} · {statusLabels[user.status]}</span
-						></span
-					></label
+					<AccountIdentity {user} /></label
 				>{/each}
 			{#if users.length === 0}<p class="empty-state">Aucun compte trouvé.</p>{/if}{/if}
 	</div>

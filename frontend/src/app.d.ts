@@ -3,6 +3,8 @@
 import type { Account } from '#lib/types';
 
 declare global {
+	const __APP_VERSION__: string;
+	const __APP_REVISION__: string | null;
 	namespace App {
 		// interface Error {}
 		interface Locals {

@@ -18,6 +18,7 @@ from app.schemas.timetable import (
     SchoolYearCreate,
     Version,
 )
+from app.services.activity import record_event
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.timetable import TimetableService
@@ -69,6 +70,12 @@ class TimetableConfigurationService:
                 school_year=data.school_year, used=False, revision=uuid4().hex
             )
             self.db.add(row)
+            await record_event(
+                self.db,
+                "timetable.school_year_created",
+                actor.id,
+                data={"school_year": row.school_year},
+            )
             return {"school_year": row.school_year, "revision": row.revision}
 
     async def preferences(self, actor: UserContext, data: PreferencesSave) -> dict:
@@ -83,6 +90,12 @@ class TimetableConfigurationService:
                 row.last_rollover_year = None
             row.auto_archive, row.revision = data.auto_archive, uuid4().hex
             await rollover(self.db, self.core.today())
+            await record_event(
+                self.db,
+                "timetable.preferences_updated",
+                actor.id,
+                data={"auto_archive": row.auto_archive},
+            )
             return {"auto_archive": row.auto_archive, "revision": row.revision}
 
     async def delete_school_year(self, actor: UserContext, school_year: int, data: Version) -> dict:
@@ -106,6 +119,12 @@ class TimetableConfigurationService:
             if row.used or availability is not None or calendar is not None:
                 raise AuthError(409, "Une année déjà utilisée ne peut plus être supprimée.")
             await self.db.delete(row)
+            await record_event(
+                self.db,
+                "timetable.school_year_deleted",
+                actor.id,
+                data={"school_year": school_year},
+            )
             return {"school_year": school_year}
 
     async def room(
@@ -140,6 +159,12 @@ class TimetableConfigurationService:
             else:
                 room.is_active = False
             room.revision = uuid4().hex
+            await record_event(
+                self.db,
+                "timetable.room_saved" if data else "timetable.room_deleted",
+                actor.id,
+                data={"title": room.name},
+            )
             return {"id": room.id, "revision": room.revision}
 
     async def archive(self, actor: UserContext, identifier: int, data: Version) -> dict:
@@ -153,7 +178,7 @@ class TimetableConfigurationService:
             calendar.is_archived, calendar.is_paused = True, True
             calendar.revision = uuid4().hex
             for year in await self.core.repo.years(calendar.id):
-                await self.core._changed(actor, year)
+                await self.core._changed(actor, year, "archived")
             return {"id": calendar.id, "revision": calendar.revision}
 
     async def restore(self, actor: UserContext, identifier: int, data: CalendarRestore) -> dict:
@@ -183,5 +208,5 @@ class TimetableConfigurationService:
             calendar.is_archived, calendar.is_paused = False, True
             calendar.revision = uuid4().hex
             for year in await self.core.repo.years(calendar.id):
-                await self.core._changed(actor, year)
+                await self.core._changed(actor, year, "restored")
             return {"id": calendar.id, "revision": calendar.revision}

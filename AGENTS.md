@@ -123,7 +123,7 @@ did.
 
 ## 9. Dependencies and documentation
 
-- Keep the README accurate for setup, configuration, development and testing.
+- Do not update README.md unless explicitly requested to do so.
 - Before adding significant dependencies, external services or paid infrastructure, explain the purpose, alternatives,
   maintenance, licensing, security and cost implications; obtain approval when the choice is consequential.
 - Document lasting architectural decisions and relevant API behavior concisely.

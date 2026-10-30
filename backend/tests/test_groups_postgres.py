@@ -10,7 +10,7 @@ from pypdf import PdfReader
 from sqlalchemy import insert
 from sqlalchemy.exc import IntegrityError
 
-from app.models import PromotionGroupMember
+from app.models import Promotion, PromotionGroupMember
 from tests.test_auth_postgres import PASSWORD, Harness
 from tests.test_dashboard_postgres import clear_promotions, make_promotion
 
@@ -33,6 +33,66 @@ async def create_roster(case: Harness, promotion_id: int, count: int = 7) -> lis
     )
     assert response.status_code == 204, response.text
     return pupils
+
+
+@pytest.mark.asyncio
+async def test_kholleur_sees_only_active_promotions_and_pupils(auth_case: Harness) -> None:
+    """Hide archived promotions, pending/archived pupils and their custom memberships."""
+    case = auth_case
+    promotion_id = await make_promotion(case, "ACTIVE-ONLY")
+    path = f"/api/v1/promotion-groups/{promotion_id}"
+    try:
+        pending = await create_roster(case, promotion_id, 2)
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{pending[0]}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        active, _ = await case.create()
+        reader, username = await case.create("kholleur")
+        for identifier in (active, reader):
+            assert (
+                await case.client.put(f"/api/v1/admin/users/{identifier}/promotions/{promotion_id}")
+            ).status_code == 204
+        saved = await case.client.put(
+            f"{path}/custom/0",
+            json={
+                "name": "Option",
+                "student_ids": [active, *pending],
+                "expected_revision": None,
+            },
+        )
+        assert saved.status_code == 200, saved.text
+        assert (
+            await case.client.post(
+                "/api/v1/auth/login",
+                json={
+                    "identifier": username,
+                    "password": PASSWORD,
+                },
+            )
+        ).status_code == 200
+        data = (await case.client.get(path)).json()
+        assert [item["id"] for item in data["students"]] == [active]
+        custom = (await case.client.get(f"{path}/custom/groups")).json()
+        assert custom["groups"][0]["student_ids"] == [active]
+        metadata = (
+            await case.client.get(f"/api/v1/promotion-groups/promotions/{promotion_id}")
+        ).json()
+        assert metadata["archived_count"] == 0
+        async with case.database.sessions.begin() as db:
+            promotion = await db.get(Promotion, promotion_id)
+            promotion.is_active = False
+        for endpoint in (
+            path,
+            f"{path}/custom/groups",
+            f"/api/v1/promotion-groups/promotions/{promotion_id}",
+        ):
+            assert (await case.client.get(endpoint)).status_code == 404
+        listing = await case.client.get("/api/v1/promotion-groups/promotions?is_active=false")
+        assert listing.status_code == 200 and listing.json()["items"] == []
+    finally:
+        await clear_promotions([promotion_id])
 
 
 @pytest.mark.asyncio
@@ -71,9 +131,7 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
         pdf = PdfReader(BytesIO(response.content))
         assert pdf.metadata.title.endswith(" - 2019")
         # Three pupil rows, plus the fixture administrator's name in the footer.
-        assert pdf.pages[0].extract_text().count("Valentin") == (
-            4
-        )
+        assert pdf.pages[0].extract_text().count("Valentin") == (4)
         for role in ("teacher", "kholleur", "user"):
             identifier, username = await case.create(role)
             response = await case.client.put(
@@ -89,17 +147,21 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
             if role == "teacher":
                 assert PdfReader(BytesIO(exported.content)).metadata.author == "BURGAUD Valentin"
                 case.as_admin()
-                assert (await case.client.delete(
-                    f"/api/v1/admin/users/{identifier}/promotions/{promotion_id}"
-                )).status_code == 204
-                assert (await case.client.post(
-                    "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
-                )).status_code == 200
+                assert (
+                    await case.client.delete(
+                        f"/api/v1/admin/users/{identifier}/promotions/{promotion_id}"
+                    )
+                ).status_code == 204
+                assert (
+                    await case.client.post(
+                        "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
+                    )
+                ).status_code == 200
                 assert (await case.client.get(path)).status_code == 404
             case.as_admin()
-        assert (await case.client.delete(
-            f"/api/v1/admin/users/{pupils[1]}/promotions/{promotion_id}"
-        )).status_code == 204
+        assert (
+            await case.client.delete(f"/api/v1/admin/users/{pupils[1]}/promotions/{promotion_id}")
+        ).status_code == 204
         response = await case.client.get(path)
         # Includes the remaining two pupils plus the newly attached student account.
         assert PdfReader(BytesIO(response.content)).pages[0].extract_text().count("Valentin") == (

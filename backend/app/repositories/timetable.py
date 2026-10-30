@@ -1,6 +1,6 @@
 """Parameterized timetable persistence inside service-owned transactions."""
 
-from sqlalchemy import select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -41,9 +41,14 @@ class TimetableRepository:
                 .join(UserPromotion)
                 .where(
                     UserPromotion.user_id == user_id,
-                    Promotion.is_active.is_(True),
-                    True if include_undiffused else TimetableCalendar.is_paused.is_(False),
-                    TimetableCalendar.is_archived.is_(False),
+                    or_(
+                        and_(TimetableCalendar.is_archived.is_(True), archives),
+                        and_(
+                            Promotion.is_active.is_(True),
+                            True if include_undiffused else TimetableCalendar.is_paused.is_(False),
+                            TimetableCalendar.is_archived.is_(False),
+                        ),
+                    ),
                 )
             )
         if school_year is not None:

@@ -127,7 +127,7 @@
 	.event-row {
 		grid-template-columns: 34px minmax(0, 1fr) auto;
 		align-items: start;
-		padding: 1.1rem 0;
+		padding: 0.6rem 0;
 	}
 	.event-symbol {
 		display: grid;
@@ -142,12 +142,15 @@
 		min-width: 0;
 	}
 	.event-message {
-		line-height: 2.2;
+		line-height: 1.7;
 	}
 	.event-details {
+		display: flex;
+		flex-wrap: wrap;
+		column-gap: 1rem;
 		color: var(--color-muted);
 		font-size: 0.77rem;
-		margin: 0.4rem 0 0;
+		margin: 0.2rem 0 0;
 		list-style: none;
 		padding: 0;
 		line-height: 1.7;

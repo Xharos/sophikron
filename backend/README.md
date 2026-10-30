@@ -13,6 +13,32 @@ The shared responsive frontend uses these contracts; see [frontend and BFF](../d
 Complete school profiles keep optional private information encrypted in `users`, with administrator
 editing and scoped teacher orientation editing; see [profile contracts](../docs/administration.md#complete-school-profiles).
 
+## Development prerequisites
+
+For native tests, use Python 3.13 (the Docker/CI version), Docker with Linux containers and Compose v2.
+Run from the repository root. Reuse an existing project environment if already configured.
+
+Windows PowerShell:
+
+```powershell
+py -3.13 -m venv .venv
+./.venv/Scripts/python.exe -m pip install -e "./backend[dev]"
+cd backend
+../.venv/Scripts/python.exe run_tests.py
+```
+
+Linux shell:
+
+```sh
+python3.13 -m venv .venv
+.venv/bin/python -m pip install -e './backend[dev]'
+cd backend
+../.venv/bin/python run_tests.py
+```
+
+For frontend checks, install Node 24 and run `npm ci` in `frontend/`, then follow
+[release verification](../CONTRIBUTING.md#verification-before-a-release).
+
 Install into the configured Python environment with `python -m pip install -e ".[dev]"`. Run:
 
 ```sh
@@ -31,7 +57,7 @@ configuration is in `.idea/runConfigurations/run_tests.xml` (IDE settings are ex
 The same entry point is available from the terminal with `python run_tests.py` in `backend/`.
 
 With Docker Desktop running, click Run or Debug. The launcher creates synthetic secrets in a private
-temporary directory and a unique `sophikron-tests-<random>` Compose project. It reuses `compose.yaml`
+temporary directory and a unique `sophikron-tests-<random>` Compose project. It reuses `compose.yaml` and `compose.local.yaml`
 without reading `.env`, builds/starts PostgreSQL and the API, waits for migrations and health, then
 runs **all** backend tests locally, including PostgreSQL integration tests. Docker assigns free
 loopback-only ports; no fixed ports or local secrets need configuring.

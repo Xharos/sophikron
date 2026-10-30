@@ -90,7 +90,10 @@ class TimetableService:
     ) -> TimetableCalendar:
         """Hide unrelated calendars after checking current staff scope."""
         admin = await self.authorize(actor, write=write)
-        calendars = await self.repo.calendars(None if admin else actor.id, archives=admin)
+        calendars = await self.repo.calendars(
+            None if admin else actor.id,
+            archives=admin or "teaching.read" in await self.auth.repo.permissions(actor.id),
+        )
         calendar = next((row for row in calendars if row.id == identifier), None)
         if calendar is None:
             raise AuthError(404, "Agenda introuvable.")
@@ -242,7 +245,10 @@ class TimetableService:
         """Return minimal calendar and member metadata inside the caller's current scope."""
         async with self.db.begin():
             admin = await self.authorize(actor)
-            calendars = await self.repo.calendars(None if admin else actor.id)
+            read_archives = admin or "teaching.read" in await self.auth.repo.permissions(actor.id)
+            calendars = await self.repo.calendars(
+                None if admin else actor.id, archives=read_archives
+            )
             all_years = list(
                 await self.db.scalars(
                     select(TimetableYear).where(
@@ -256,7 +262,11 @@ class TimetableService:
                     year
                     for year in all_years
                     if year.calendar_id == calendar.id
-                    and (admin or year.starts_on <= self.today() <= year.ends_on)
+                    and (
+                        admin
+                        or calendar.is_archived
+                        or year.starts_on <= self.today() <= year.ends_on
+                    )
                 ]
                 if not admin and not visible:
                     continue
@@ -292,7 +302,9 @@ class TimetableService:
                         select(User)
                         .where(
                             User.is_bootstrap.is_(False),
-                            User.status != "disabled",
+                            (User.status != "disabled")
+                            if read_archives
+                            else (User.status == "active"),
                             select(UserRole.user_id)
                             .join(Role)
                             .where(
@@ -333,6 +345,7 @@ class TimetableService:
                 ]
             return {
                 "administrator": admin,
+                "can_read_archives": read_archives,
                 "today": self.today().isoformat(),
                 "calendars": items,
                 "promotions": [
@@ -453,10 +466,16 @@ class TimetableService:
                     year.updated_at = self.auth.clock()
             await record_event(
                 self.db,
-                "timetable.changed",
+                "timetable.created" if identifier is None else "timetable.updated",
                 actor_user_id=actor.id,
                 resource_type="timetable",
                 resource_id=row.id,
+                data={
+                    "calendar_name": row.name,
+                    "is_paused": row.is_paused,
+                    "promotion_id": row.promotion_id,
+                    "school_year": data.school_year,
+                },
             )
             return {"id": row.id, "revision": row.revision}
 
@@ -493,6 +512,7 @@ class TimetableService:
             if not row.is_active:
                 row.is_active = True
                 row.revision = uuid4().hex
+            await record_event(self.db, "timetable.room_saved", actor.id, data={"title": row.name})
             return {"id": row.id, "name": row.name, "revision": row.revision}
 
     async def save_settings(
@@ -517,7 +537,7 @@ class TimetableService:
                     )
             year.settings = settings.model_dump(mode="json")
             year.starts_on, year.ends_on = settings.start, settings.end
-            return await self._changed(actor, year)
+            return await self._changed(actor, year, "settings_updated")
 
     async def preview_settings(
         self, actor: UserContext, identifier: int, data: Version, settings: YearSettings
@@ -538,16 +558,24 @@ class TimetableService:
             after = {event["id"] for event in occurrences(document)}
             return {"hidden": len(before - after), "added": len(after - before)}
 
-    async def _changed(self, actor: UserContext, year: TimetableYear) -> dict:
+    async def _changed(
+        self,
+        actor: UserContext,
+        year: TimetableYear,
+        action: str = "changed",
+        **facts: object,
+    ) -> dict:
         """Advance the calendar revision and journal a successful mutation in its transaction."""
         year.revision = uuid4().hex
         year.updated_at = self.auth.clock()
+        calendar = await self.db.get(TimetableCalendar, year.calendar_id)
         await record_event(
             self.db,
-            "timetable.changed",
+            f"timetable.{action}",
             actor_user_id=actor.id,
             resource_type="timetable",
             resource_id=year.calendar_id,
+            data={"calendar_name": calendar.name, "school_year": year.school_year, **facts},
         )
         return {"revision": year.revision}
 
@@ -562,7 +590,7 @@ class TimetableService:
             await self._references(block, calendar)
             changed = apply_event_change(document, None, None, "one", block)
             await self.persist_document(year.id, document, changed)
-            return await self._changed(actor, year)
+            return await self._changed(actor, year, "series_created", title=block.title)
 
     async def persist_document(
         self, year_id: int, before: YearDocument, after: YearDocument
@@ -591,7 +619,15 @@ class TimetableService:
                 document, series_id, data.occurrence, data.scope, data.block
             )
             await self.persist_document(year.id, document, changed)
-            return await self._changed(actor, year)
+            source = next((item for item in document.series if item.id == series_id), None)
+            return await self._changed(
+                actor,
+                year,
+                "occurrence_updated" if data.block else "occurrence_deleted",
+                title=data.block.title if data.block else source.title if source else None,
+                occurrence=data.occurrence,
+                scope=data.scope,
+            )
 
     async def _decorate(self, events: list[dict], *, include_roles: bool = False) -> list[dict]:
         """Batch labels only for already-authorized events, never a global private directory."""
@@ -710,7 +746,8 @@ class TimetableService:
                 if preview_row is None:
                     raise AuthError(404, "Calendrier introuvable.")
                 calendar_ids = [preview_row.calendar_id]
-            allowed = await self.repo.calendars(None if admin else actor.id, archives=admin)
+            read_archives = admin or "teaching.read" in await self.auth.repo.permissions(actor.id)
+            allowed = await self.repo.calendars(None if admin else actor.id, archives=read_archives)
             if not set(calendar_ids).issubset({row.id for row in allowed}):
                 raise AuthError(404, "Agenda introuvable.")
             selected = [row for row in allowed if row.id in calendar_ids]
@@ -728,7 +765,11 @@ class TimetableService:
                         continue
                     if school_year is not None and year.school_year != school_year:
                         continue
-                    if not admin and not year.starts_on <= self.today() <= year.ends_on:
+                    if (
+                        not admin
+                        and not calendar.is_archived
+                        and not year.starts_on <= self.today() <= year.ends_on
+                    ):
                         continue
                     if proposal is not None:
                         if calendar.is_archived:
@@ -785,7 +826,9 @@ class TimetableService:
                         .where(
                             UserPromotion.promotion_id.in_(promotion_ids),
                             User.is_bootstrap.is_(False),
-                            User.status != "disabled",
+                            (User.status != "disabled")
+                            if read_archives
+                            else (User.status == "active"),
                         )
                     )
                 )
@@ -854,7 +897,10 @@ class TimetableService:
                 )
                 for group in await self.db.scalars(
                     select(PromotionCustomGroup)
-                    .where(PromotionCustomGroup.promotion_id.in_(promotion_ids))
+                    .where(
+                        PromotionCustomGroup.promotion_id.in_(promotion_ids),
+                        True if read_archives else PromotionCustomGroup.is_active.is_(True),
+                    )
                     .order_by(PromotionCustomGroup.name)
                 ):
                     student_ids = [

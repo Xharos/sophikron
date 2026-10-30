@@ -58,16 +58,48 @@ class GroupActivity(InputModel):
 
 
 class DownloadFacts(InputModel):
-    """Keep numeric historical file facts without filenames, bodies or storage paths."""
+    """Keep the course document title and immutable file facts without storage paths."""
 
     file_id: int = Field(gt=0)
     size_bytes: int = Field(gt=0)
+    document_title: str | None = Field(default=None, max_length=200)
 
 
 class CreatedAccount(InputModel):
     """Preserve the full initial grant combination without any copied account identity."""
 
     roles: RoleCodes
+
+
+class TimetableActivity(InputModel):
+    """Bound scheduling metadata to labels and facts, excluding credentials and pupil lists."""
+
+    calendar_name: str | None = Field(default=None, max_length=300)
+    school_year: int | None = Field(default=None, ge=2000, le=9999)
+    title: str | None = Field(default=None, max_length=300)
+    occurrence: date | None = None
+    scope: Literal["one", "future", "all"] | None = None
+    is_paused: bool | None = None
+    promotion_id: int | None = Field(default=None, gt=0)
+    auto_archive: bool | None = None
+    range_count: int | None = Field(default=None, ge=0)
+    kholle_min_hours: float | None = Field(default=None, ge=0)
+    kholle_max_hours: float | None = Field(default=None, ge=0)
+    default_availability: bool | None = None
+
+
+class CustomGroupActivity(InputModel):
+    """Describe a named group without copying its pupil identities."""
+
+    group_name: str = Field(max_length=300)
+    student_count: int = Field(ge=0)
+
+
+class AttendanceActivity(InputModel):
+    """Describe a generated roster PDF without copying its private contents."""
+
+    variant: Literal["roster", "global", "halves", "thirds", "kholles", "custom"]
+    student_count: int = Field(ge=0)
 
 
 class InvitationData(InputModel):
@@ -134,28 +166,9 @@ class SubjectActivity(InputModel):
 class SettingsActivity(InputModel):
     """Name modified settings without copying the homepage text into the journal."""
 
-    changed_fields: list[Literal["name", "home_text", "text_color", "holiday_color"]] = Field(
-        max_length=4
-    )
+    changed_fields: list[Literal["name", "home_text", "text_color"]] = Field(max_length=3)
     previous_name: str = Field(max_length=100)
     name: str = Field(max_length=100)
-
-
-class CalendarActivity(InputModel):
-    """Identify a dated public entry even after deletion, without ambiguous table IDs."""
-
-    entry_type: Literal["timeline", "event"]
-    action: Literal["created", "updated", "deleted"]
-    name: str = Field(max_length=100)
-    starts_on: date
-    ends_on: date
-    kind: Literal["holiday", "oral", "written", "school", "other"] | None = None
-    changed_fields: list[
-        Literal["name", "starts_on", "ends_on", "color", "kind", "timeline_ids"]
-    ] = Field(default_factory=list, max_length=6)
-    timeline_count: int | None = Field(default=None, ge=0, le=20)
-    deleted_events: int = Field(default=0, ge=0, le=200)
-    retained_events: int = Field(default=0, ge=0, le=200)
 
 
 class LessonPeriod(InputModel):
@@ -235,6 +248,7 @@ EVENTS = {
         subject=True,
         resource="lesson",
         payload=DownloadFacts,
+        version=2,
         label="Téléchargements de documents",
         icon="download",
         message="{subject} a téléchargé un document de {lesson}.",
@@ -270,22 +284,6 @@ EVENTS = {
         label="Configuration du site",
         icon="school",
         message="{actor} a modifié la configuration du site.",
-    ),
-    "calendar.saved": EventDefinition(
-        payload=CalendarActivity,
-        version=2,
-        resource="calendar",
-        label="Calendrier enregistré",
-        icon="clock",
-        message="{actor} a enregistré un élément du calendrier.",
-    ),
-    "calendar.deleted": EventDefinition(
-        payload=CalendarActivity,
-        version=2,
-        resource="calendar",
-        label="Calendrier supprimé",
-        icon="remove",
-        message="{actor} a supprimé un élément du calendrier.",
     ),
     "auth.login_succeeded": EventDefinition(
         subject=True,
@@ -480,10 +478,99 @@ for _code, _label in (
 ):
     EVENTS[f"timetable.{_code}"] = EventDefinition(
         resource="timetable",
+        payload=TimetableActivity,
+        version=2,
         label=_label,
         icon="clock",
         message="{actor} a mis à jour un emploi du temps.",
     )
+
+
+for _code, _label in (
+    ("created", "Calendriers créés"),
+    ("updated", "Calendriers modifiés"),
+    ("archived", "Calendriers archivés"),
+    ("restored", "Calendriers réactivés"),
+    ("settings_updated", "Périodes et vacances modifiées"),
+    ("series_created", "Séances ajoutées"),
+    ("occurrence_updated", "Séances modifiées"),
+    ("occurrence_deleted", "Séances annulées"),
+    ("exported", "Emplois du temps exportés en PDF"),
+):
+    EVENTS[f"timetable.{_code}"] = EventDefinition(
+        resource="timetable",
+        payload=TimetableActivity,
+        label=_label,
+        icon="clock",
+        message=f"{{actor}} · {_label}.",
+    )
+
+for _code, _label in (
+    ("room_saved", "Salles enregistrées"),
+    ("room_deleted", "Salles retirées"),
+    ("school_year_created", "Années scolaires créées"),
+    ("school_year_deleted", "Années scolaires supprimées"),
+    ("preferences_updated", "Archivage automatique configuré"),
+):
+    EVENTS[f"timetable.{_code}"] = EventDefinition(
+        payload=TimetableActivity,
+        label=_label,
+        icon="clock",
+        message=f"{{actor}} · {_label}.",
+    )
+
+EVENTS["user.availability_updated"] = EventDefinition(
+    subject=True,
+    payload=TimetableActivity,
+    label="Disponibilités des enseignants",
+    icon="clock",
+    message="{actor} a modifié les disponibilités de {subject}.",
+)
+for _code, _label in (("revoke", "révoqué"), ("regenerate", "régénéré")):
+    EVENTS[f"user.calendar_{_code}"] = EventDefinition(
+        subject=True,
+        label=f"Abonnements calendrier {_label}s",
+        icon="lock",
+        message=f"{{actor}} a {_label} l’abonnement calendrier de {{subject}}.",
+    )
+for _code, _label in (("created", "créé"), ("updated", "modifié"), ("deleted", "supprimé")):
+    EVENTS[f"promotion.custom_group_{_code}"] = EventDefinition(
+        resource="promotion",
+        payload=CustomGroupActivity,
+        label=f"Groupes personnalisés {_label}s",
+        icon="promotions",
+        message=f"{{actor}} a {_label} un groupe de {{promotion}}.",
+    )
+EVENTS["promotion.attendance_exported"] = EventDefinition(
+    resource="promotion",
+    payload=AttendanceActivity,
+    label="Listes d’appel exportées",
+    icon="download",
+    message="{actor} a généré une liste d’appel de {promotion}.",
+)
+
+
+def event_family(code: str) -> str:
+    """Return the journal family for a registered event code.
+
+    Parameters
+    ----------
+    code
+        Stable event catalogue code.
+
+    Returns
+    -------
+    str
+        One of the four administrator journal families.
+    """
+    prefix = code.split(".", 1)[0]
+    if prefix in {"user", "auth", "invitation"}:
+        return "accounts"
+    if prefix == "promotion":
+        return "promotions"
+    if prefix == "lesson":
+        return "lessons"
+    return "administration"
 
 
 def highest_role(roles: Iterable[str]) -> str | None:

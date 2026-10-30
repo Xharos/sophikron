@@ -5,13 +5,11 @@
 	import type { PublicSite } from '#lib/site';
 	import TextEditor from '../TextEditor.svelte';
 	import ColorPicker from '../ColorPicker.svelte';
-	import CalendarPanel from './CalendarPanel.svelte';
 	import CalendarSubscriptionAdmin from './CalendarSubscriptionAdmin.svelte';
 	let site = $state<PublicSite | null>(null),
 		name = $state(''),
 		text = $state(''),
-		color = $state('#244bc1'),
-		holidayColor = $state('#244BC1');
+		color = $state('#244bc1');
 	let loading = $state(true),
 		busy = $state(false),
 		message = $state(''),
@@ -23,7 +21,6 @@
 			name = site.settings.name;
 			text = site.settings.home_text;
 			color = site.settings.text_color;
-			holidayColor = site.settings.holiday_color;
 		} catch (cause) {
 			message = (cause as Error).message;
 		} finally {
@@ -45,7 +42,6 @@
 					name,
 					home_text: text,
 					text_color: color,
-					holiday_color: holidayColor,
 					expected_version: site.settings.version
 				}
 			});
@@ -58,20 +54,13 @@
 			busy = false;
 		}
 	}
-	async function calendarChanged(): Promise<void> {
-		// Preserve any unsaved site-text draft when refreshing calendar data.
-		const fresh = await read<PublicSite>('site');
-		if (site)
-			site = { ...site, timelines: fresh.timelines, events: fresh.events, today: fresh.today };
-		await invalidateAll();
-	}
 </script>
 
 <div class="section-intro">
 	<div>
 		<p class="eyebrow">Configuration</p>
 		<h2 class="title is-3">Votre site</h2>
-		<p class="muted">Nom, texte d’accueil et calendrier public.</p>
+		<p class="muted">Nom et présentation de votre établissement.</p>
 	</div>
 </div>
 {#if message}<p class="notification is-danger is-light" role="alert">
@@ -95,15 +84,6 @@
 				bind:value={color}
 				disabled={busy}
 			/>
-			<ColorPicker
-				id="holiday-color"
-				label="Couleur des vacances"
-				bind:value={holidayColor}
-				disabled={busy}
-			/>
-			<p class="help mb-4">
-				Cette couleur s’applique à toutes les périodes de vacances, sur toutes les timelines.
-			</p>
 			<div class="field">
 				<label class="label" for="home-text">Texte d’accueil</label><TextEditor
 					id="home-text"
@@ -112,12 +92,9 @@
 					disabled={busy}
 				/>
 			</div>
-			<p class="help mb-4">
-				Ce texte et les timelines sont visibles par tous, même sans connexion.
-			</p>
+			<p class="help mb-4">Ce texte est visible par tous, même sans connexion.</p>
 			<button class="button is-primary" class:is-loading={busy}>Enregistrer la configuration</button
 			>
 		</fieldset>
 	</form>
-	<CalendarPanel {site} onchanged={calendarChanged} />
 	<CalendarSubscriptionAdmin />{/if}

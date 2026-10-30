@@ -483,7 +483,10 @@
 				title="Exporter cette vue en PDF"
 				target="_blank"
 				rel="noopener noreferrer"
-				href={`${resolve('/timetable/[id]/pdf', { id: String(agenda.id) })}?${new URLSearchParams({ year_id: String(activeYear.id), day: date, node: selected.key })}`}
+				href={resolve(
+					`/timetable/[id]/pdf?${new URLSearchParams({ year_id: String(activeYear.id), day: date, node: selected.key })}`,
+					{ id: String(agenda.id) }
+				)}
 			>
 				<Icon name="pdf" />
 			</a>
@@ -499,10 +502,9 @@
 				onclick={() => create(date, 0)}>+</button
 			>{/if}
 		<button
-			class="warning-button"
-			class:clear={warningCount === 0}
-			class:critical={issues.some((i) => i.severity === 'critical') ||
-				warnings.some((w) => w.severity === 'critical')}
+			class="button is-small"
+			class:is-light={warningCount === 0}
+			class:is-warning={warningCount > 0}
 			onclick={() => (warningsOpen = true)}
 			aria-label={'Points à vérifier (' + warningCount + ')'}>⚠ {warningCount}</button
 		>
@@ -823,25 +825,6 @@
 		border-radius: 7px;
 		z-index: 5;
 		pointer-events: none;
-	}
-	.warning-button {
-		border: 0;
-		color: var(--color-warning);
-		background: var(--color-warning-soft);
-		border-radius: 6px;
-		padding: 0.4rem;
-		cursor: pointer;
-	}
-	.warning-button.clear {
-		color: var(--color-success);
-		background: var(--color-success-soft);
-	}
-	.warning-button.critical {
-		color: var(--color-danger);
-		background: var(--color-danger-soft);
-	}
-	.tree-toggle {
-		display: none;
 	}
 	@media (max-width: 1100px) {
 		.workspace-toolbar {

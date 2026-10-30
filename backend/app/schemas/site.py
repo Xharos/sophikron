@@ -1,15 +1,13 @@
 """Bounded administrator inputs and explicitly public site presentation contracts."""
 
-from datetime import date
-from typing import Annotated, Literal, Self
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 from app.schemas.auth import InputModel
 from app.schemas.lessons import LessonIcon, Versioned, normalized_title
 
 Color = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
-Identifiers = Annotated[list[Annotated[int, Field(gt=0)]], Field(max_length=100)]
 
 
 class SubjectFields(InputModel):
@@ -55,10 +53,9 @@ class SettingsFields(InputModel):
     name: str = Field(min_length=1, max_length=100)
     home_text: str = Field(max_length=3000)
     text_color: Color = "#244BC1"
-    holiday_color: Color = "#244BC1"
 
     _name = field_validator("name")(SubjectFields.clean_name)
-    _colors = field_validator("text_color", "holiday_color")(SubjectFields.clean_color)
+    _colors = field_validator("text_color")(SubjectFields.clean_color)
 
 
 class SettingsUpdate(SettingsFields, Versioned):
@@ -71,65 +68,10 @@ class SettingsResponse(SettingsFields):
     version: int = 0
 
 
-class TimelineFields(SubjectFields):
-    """Validate inclusive calendar bounds for an annual bar."""
-
-    icon: Literal["book"] = "book"
-    starts_on: date
-    ends_on: date
-
-    @model_validator(mode="after")
-    def period(self) -> Self:
-        """Reject reversed inclusive periods."""
-        if self.ends_on < self.starts_on:
-            raise ValueError("La fin doit suivre le début.")
-        return self
-
-
-class TimelineUpdate(TimelineFields, Versioned):
-    """Update a bar while detecting concurrent edits."""
-
-
-class TimelineResponse(TimelineFields):
-    """Expose an annual bar without any account or promotion references."""
-
-    id: int
-    version: int
-
-
-class EventFields(TimelineFields):
-    """Associate one event with an explicit nonempty set of bars."""
-
-    kind: Literal["holiday", "oral", "written", "school", "other"] = "other"
-    timeline_ids: Identifiers = Field(min_length=1)
-
-    @field_validator("timeline_ids")
-    @classmethod
-    def unique_bars(cls, value: list[int]) -> list[int]:
-        """Reject duplicate associations rather than failing during persistence."""
-        if len(value) != len(set(value)):
-            raise ValueError("Timeline dupliquée.")
-        return value
-
-
-class EventUpdate(EventFields, Versioned):
-    """Save dates and all shared associations atomically."""
-
-
-class EventResponse(EventFields):
-    """Describe a public event and its shared bar references."""
-
-    id: int
-    version: int
-
-
 class PublicSite(BaseModel):
     """Whitelist all content intentionally published on the public homepage."""
 
     settings: SettingsResponse
-    timelines: list[TimelineResponse]
-    events: list[EventResponse]
-    today: date
 
 
 class CourseImpact(BaseModel):

@@ -66,21 +66,20 @@ only the variables explicitly configured in its service. The repository uses the
 `compose.yaml`, the explicit local overlay `compose.local.yaml`, and one private `.env`. No extra
 environment template is needed. See [BFF deployment](frontend-bff.md#production-topology).
 Settings such as pool limits, session durations, browser origins and SMTP options live in `.env`.
-An empty YAML value such as `AUTH_SESSION_SECONDS:` is an allowlisted pass-through: Compose resolves
-it from the shell first, then `.env`. If absent from both, it is omitted and the application default
-applies. This keeps the Compose file readable without injecting every `.env` variable into containers.
+Compose uses explicit `${VARIABLE:-default}` substitutions; shell values override `.env`.
+Only the allowlisted variables are passed to each service.
 Internal database roles, mounted secret paths and conditional SMTP/bootstrap paths stay in Compose.
 
-For local development, add the needed paths and options to that `.env`. This example contains no
-secret values; keep passwords and keys in separate protected files:
+For local Compose development, set the secret directory in `.env` and leave the application origin
+empty for localhost. The overlay supplies HTTP session settings and derives allowed origins;
+do not copy native-process overrides into `.env`. See the complete [configuration reference](environment.md).
+This example contains no secret values; keep passwords and keys in separate protected files:
 
 ```dotenv
 DB_NAME=sophikron
 SOPHIKRON_SECRETS_DIRECTORY=/private/sophikron
 AUTH_BOOTSTRAP_USERNAME=setup_operator
-AUTH_ENVIRONMENT=development
-AUTH_COOKIE_SECURE=false
-AUTH_ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:8000"]
+SOPHIKRON_ORIGIN=
 ```
 
 Define `SOPHIKRON_SECRETS_DIRECTORY` in the root `.env` before starting Compose. Compose reads it
@@ -96,14 +95,17 @@ No host directory is mounted, and there is no `runtime` folder or initial-invita
 The bootstrap username is the only bootstrap setting in `.env`; its password is never an env value.
 After setup, its file may be emptied; the Compose mount still requires a file to exist.
 
+The following are application process settings. The [configuration reference](environment.md#build-metadata-and-settings-controlled-by-compose)
+distinguishes those forwarded by Compose from native-only options and fixed service values.
+
 | Setting | Default / purpose |
 | --- | --- |
 | `AUTH_KEYS_FILE` | Required versioned JSON keyring file |
 | `AUTH_ALLOWED_ORIGINS` | Required JSON array of exact origins, without trailing slash |
 | `AUTH_CORS_ENABLED` | `true` by default; production Compose disables browser CORS independently of CSRF |
 | `AUTH_MANUAL_INVITATIONS_ENABLED` | Controls the legacy manual-only endpoint; automatic access invitations use manual delivery when SMTP is disabled |
-| `AUTH_ENVIRONMENT` | `production`; local `.env` sets `development` |
-| `AUTH_COOKIE_SECURE` | `true`; local HTTP `.env` sets `false` |
+| `AUTH_ENVIRONMENT` | `production`; the local Compose overlay defaults to `development` |
+| `AUTH_COOKIE_SECURE` | `true`; the local Compose overlay forces `false` for HTTP |
 | `AUTH_SESSION_SECONDS` | `28800`, absolute eight-hour lifetime |
 | `AUTH_IDLE_SECONDS` | `1800`, thirty-minute inactivity lifetime |
 | `AUTH_INVITATION_SECONDS` | `172800`, maximum 48 hours; lower values allowed for tests |
@@ -212,7 +214,7 @@ database it reads the bootstrap password file, hashes it using Argon2id, and cre
 stops first installation with an explicit diagnostic. Concurrent workers serialize creation.
 
 The installation secret is intentionally exempt from permanent password composition rules, including
-in production. Empty and simple installation secrets are accepted at the owner's explicit request.
+in production. Empty and simple installation secrets are accepted by the current implementation.
 The account still expires after 48 hours and is permanently retired by setup. No default password is
 embedded in source, image or tracked configuration.
 
@@ -431,22 +433,13 @@ timezone boundaries for reporting periods; a login event is not proof of human p
 not repeat personal identities, IPs or navigation data. Define retention before production; no
 automatic history deletion is implemented. See [activity journal](administration.md#activity-journal).
 
-## Reconstructed Alembic revisions
+## Schema compatibility
 
-The owner explicitly authorized rebuilding the baseline after deleting the local volumes.
-The migration chain is:
-
-1. `0001_authentication`: accounts, roles/permissions, sessions, invitations, setup, login
-   protection and the append-only activity journal.
-2. `0002_configuration`: public site settings, shared holiday color, timelines and events.
-3. `0003_promotions`: promotion catalogue and account memberships.
-4. `0004_subjects`: subject catalogue and account subject assignments.
-5. `0005_lessons`: course pages, content, responsibility, collaborations and promotion access.
-
-Use `alembic upgrade head` on a fresh database. These revisions do not upgrade older populated
-variants or the old `0001_database_baseline`; historical `adopt-empty-baseline` is removed. No database
-is reset automatically. Future applied revisions must not be rewritten without explicit authorization.
-Downgrade is destructive and belongs only in an explicitly disposable test database.
+Authentication storage belongs to `0001_authentication`. See the single
+[migration inventory](database.md#migrations) for the complete chain and compatibility limits.
+Fresh installations use `alembic upgrade head`. Already-stamped incompatible development
+schemas need an explicit migration plan; no database is reset or artificially stamped automatically.
+Published migrations are immutable. Downgrades belong only in disposable test databases.
 
 ## Verification and dependencies
 

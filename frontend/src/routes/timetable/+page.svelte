@@ -138,7 +138,7 @@
 				>
 			</div>{/if}
 	</header>
-	{#if data.catalog.administrator}<div class="buttons mb-5">
+	{#if data.catalog.can_read_archives ?? data.catalog.administrator}<div class="buttons mb-5">
 			<button class="button" class:is-primary={!archives} onclick={() => (archives = false)}
 				>Actifs</button
 			><button class="button" class:is-primary={archives} onclick={() => (archives = true)}

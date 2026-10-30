@@ -31,6 +31,10 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 	const admin = hasPermission(event.locals.user, 'users.read');
 	const prefix = admin ? '/admin' : '/teaching';
 	const resource = event.url.searchParams.get('resource');
+	if (resource === 'versions') {
+		requireAccess(event, 'admin');
+		return api(event, '/admin/versions');
+	}
 	const query = new URLSearchParams();
 	for (const key of [
 		'q',
@@ -44,6 +48,8 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 		'year',
 		'cursor',
 		'event_type',
+		'family',
+		'user_id',
 		'order'
 	]) {
 		const value = event.url.searchParams.get(key);
@@ -193,18 +199,6 @@ export async function commandDashboard(event: RequestEvent): Promise<unknown> {
 			return api(event, `/admin/subjects/${identifier(input.id)}`, 'PUT', input.data);
 		case 'archiveSubject':
 			return api(event, `/admin/subjects/${identifier(input.id)}`, 'DELETE', input.data);
-		case 'createTimeline':
-			return api(event, '/admin/timelines', 'POST', input.data);
-		case 'updateTimeline':
-			return api(event, `/admin/timelines/${identifier(input.id)}`, 'PUT', input.data);
-		case 'deleteTimeline':
-			return api(event, `/admin/timelines/${identifier(input.id)}`, 'DELETE', input.data);
-		case 'createEvent':
-			return api(event, '/admin/timeline-events', 'POST', input.data);
-		case 'updateEvent':
-			return api(event, `/admin/timeline-events/${identifier(input.id)}`, 'PUT', input.data);
-		case 'deleteEvent':
-			return api(event, `/admin/timeline-events/${identifier(input.id)}`, 'DELETE', input.data);
 		case 'createUser':
 			return api(event, '/admin/users', 'POST', input.data);
 		case 'createPromotion':

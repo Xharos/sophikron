@@ -307,12 +307,8 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 				settings: {
 					name: 'Sophikron',
 					home_text: '',
-					text_color: '#244BC1',
-					holiday_color: '#ffd166'
-				},
-				timelines: [],
-				events: [],
-				today: '2026-09-07'
+					text_color: '#244BC1'
+				}
 			});
 		if (url.pathname === '/api/v1/auth/me')
 			return reply({

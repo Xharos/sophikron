@@ -100,6 +100,7 @@ export interface TimetableAgenda {
 }
 export interface TimetableCatalog {
 	administrator: boolean;
+	can_read_archives?: boolean;
 	today: string;
 	calendars: TimetableAgenda[];
 	promotions: { id: number; name: string }[];

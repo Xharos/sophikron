@@ -291,6 +291,7 @@ class LessonDocumentService:
             Immutable file facts captured before streaming; deletion does not erase history.
         """
         async with self.db.begin():
+            element = await self.db.get(LessonElement, file.element_id)
             await record_event(
                 self.db,
                 "lesson.file_downloaded",
@@ -298,6 +299,10 @@ class LessonDocumentService:
                 subject_user_id=actor.id,
                 resource_type="lesson",
                 resource_id=file.lesson_id,
-                data={"file_id": file.id, "size_bytes": file.size_bytes},
+                data={
+                    "file_id": file.id,
+                    "size_bytes": file.size_bytes,
+                    "document_title": element.title if element is not None else None,
+                },
                 occurred_at=self.lessons.auth.clock(),
             )

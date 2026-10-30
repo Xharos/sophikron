@@ -39,6 +39,7 @@ from app.schemas.administration import (
     InvitationState,
     MembershipBatch,
     PromotionArchiveImpact,
+    PromotionBadge,
     PromotionCreate,
     PromotionPage,
     PromotionResponse,
@@ -49,7 +50,13 @@ from app.schemas.administration import (
     TeamSubject,
     UserPage,
 )
-from app.services.activity import EVENTS, capture_roles, record_event, record_subject_changes
+from app.services.activity import (
+    EVENTS,
+    capture_roles,
+    event_family,
+    record_event,
+    record_subject_changes,
+)
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.search import rank_prepared_names
@@ -98,11 +105,19 @@ class AdministrationService:
                 422, "Seul un élève, un enseignant ou un khôlleur peut rejoindre une promotion."
             )
 
-    async def _promotion_profiles(self, promotions: list[Promotion]) -> list[PromotionResponse]:
+    async def _promotion_profiles(
+        self, promotions: list[Promotion], *, active_only: bool = False
+    ) -> list[PromotionResponse]:
         """Build response models with one grouped membership count query."""
-        counts = await self.repo.member_counts([item.id for item in promotions])
-        students = await self.repo.student_counts([item.id for item in promotions])
-        display_counts = await self.repo.display_counts([item.id for item in promotions])
+        counts = await self.repo.member_counts(
+            [item.id for item in promotions], active_only=active_only
+        )
+        students = await self.repo.student_counts(
+            [item.id for item in promotions], active_only=active_only
+        )
+        display_counts = await self.repo.display_counts(
+            [item.id for item in promotions], active_only=active_only
+        )
         return [
             PromotionResponse(
                 id=item.id,
@@ -119,11 +134,45 @@ class AdministrationService:
             for item in promotions
         ]
 
+    async def _account_promotions(self, ids: list[int]) -> dict[int, list[PromotionBadge]]:
+        """Batch-read promotion badges for an already authorized administrator result page.
+
+        Parameters
+        ----------
+        ids
+            Bounded account IDs selected by the administrator directory or search.
+
+        Returns
+        -------
+        dict[int, list[PromotionBadge]]
+            Current memberships, including archived promotions, without roster details.
+        """
+        badges: dict[int, list[PromotionBadge]] = {}
+        if not ids:
+            return badges
+        for user_id, promotion in await self.db.execute(
+            select(UserPromotion.user_id, Promotion)
+            .join(Promotion, Promotion.id == UserPromotion.promotion_id)
+            .where(UserPromotion.user_id.in_(ids))
+            .order_by(Promotion.year.desc(), Promotion.id)
+        ):
+            badges.setdefault(user_id, []).append(
+                PromotionBadge(
+                    id=promotion.id,
+                    identifier=promotion.identifier,
+                    year=promotion.year,
+                    color=promotion.color,
+                    is_active=promotion.is_active,
+                )
+            )
+        return badges
+
     async def _profiles(
         self, users: list[User], *, promotion_id: int | None = None
     ) -> list[DirectoryAccountResponse]:
         """Batch-load roles and permissions before decrypting only this response page."""
         ids = [user.id for user in users]
+        promotions = await self._account_promotions(ids)
         roles: dict[int, list[str]] = {}
         for user_id, code in await self.db.execute(
             select(UserRole.user_id, Role.code).join(Role).where(UserRole.user_id.in_(ids))
@@ -153,6 +202,7 @@ class AdministrationService:
             DirectoryAccountResponse(
                 **profile.model_dump(),
                 group_assignments=assignments.get(profile.id, []),
+                promotions=promotions.get(profile.id, []),
             )
             for profile in profiles
         ]
@@ -758,12 +808,21 @@ class AdministrationService:
         results = await self.match_search(rows, query, limit)
         async with self.db.begin():
             await self.auth._actor(actor, permission="users.read")
+            ids = [item.id for item in results]
+            promotions = await self._account_promotions(ids)
+            roles: dict[int, list[str]] = {}
+            for user_id, code in await self.db.execute(
+                select(UserRole.user_id, Role.code).join(Role).where(UserRole.user_id.in_(ids))
+            ):
+                roles.setdefault(user_id, []).append(code)
             assignments = await GroupsRepository(self.db).assignments(
                 [item.id for item in results],
                 promotion_ids={promotion_id} if promotion_id is not None else None,
             )
             for item in results:
                 item.group_assignments = assignments.get(item.id, [])
+                item.roles = sorted(roles.get(item.id, []))
+                item.promotions = promotions.get(item.id, [])
         return results
 
     async def match_search(self, rows: Sequence[Row], query: str, limit: int) -> list[SearchResult]:
@@ -831,6 +890,7 @@ class AdministrationService:
                 EventTypeResponse(
                     code=code,
                     label=item.label if item.label != "Événement" else code,
+                    family=event_family(code),
                     icon=item.icon,
                     message=item.message,
                 )
@@ -851,6 +911,8 @@ class AdministrationService:
         since: datetime | None,
         until: datetime | None,
         order: str = "desc",
+        family: str | None = None,
+        user_id: int | None = None,
     ) -> EventPage:
         """Return one chronological cursor page with historical roles and grouped identities."""
         if order not in {"asc", "desc"}:
@@ -860,6 +922,8 @@ class AdministrationService:
         context = json.dumps(
             [
                 order,
+                family,
+                user_id,
                 event_type,
                 actor_user_id,
                 subject_user_id,
@@ -873,6 +937,19 @@ class AdministrationService:
         async with self.db.begin():
             await self.auth._actor(actor, permission="events.read")
             statement = select(ActivityEvent)
+            if family is not None:
+                statement = statement.where(
+                    ActivityEvent.event_type.in_(
+                        [code for code in EVENTS if event_family(code) == family]
+                    )
+                )
+            if user_id is not None:
+                statement = statement.where(
+                    or_(
+                        ActivityEvent.actor_user_id == user_id,
+                        ActivityEvent.subject_user_id == user_id,
+                    )
+                )
             for column, value in (
                 (ActivityEvent.event_type, event_type),
                 (ActivityEvent.actor_user_id, actor_user_id),

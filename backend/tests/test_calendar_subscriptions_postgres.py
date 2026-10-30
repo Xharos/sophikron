@@ -67,10 +67,12 @@ async def test_active_feed_minute_budget(auth_case: Harness) -> None:
         row.expires_at = datetime.now(UTC) - timedelta(seconds=1)
     assert (await case.client.get(path)).status_code == 200
     case.as_admin()
-    assert (await case.client.post(
-        f"/api/v1/timetable/subscriptions/users/{case.administrator}",
-        json={"action": "regenerate"},
-    )).status_code == 200
+    assert (
+        await case.client.post(
+            f"/api/v1/timetable/subscriptions/users/{case.administrator}",
+            json={"action": "regenerate"},
+        )
+    ).status_code == 200
     replacement = (await personal(case))["token"]
     assert (await case.client.get(f"/api/v1/timetable/feed/{replacement}.ics")).status_code == 200
     for _ in range(limit + 1):
@@ -162,6 +164,13 @@ async def test_revocation_persists_until_admin_replaces_token(workspace: Workspa
     assert (await case.client.get("/api/v1/admin/statistics?period=day")).json()[
         "calendar_recent_users"
     ] == 1
+    journal = await case.client.get("/api/v1/admin/events", params={"user_id": w.pupil_id})
+    assert journal.status_code == 200
+    entries = journal.json()["items"]
+    for code in ("user.calendar_revoke", "user.calendar_regenerate"):
+        entry = next(item for item in entries if item["event_type"] == code)
+        assert entry["subject_user_id"] == w.pupil_id and entry["data"] == {}
+    assert original not in journal.text and replacement not in journal.text
 
 
 @pytest.mark.asyncio

@@ -8,16 +8,12 @@ from app.dependencies.auth import AdminUser, AuthenticatedUser, AuthServiceDepen
 from app.schemas.lessons import Versioned
 from app.schemas.site import (
     CourseImpact,
-    EventFields,
-    EventUpdate,
     PublicSite,
     SettingsResponse,
     SettingsUpdate,
     SubjectFields,
     SubjectResponse,
     SubjectUpdate,
-    TimelineFields,
-    TimelineUpdate,
 )
 from app.services.course_rights import course_impact
 from app.services.site import SiteService
@@ -105,49 +101,3 @@ async def settings_save(
 ) -> SettingsResponse:
     """Apply live public presentation settings."""
     return await service.settings_save(actor, data)
-
-
-@router.post("/admin/timelines", status_code=201)
-async def timeline_create(data: TimelineFields, actor: AdminUser, service: Service) -> object:
-    """Create an annual timeline."""
-    return await service.calendar_save(actor, data, event=False)
-
-
-@router.put("/admin/timelines/{identifier}")
-async def timeline_update(
-    identifier: Identifier, data: TimelineUpdate, actor: AdminUser, service: Service
-) -> object:
-    """Update a timeline's dates and identity."""
-    return await service.calendar_save(actor, data, event=False, identifier=identifier)
-
-
-@router.delete("/admin/timelines/{identifier}", status_code=204)
-async def timeline_delete(
-    identifier: Identifier, data: Versioned, actor: AdminUser, service: Service
-) -> Response:
-    """Delete a bar while retaining events shared with surviving bars."""
-    await service.calendar_delete(actor, identifier, data.expected_version, event=False)
-    return Response(status_code=204)
-
-
-@router.post("/admin/timeline-events", status_code=201)
-async def event_create(data: EventFields, actor: AdminUser, service: Service) -> object:
-    """Create an event shared by the selected bars."""
-    return await service.calendar_save(actor, data, event=True)
-
-
-@router.put("/admin/timeline-events/{identifier}")
-async def event_update(
-    identifier: Identifier, data: EventUpdate, actor: AdminUser, service: Service
-) -> object:
-    """Update an event and all its bar associations atomically."""
-    return await service.calendar_save(actor, data, event=True, identifier=identifier)
-
-
-@router.delete("/admin/timeline-events/{identifier}", status_code=204)
-async def event_delete(
-    identifier: Identifier, data: Versioned, actor: AdminUser, service: Service
-) -> Response:
-    """Delete one event from every associated timeline."""
-    await service.calendar_delete(actor, identifier, data.expected_version, event=True)
-    return Response(status_code=204)

@@ -5,6 +5,7 @@ from datetime import date
 import anyio
 
 from app.models import Promotion
+from app.services.activity import record_event
 from app.services.auth import UserContext
 from app.services.timetable import TimetableService
 from app.services.timetable_pdf import render_timetable_pdf, select_view
@@ -40,6 +41,21 @@ class TimetableExportService(TimetableService):
             title = f"{promotion.identifier} {promotion.year}" if promotion else calendar.name
             if suffix:
                 title += f" - {suffix}"
-        return await anyio.to_thread.run_sync(
+        result = await anyio.to_thread.run_sync(
             render_timetable_pdf, title, year["settings"], events, day
         )
+        async with self.db.begin():
+            await record_event(
+                self.db,
+                "timetable.exported",
+                actor.id,
+                resource_type="timetable",
+                resource_id=identifier,
+                data={
+                    "calendar_name": calendar.name,
+                    "title": title,
+                    "occurrence": day,
+                    "school_year": year["school_year"],
+                },
+            )
+        return result

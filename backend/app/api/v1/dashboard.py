@@ -46,6 +46,18 @@ EventReader = Annotated[UserContext, Depends(RequirePermission("events.read"))]
 StatisticReader = Annotated[UserContext, Depends(RequirePermission("statistics.read"))]
 
 
+@router.get("/versions")
+async def versions(
+    actor: Annotated[UserContext, Depends(RequirePermission("users.manage"))],
+    auth: AuthServiceDependency,
+) -> dict:
+    """Read installed versions and refresh the shared daily release cache for admins only."""
+    from app.services.releases import release_status
+
+    async with auth.db.begin():
+        return await release_status(auth.db, auth.clock())
+
+
 @router.get("/summary", response_model=DashboardSummary)
 async def summary(actor: StatisticReader, service: Service) -> DashboardSummary:
     """Read global statistics only with the explicit administrator capability."""
@@ -238,6 +250,8 @@ async def events(
     limit: Limit = 50,
     cursor: Annotated[str | None, Query(max_length=128)] = None,
     event_type: Annotated[str | None, Query(max_length=96)] = None,
+    family: Literal["accounts", "promotions", "lessons", "administration"] | None = None,
+    user_id: PositiveId | None = None,
     actor_user_id: PositiveId | None = None,
     subject_user_id: PositiveId | None = None,
     resource_type: Annotated[str | None, Query(max_length=64)] = None,
@@ -252,6 +266,8 @@ async def events(
         cursor=cursor,
         limit=limit,
         event_type=event_type,
+        family=family,
+        user_id=user_id,
         actor_user_id=actor_user_id,
         subject_user_id=subject_user_id,
         resource_type=resource_type,

@@ -3,14 +3,13 @@
 	import { resolve } from '$app/paths';
 	import { activePromotions, command, formatDate, read, statusLabels } from '#lib/dashboard';
 	import { canJoinPromotion } from '#lib/roles';
-	import type { AccessInvitation, AdminAccount, DirectoryUser, Page, Promotion } from '#lib/types';
+	import type { AdminAccount, DirectoryUser, Page, Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
 	import RoleBadges from '../RoleBadges.svelte';
 	import PromotionTag from '../PromotionTag.svelte';
 	import GroupTags from '../GroupTags.svelte';
-	import InvitationResult from '../InvitationResult.svelte';
-	import type { CourseImpact } from '#lib/site';
+	import AccountAccess from './AccountAccess.svelte';
 	let {
 		userId,
 		administrator,
@@ -31,21 +30,6 @@
 	let busy = $state(false);
 	let loading = $state(true);
 	let message = $state('');
-	let invitation = $state<AccessInvitation | null>(null);
-	let confirmation = $state<'archive' | 'invite' | null>(null);
-	let impacts = $state<CourseImpact[]>([]);
-	async function prepareArchive(): Promise<void> {
-		busy = true;
-		message = '';
-		try {
-			impacts = await read<CourseImpact[]>('courseImpact', { id: userId });
-			confirmation = 'archive';
-		} catch (cause) {
-			message = (cause as Error).message;
-		} finally {
-			busy = false;
-		}
-	}
 	const details = $derived(administrator && account ? (account as AdminAccount) : null);
 	const available = $derived(
 		choices.filter((item) => !memberships.some((member) => member.id === item.id))
@@ -86,27 +70,6 @@
 			selected = 0;
 			await load();
 			onchanged();
-		} catch (cause) {
-			message = (cause as Error).message;
-		} finally {
-			busy = false;
-		}
-	}
-	async function perform(): Promise<void> {
-		if (!account || !confirmation) return;
-		busy = true;
-		message = '';
-		try {
-			if (confirmation === 'archive') {
-				await command('archiveAccount', {
-					id: userId,
-					data: { archived: account.status !== 'disabled', acknowledge_course_impact: true }
-				});
-				invitation = null;
-				onchanged();
-			} else invitation = await command<AccessInvitation>('invitation', { id: userId });
-			confirmation = null;
-			await load();
 		} catch (cause) {
 			message = (cause as Error).message;
 		} finally {
@@ -208,72 +171,15 @@
 					>
 				</div>{/if}
 		</section>
-		{#if administrator}<section class="profile-section">
-				<h3 class="title is-5">Accès au compte</h3>
-				<div class="profile-buttons">
-					<button
-						class="button is-light"
-						disabled={busy || account.status === 'disabled'}
-						onclick={() => (confirmation = 'invite')}
-						><Icon name="email" />{account.status === 'pending_activation'
-							? 'Nouvelle invitation'
-							: 'Réinitialiser le mot de passe'}</button
-					>
-					<button
-						class="button"
-						class:is-danger={account.status !== 'disabled'}
-						class:is-light={account.status !== 'disabled'}
-						disabled={busy || currentUserId === userId}
-						onclick={prepareArchive}
-						><Icon
-							name={account.status === 'disabled' ? 'restore' : 'archive'}
-						/>{account.status === 'disabled' ? 'Réactiver le compte' : 'Archiver le compte'}</button
-					>
-				</div>
-				{#if currentUserId === userId}<p class="help mt-2">
-						Votre propre compte ne peut pas être archivé.
-					</p>{/if}
-				{#if confirmation}<div
-						class="confirmation-panel mt-4"
-						role="group"
-						aria-label="Confirmation de l’action"
-					>
-						<p>
-							{confirmation === 'invite'
-								? 'Une nouvelle invitation sera envoyée par email si configuré, sinon un lien sera affiché. Les anciens liens ne fonctionneront plus.'
-								: account.status === 'disabled'
-									? 'Ce compte pourra à nouveau être utilisé. Les anciens liens et sessions resteront invalides.'
-									: 'Ce compte ne pourra plus se connecter et ses sessions seront fermées. Ses informations seront conservées.'}
-						</p>
-						<div class="buttons mt-3">
-							{#if confirmation === 'archive' && account.status !== 'disabled' && impacts.length}<div
-									class="notification is-warning is-light"
-									role="alert"
-								>
-									<p>
-										<strong>Ce compte est associé à {impacts.length} cours.</strong> L’archivage supprimera
-										ses matières affectées et ses collaborations, et révoquera tous ses accès.
-									</p>
-									<ul>
-										{#each impacts as course (course.id)}<li>{course.title}</li>{/each}
-									</ul>
-									<p>
-										Réaffectez si nécessaire le responsable depuis les pages de cours. La
-										réactivation ne rétablira pas automatiquement ces affectations.
-									</p>
-								</div>{/if}
-							<button
-								class="button is-primary"
-								class:is-loading={busy}
-								disabled={busy}
-								onclick={perform}>Confirmer</button
-							><button class="button is-light" disabled={busy} onclick={() => (confirmation = null)}
-								>Annuler</button
-							>
-						</div>
-					</div>{/if}
-				{#if invitation}<InvitationResult {invitation} />{/if}
-			</section>{:else}<section class="profile-section">
+		{#if administrator}<AccountAccess
+				{userId}
+				status={account.status}
+				{currentUserId}
+				onchanged={async () => {
+					await load();
+					onchanged();
+				}}
+			/>{:else}<section class="profile-section">
 				<h3 class="title is-5">Activité pédagogique</h3>
 				<p class="muted">Aucune activité pédagogique disponible pour le moment.</p>
 			</section>{/if}

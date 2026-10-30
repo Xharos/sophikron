@@ -81,7 +81,7 @@ all memberships, including archived promotions, atomically with the profile upda
 not restore memberships. A failed or stale profile update preserves both roles and memberships. Teacher access
 to students follows current role and promotion membership checks, including after a role change.
 Changes reuse `user_roles`, `profile_version` and the activity journal. The fresh database baseline
-includes the updated deferred role constraint; see [site administration](site-administration.md).
+includes the updated deferred role constraint; see [site administration](administration.md).
 
 The profile editor exposes colored role checkboxes only to administrators and requests confirmation on save
 with the account name and old/new grants. Cancel preserves the draft without sending a mutation.
@@ -106,7 +106,7 @@ grants. The application role cannot edit the role/permission catalogues; changes
 migrations. API dependencies and service transactions verify capabilities from current database grants.
 
 Subject assignments, course-impact confirmations and account-archive revocation are documented in
-[site administration](site-administration.md). These extend profile updates and account archival.
+[site administration](administration.md). These extend profile updates and account archival.
 
 ## Promotions and memberships
 
@@ -286,9 +286,8 @@ requests. Upstream failures return a sanitized 503 and preserve the existing loc
 unfinished search to save other edits; unchanged location fields require no upstream validation.
 The API's access-log filter strips commune query text; host proxies must also redact BFF queries.
 
-Existing 0001 is amended with explicit owner authorization for a fresh disposable installation;
-no new migration is introduced. Rebuild/recreate the authorized test database before using this
-rewritten schema against a previously stamped database. Development data is never reset by code.
+Profile fields are defined in `0001_authentication`. For existing database compatibility, see
+the [migration inventory](database.md#migrations). Application code never resets development data.
 
 ## Promotion group partitions
 
@@ -438,7 +437,11 @@ also applies this revision. No new dependency or external service is required.
 `GET /api/v1/admin/users/search?q=valentin%20burgo&limit=20` requires `users.read`.
 Queries contain 2–100 characters; limit is 1–20. Optional `role`, `status`, `promotion_id` filters
 restrict candidates before decryption. Results contain `id`, `username`, `first_name`, `last_name`,
-`status`, without email. The bootstrap is excluded.
+`status`, without email. Administrator results also include current `roles` and `promotions`
+badges (identifier, year, color and archive status), loaded in batches only for the returned accounts.
+Teaching search keeps its existing scope and does not load these administrator membership badges.
+The bootstrap is excluded. Journal and promotion pickers share the same compact account display;
+clearing the journal selection restores all active and archived members without a separate option.
 
 Search ignores case, accents, French ligatures and separators; accepts either name order, partial
 names and approximate spelling. Exact and prefix matches precede approximate matches. Two/three-letter
@@ -500,7 +503,9 @@ batch-loaded and reused only inside the business transaction. Changing roles inv
 participant's cached snapshot for subsequent events. Bulk membership changes preload all participants.
 
 `GET /admin/events` requires `events.read`. It accepts `limit`, `cursor`, `event_type`, `actor_user_id`,
-`subject_user_id`, `resource_type`, `resource_id`, `since`, `until`, and `order=desc|asc` (default `desc`).
+`subject_user_id`, `user_id` (author OR target, without duplicates), `family`, `resource_type`,
+`resource_id`, `since`, `until`, and `order=desc|asc` (default `desc`). Families are `accounts`,
+`promotions`, `lessons`, and `administration`; they can be combined with an exact event type.
 Dates require explicit timezones; the period is inclusive. Occurrence time and ID break ties. SQL
 selects at most `limit + 1` journal rows and returns at most `limit`, with an opaque `next_cursor`.
 Cursors bind their position to the order and filters; malformed or mismatched cursors return 422.
@@ -509,13 +514,16 @@ OFFSET queries. Participant names for the returned page use one grouped read. Ro
 display metadata require no related lookups.
 
 `GET /admin/events/types` requires current `events.read` permission and exposes the live `EVENTS`
-catalogue with `code`, French `label`, icon key and safe message template. It never scans journal rows:
+catalogue with `code`, `family`, French `label`, icon key and safe message template. It never scans journal rows:
 new types appear before their first occurrence. Only `{actor}`, `{subject}`, `{promotion}`, `{roles}`
 placeholders are accepted. The frontend renders escaped text and Svelte components, never HTML or
 executable templates. Unknown icons fall back to the clock icon.
 
-The frontend shows 15 events per page, a type filter (default all) and newest/oldest ordering.
-Changing the filter/order resets to page 1. Previous/next buttons display the visited page number;
+The frontend shows 5 events initially, with a 5/15/50 page-size selector, a folded family/action menu,
+and two newest/oldest buttons. A single-account picker searches all roles and includes archived
+and active accounts by default; clearing it restores all members. The administrator account page
+reuses the same rows for its five latest events as author or target, with no filters or pagination.
+Changing a filter, order or page size resets to page 1. Previous/next buttons display the visited page number;
 next is disabled when `next_cursor` is null. Changed selections cancel requests and ignore stale
 responses. Member tags link to existing profiles; promotion tags link to
 `/dashboard?tab=promotions&promotion=<id>&edit=1`. That destination rechecks administrator access,
@@ -523,6 +531,17 @@ loads the current promotion and opens its existing configuration. Full role comb
 transitions, including when the highest role is unchanged. Archived resources retain their existing
 access policies. There are no event mutation endpoints. Runtime grants allow SELECT/INSERT only.
 This is an append-only application journal, not a tamper-proof record against database administrators.
+
+New downloads retain the document's display title in the course, never its original filename or
+storage path. Historical entries lacking a title remain readable without invented details.
+Scheduling events distinguish calendar creation/configuration, session creation/edit/cancellation,
+archival/restoration, rooms, school years, automatic archival policy and PDF generation. Details
+include calendar/session labels, school year, occurrence date and scope where applicable.
+Custom group operations retain their name and member count. Availability updates identify the
+target teacher and retain annual range counts and khôlle hour bounds. Calendar subscription
+revocation/regeneration records the target account without any token. Roster PDF generation
+records the promotion, document variant and pupil count, without PDF contents or pupil lists.
+PDF events describe successful generation; document download events describe completed transfers.
 
 To add, for example, `test.completed`, declare its metadata schema, label, icon and message in
 `app/services/activity.py`, then `await record_event(...)` from the service's transaction after
@@ -538,7 +557,7 @@ retention purge; define retention before production and use a privileged mainten
 ## Migrations and verification
 
 See [database migrations](database.md#migrations) for the complete feature history and compatibility
-rules, and [release verification](CONTRIBUTING.md#verification-before-a-release) for shared commands.
+rules, and [release verification](../CONTRIBUTING.md#verification-before-a-release) for shared commands.
 The PostgreSQL integration tests verify
 atomic mutations, privileges, role incompatibility, membership concurrency, archive preservation,
 encryption, event pagination, search and existing authentication races.
@@ -547,4 +566,147 @@ Subject-assignment, subject-catalogue, site-setting and calendar events now incl
 metadata. Assignment deltas include historical public subject tags and automatic removal causes;
 calendar operations retain entry type, name and dates, including after deletion. Site changes expose
 field names rather than copies of homepage text. Version-1 entries remain readable without invented
-details. See [site administration](site-administration.md#detailed-journal-entries).
+details. See [site administration](administration.md#detailed-journal-entries).
+
+## Subjects, public configuration and course responsibility
+Administrators manage subjects at `/dashboard?tab=subjects` and the public name, welcome text and
+text color at `/dashboard?tab=configuration`. `ESTABLISHMENT_NAME` is removed: presentation is
+stored in PostgreSQL and read without worker-local caches. Changes apply on the next page load,
+without a restart. An unavailable API leaves the default name and no configured homepage content.
+
+Dashboard tabs use SvelteKit navigation so saving or revalidating configuration preserves the current
+tab. Configuration is available through the administrator sidebar and its direct URL. The overview
+groups promotions and subjects in one catalogue panel beside account statistics.
+Subject cards, live search, state filters, detail view, archive confirmation and the editor follow the
+promotion workspace. Both editors share the same color picker. Teacher subject assignments use
+accessible colored multi-select tags. Account creation and profile editing use the same role tags,
+with one option per role and no predefined combinations. An invalid draft is rejected on save: at
+least one role is required, and student cannot coexist with any other role.
+
+### Subjects and responsibility
+
+A subject has a unique normalized name, an allowed icon, a hexadecimal color and `is_active`.
+The subject editor offers visual icon cards and a live name/icon/color preview. The icon catalogue
+covers sciences, economics and humanities, including physics, biology, engineering, economics,
+philosophy and ancient languages. Course creation uses colored subject cards with icons and labels.
+Both selectors use native radio buttons for keyboard navigation and single-choice validation.
+All courses reference their subject and read its current identity; changing the subject updates
+existing course cards and text colors. Subject deletion is archival. It returns 409 while any course
+references the subject. Archiving an unused subject removes every teacher/khôlleur assignment atomically and
+advances affected profile revisions. Archived subjects remain searchable but cannot be assigned.
+
+Administrators assign active subjects from a teacher's or khôlleur's profile. Creating a course requires the
+current teacher permission and an assigned active subject. A teacher needs that same assignment
+to manage a course as its responsible teacher or collaborator. Administrators retain their explicit
+management override, but an administrator without teacher permission cannot create courses.
+
+Original `creator_id` is immutable. `responsible_id` identifies the current principal teacher.
+Only administrators can change responsibility and the course subject, together in one transaction.
+The replacement must be an active teacher assigned to the selected active subject. The former
+responsible teacher receives no automatic collaboration grant. When the subject changes, teacher
+collaborations lacking the new subject are removed; khôlleur collaborations remain read-only.
+
+### Revoking rights
+
+Before removing a teacher/khôlleur role, removing an assigned subject, or archiving an account,
+the UI lists affected retained course responsibilities/collaborations. The API independently
+requires `acknowledge_course_impact=true` when courses are affected, rechecked inside the existing
+account lifecycle transaction lock. This acknowledgement is a confirmation, never an access grant.
+
+- Removing a subject deletes that assignment and removes collaboration unless a retained khôlleur
+  role still grants read-only collaboration.
+- Losing teacher removes management; if khôlleur is retained, subject assignments and explicit
+  read-only collaborations remain. Losing both staff roles clears all subject assignments. Removing
+  khôlleur preserves teaching assignments and eligible teaching collaborations.
+- Losing both teaching and khôlleur eligibility removes the collaboration. Adding a role never
+  creates a collaboration or restores a removed subject assignment.
+- Losing all pupil/teacher/khôlleur roles also removes all promotion memberships, including archived
+  promotions, within the same transaction. Each removal is journaled; restoring a role does not
+  restore memberships. Administrator alone is not eligible for promotion assignment.
+- Archiving an account also removes all assignments/collaborations and revokes sessions/invitations.
+- Reactivation and role restoration do not restore deleted associations. Administrators must grant
+  assignments/collaborations again. Retained responsibility alone never grants management rights.
+- Course content, original authorship and responsible-account references remain intact for recovery.
+- Affected course revisions advance; stale writes return 409 and revoked callers are denied first.
+
+### Khôlleur
+
+Student (`user`) is exclusive. Every nonempty subset of `kholleur`, `teacher` and `admin` is valid.
+The API and the deferred PostgreSQL role constraint enforce student exclusivity at transaction end.
+Permissions are the union of the retained roles and are reevaluated in existing sessions.
+The display/audit hierarchy is admin > teacher > kholleur > user. Permissions never inherit from
+this order. The new role has only `kholleur.access`.
+
+A khôlleur without additional teacher/administrator grants sees catalogue cards and can open a collaborated course independently of student
+promotion access periods. They see all its text/videos, including scheduled/expired content, in
+reading mode. They cannot create or edit courses, alter elements or dates, manage collaborators or
+promotion access, consult student directories/private profiles, or access administration/statistics.
+Their own profile and standard account/password operations remain available. The current responsible
+teacher and administrators may add/remove an active khôlleur. Removal denies privileged reading on
+the next request, including existing sessions. Ordinary promotion-based reading still follows its
+normal dates and content filtering.
+
+Administrators may assign subjects to khôlleurs through the profile editor to organize the teaching
+team. These assignments grant no course access. Removing one does not remove explicit read-only
+collaboration; removing the khôlleur role or archiving the account still revokes the relevant rights.
+Promotion archival may optionally disable pupil accounts only, with independent tracked causes and
+selective restoration; see [promotion administration](administration.md).
+
+### Public homepage
+
+`GET /api/v1/site` publishes only the site name, welcome text, text color and editing version.
+The public annual timelines, holiday color and shared events have been removed. Holidays defined
+inside individual timetables remain supported. Text is escaped and formatted without raw HTML.
+
+### Fresh database and validation
+
+The public configuration revision contains no holiday colors; subject ownership and assignments belong
+to the subject catalogue revision. The complete history and compatibility rules are maintained in
+[database migrations](database.md#migrations). Use the existing migration service before startup.
+See [release verification](../CONTRIBUTING.md#verification-before-a-release) for the shared checks.
+
+### Detailed journal entries
+
+New subject-assignment events record added/removed subject IDs, names, icons and colors as historical
+snapshots. The UI renders explicit “Matières attribuées” and “Matières retirées” tags. Automatic
+removals identify their cause: teacher-role removal, account archival or subject archival. Renaming
+or archiving a subject does not change the recorded labels. Large deltas are split into bounded
+rows in the same transaction to respect the existing 4096-byte JSONB limit.
+
+Subject saves distinguish creation/update and preserve before/after public identity; archival records
+the removed-assignment count. Site changes list
+changed setting names and, for a rename, the old/new public name; homepage text is never copied into
+audit payloads. Saving unchanged site settings creates no extra revision or journal entry.
+
+These payloads use schema version 2. Existing version-1 rows remain untouched and readable with their
+original generic message; missing historical facts are never inferred from current assignments.
+
+## Application versions and updates
+
+The administrator dashboard shows installed frontend/backend versions and build revisions alongside
+promotion and subject statistics. Both components use version `0.1.0`: keep backend
+`pyproject.toml`, frontend `package.json` and its lockfile aligned for stable releases.
+Publish stable GitHub releases with tags such as `v0.1.1` on `Xharos/sophikron`.
+
+Use [build.ps1](../build.ps1) to detect and embed the checked-out Git revision automatically.
+The script adds `-dirty` for uncommitted changes; the dashboard labels those revisions as experimental.
+See [build instructions](database.md#building-images-with-revision-metadata).
+Both builds embed this value; an omitted revision is explicitly shown as unknown. For local
+frontend development the variable is read when Vite starts. The backend reads its installed package
+version and the revision file embedded in its image. Runtime variables do not relabel built code.
+
+`GET /api/v1/admin/versions` requires `users.manage`. At dashboard access, the backend checks
+GitHub's latest stable release at most once per rolling 24 hours, including failed attempts.
+Migration `0002_configuration` creates one shared PostgreSQL cache row; an advisory lock prevents
+concurrent calls across workers. There is no scheduled request when the dashboard is unused.
+The fixed public GitHub API lookup sends no user data or credentials and requires outbound HTTPS.
+Errors retain the last successful release and show an unavailable status. No release is a valid
+empty result. Only stable `major.minor.patch` tags, optionally prefixed with `v`, are supported.
+A newer release displays a migration notice and release link; installation remains manual.
+Revision badges are green for matching stable versions, red with an update warning for older
+versions, and orange with “expérimental” for newer or locally modified builds. Required updates
+take precedence over local modifications. Comparison uses version numbers, not Git ancestry.
+Without a known release, unmodified builds remain neutral. Version and revision identifiers link
+to the confirmed latest release when their version matches it; other builds remain unlinked.
+Downgrading below configuration removes this cache, public settings and API monitoring.
+

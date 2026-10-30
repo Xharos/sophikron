@@ -2,8 +2,6 @@
 
 **An open-source platform for educational resources and interactive learning.**
 
-Share teaching materials, publish educational pages and create interactive content.
-
 <p align="center">
   <img src="https://github.com/Xharos/sophikron/actions/workflows/ci.yml/badge.svg" alt="CI" />
   <img src="https://img.shields.io/badge/SvelteKit-FF3E00?logo=svelte&logoColor=white" alt="SvelteKit" />
@@ -18,11 +16,11 @@ Share teaching materials, publish educational pages and create interactive conte
 
 ## Features
 
-- 📚 Share educational resources, including PDFs.
-- 🧩 Create interactive educational pages.
-- 🌐 Publish public or private content.
-- 🤝 Reuse and share resources with other teachers.
-- Generate colored A4 attendance PDFs from promotion rosters, with archived pupils retained.
+- Create structured courses with documents, teacher collaboration and scheduled student access.
+- Manage student and staff accounts, roles and promotions.
+- Organize student groups and export attendance sheets.
+- Plan timetables and oral examinations, with personal calendar subscriptions.
+- Monitor account activity and educational resource usage.
 
 ## Technology stack
 
@@ -40,87 +38,71 @@ Share teaching materials, publish educational pages and create interactive conte
 
 ## Getting started
 
-See [database documentation](docs/database.md) and [authentication documentation](docs/authentication.md) for detailed configuration and administration.
+After cloning the repository, run commands from its root. Install Docker with Linux containers
+and Compose v2. The revision-aware build also requires Git and Windows PowerShell 5.1+ (or
+PowerShell 7 on Linux). No host Python or Node installation is needed to run the Docker stack.
 
-## Local setup
+1. **Create the local configuration**, only for a new installation. Preserve any existing `.env`.
 
-Administrators configure the public site name, welcome text and annual timelines in
-`/dashboard?tab=configuration`. Settings are stored in PostgreSQL and take effect without a restart.
-See [site administration](docs/site-administration.md) for subject and course access rules.
+   Windows PowerShell:
 
-1. Create a `.env` file at the project root. Docker Compose automatically loads it for variable substitution. Configure the database, authentication settings, ports, and `SOPHIKRON_SECRETS_DIRECTORY` (see [.env.example](.env.example)).
+   ```powershell
+   Copy-Item .env.example .env
+   ```
 
-2. Create the directory specified by `SOPHIKRON_SECRETS_DIRECTORY` and add the following files:
+   Linux shell:
 
-    - `bootstrap_password`
-    - `db_admin_password`
-    - `db_app_password`
-    - `db_migration_password`
-    - `smtp_password` (may be empty when SMTP is disabled)
-    - `identity_keys.json` (generated below)
+   ```sh
+   cp -n .env.example .env
+   ```
 
-        Generate the identity keys from the `backend/` directory:
+2. **Edit `.env`**: set `SOPHIKRON_SECRETS_DIRECTORY` to an absolute private directory outside
+   the repository. Leave `SOPHIKRON_ORIGIN=` empty for localhost, keep the default ports unless
+   they are occupied, and leave SMTP disabled. See the [configuration variable reference](docs/environment.md)
+   for every setting, expected values, secret files and how changes take effect.
+3. **Create all six secret files** using the [Windows](docs/database.md#windows-powershell) or
+   [Linux](docs/database.md#linux-shell) instructions, then [generate the identity keyring](docs/database.md#generate-the-identity-keyring).
+   These instructions generate independent passwords and an empty SMTP password file; secrets
+   never belong in `.env`. Keep the files for subsequent starts.
+4. **Validate the configuration and start locally**:
 
-        ```bash
-        python -m app.cli generate-keys --output "/path/to/secrets/identity_keys.json"
-        ```
+   ```powershell
+   docker compose -f compose.yaml -f compose.local.yaml config --quiet
+   ./build.ps1 -Local -Start
+   ```
 
-3. Build and start the local infrastructure:
+   On Linux with PowerShell: `pwsh -File build.ps1 -Local -Start`.
+   Without PowerShell, use the existing Compose files directly:
 
-    ```bash
-    docker compose -f compose.yaml -f compose.local.yaml up -d --build
-    ```
+   ```sh
+   docker compose -f compose.yaml -f compose.local.yaml up -d --build --wait
+   ```
 
-Access the [frontend](http://localhost:3000), [Swagger UI](http://localhost:8000/docs), and [ReDoc](http://localhost:8000/redoc) (using the configured ports).
+   Direct Compose builds show an unknown source revision. The application version still appears.
+   Omit `-Start` from the script to build only. See [build options](docs/database.md#building-images-with-revision-metadata).
 
-### Stopping the infrastructure
+Open [the application](http://localhost:3000/login), sign in with `setup_operator` and the bootstrap
+password, then complete `/setup` to create the permanent administrator. API docs are available at
+[localhost:8000/docs](http://localhost:8000/docs). The directory name is arbitrary; keep the same
+Compose project name and secrets between starts to reuse your data.
 
-Stop containers while **preserving PostgreSQL data**:
+Stop with `docker compose -f compose.yaml -f compose.local.yaml down`; volumes are preserved.
+For manual trials, [generate synthetic demo data](script/README.md) after completing setup.
+For automated tests, follow the [development prerequisites](backend/README.md) and the
+[release verification commands](CONTRIBUTING.md#verification-before-a-release):
 
-```bash
-docker compose -f compose.yaml -f compose.local.yaml down
+```sh
+cd backend
+python run_tests.py
 ```
 
-Stop containers and **delete Docker volumes, including PostgreSQL data**:
+This runner creates its own secrets, random ports and disposable database; it preserves the local
+installation. Frontend checks and optional browser journeys are described in the contribution guide.
 
-```bash
-docker compose -f compose.yaml -f compose.local.yaml down -v
-```
-
-**Warning:** `down -v` permanently deletes data stored in Compose-managed volumes. Existing volumes are never automatically reset during startup.
-
-## Getting started
-
-See [PostgreSQL setup and development](docs/database.md) for Docker Compose startup, runtime secrets,
-database roles, migrations and isolated integration tests. Existing PostgreSQL volumes are never
-automatically reset or reprovisioned.
-
-See [backend authentication](docs/authentication.md) for identity encryption keys, initial
-administrator setup, invitations, cookie sessions and the versioned API. Generate the identity
-keyring before starting the backend. See [backend administration](docs/administration.md) for
-generated usernames, promotions, interactive name/username search, scoped teacher access and activity
-events. The [responsive frontend dashboard](docs/frontend-bff.md) provides account/promotion management,
-archiving, invitations and administrator statistics at `/dashboard`.
-The [statistics dashboard](docs/statistics.md) adds interactive login/download charts, document
-storage and scoped author/course analytics. For an existing local schema at 0005, its additive
-upgrade command installs the new counters without resetting application data.
-Complete school profiles add encrypted birth/contact/location information, baccalaureate subjects
-and marks, orientation and an adult reference contact. Administrators edit profile fields; teachers
-can update only the orientation project of students in their assigned promotions.
-
-Use the single `compose.yaml` with a private `.env` for configuration. Local development, initial
-administrator setup and isolated PostgreSQL verification use the same services.
-After configuring secrets, `docker compose up -d --build` runs migrations and starts the application.
-Complete the first administrator through `/api/v1/auth/setup`; SMTP is not required for this step.
-
-Interactive courses support named private documents, inherited availability, staff-only sections,
-YouTube players and tables with free column titles and optional cells. Documents persist in the
-`documents_data` volume. Trusted course editors upload files without antivirus scanning; size,
-format, quota and access checks remain enforced. See the
-[document operations guide](docs/lesson-documents.md) for quotas, deletion, backups and verification.
-See the [security audit](docs/security-audit.md) for verified controls and remaining risks.
-The seven feature migrations form a fresh release baseline. Databases using the earlier amended
-history require a separate transition; see [migration compatibility](docs/database.md#migrations).
+See [setup, secrets and migrations](docs/database.md), [authentication and recovery](docs/authentication.md),
+[release checks](CONTRIBUTING.md#verification-before-a-release), and the [documentation index](docs/README.md).
+Production uses only `compose.yaml` and additionally needs [HTTPS proxy configuration](docs/frontend-bff.md#production-topology),
+a public origin and backups. Do not use the local overlay in production.
 
 ## Contributing
 
@@ -128,7 +110,7 @@ Local test datasets can be generated with `script/seed_demo_data.py`; its centra
 controls cohort sizes, staff, groups and annual timetables. See the [demo data guide](script/README.md)
 for dry runs and separate test scenarios.
 
-Contributions are welcome. Please read the [contribution guidelines](docs/CONTRIBUTING.md) before submitting a pull
+Contributions are welcome. Please read the [contribution guidelines](CONTRIBUTING.md) before submitting a pull
 request.
 
 Bug reports and feature requests can be submitted through GitHub Issues.

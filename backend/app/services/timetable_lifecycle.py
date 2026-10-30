@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import Database
 from app.models import TimetableCalendar, TimetablePreferences, TimetableYear
+from app.services.activity import record_event
 from app.services.auth import LIFECYCLE_LOCK
 from app.services.timetable_engine import PARIS, current_school_year
 
@@ -41,6 +42,18 @@ async def rollover(db: AsyncSession, today: date) -> TimetablePreferences:
         calendar.is_archived, calendar.is_paused = True, True
         calendar.revision, annual.revision = uuid4().hex, uuid4().hex
         annual.updated_at = datetime.now(timezone.utc)
+        await record_event(
+            db,
+            "timetable.archived",
+            None,
+            resource_type="timetable",
+            resource_id=calendar.id,
+            data={
+                "calendar_name": calendar.name,
+                "school_year": annual.school_year,
+                "auto_archive": True,
+            },
+        )
     preferences.last_rollover_year = year
     await db.flush()
     return preferences

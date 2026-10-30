@@ -8,7 +8,7 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.exc import IntegrityError
 
 from app.models import ActivityEvent
-from app.services.activity import EVENTS, EventDefinition, highest_role
+from app.services.activity import EVENTS, DownloadFacts, EventDefinition, event_family, highest_role
 from tests.test_auth_postgres import PASSWORD, Harness
 from tests.test_dashboard_postgres import clear_promotions, make_promotion
 
@@ -37,6 +37,92 @@ def test_event_message_rejects_arbitrary_template_fields() -> None:
     for message in ["{actor.password}", "{actor!r}", "{actor:20}"]:
         with pytest.raises(ValueError):
             EventDefinition(message=message)
+
+
+def test_catalogue_families_and_download_title() -> None:
+    """Cover every registered event with four families and accept historical downloads."""
+    assert {event_family(code) for code in EVENTS} == {
+        "accounts",
+        "promotions",
+        "lessons",
+        "administration",
+    }
+    assert event_family("auth.login_succeeded") == "accounts"
+    assert event_family("promotion.custom_group_created") == "promotions"
+    assert event_family("lesson.file_downloaded") == "lessons"
+    assert event_family("timetable.created") == "administration"
+    assert DownloadFacts(file_id=1, size_bytes=12).document_title is None
+    assert (
+        DownloadFacts(file_id=1, size_bytes=12, document_title="Exercices").document_title
+        == "Exercices"
+    )
+    with pytest.raises(ValueError):
+        DownloadFacts(file_id=1, size_bytes=12, storage_key="private")
+
+
+@pytest.mark.integration
+@integration
+@pytest.mark.asyncio
+async def test_participant_family_filters_archives_and_cursor_scope(auth_case: Harness) -> None:
+    """Include author and target once, preserve archives, and bind cursors to every filter."""
+    case = auth_case
+    user_id, _ = await case.create(activate=False)
+    other_id, _ = await case.create(activate=False)
+    await case.client.patch(f"/api/v1/admin/users/{user_id}/archive", json={"archived": True})
+    stamp = datetime.now(UTC)
+    expected = []
+    async with case.database.sessions.begin() as session:
+        for index, (author, target, code) in enumerate(
+            [
+                (user_id, other_id, "user.profile_updated"),
+                (other_id, user_id, "user.profile_updated"),
+                (user_id, user_id, "auth.login_succeeded"),
+                (other_id, other_id, "user.profile_updated"),
+                (user_id, None, "timetable.created"),
+            ]
+        ):
+            row = ActivityEvent(
+                event_type=code,
+                actor_user_id=author,
+                subject_user_id=target,
+                occurred_at=stamp + timedelta(seconds=index),
+                data={},
+            )
+            session.add(row)
+            await session.flush()
+            if index < 3:
+                expected.append(row.id)
+    params = {"user_id": user_id, "family": "accounts", "since": stamp.isoformat(), "limit": 2}
+    result = await case.client.get("/api/v1/admin/events", params=params)
+    assert result.status_code == 200, result.text
+    page = result.json()
+    assert [row["id"] for row in page["items"]] == expected[::-1][:2]
+    assert all(row["subject_profile_available"] for row in page["items"])
+    cursor = page["next_cursor"]
+    assert cursor
+    last = await case.client.get("/api/v1/admin/events", params=params | {"cursor": cursor})
+    assert [row["id"] for row in last.json()["items"]] == expected[:1]
+    for changed in ({"user_id": other_id}, {"family": "lessons"}):
+        assert (
+            await case.client.get(
+                "/api/v1/admin/events", params=params | changed | {"cursor": cursor}
+            )
+        ).status_code == 422
+    all_families = await case.client.get(
+        "/api/v1/admin/events", params={"user_id": user_id, "since": stamp.isoformat(), "limit": 5}
+    )
+    assert len(all_families.json()["items"]) == 4
+    for invalid in ({"family": "unknown"}, {"user_id": 0}):
+        assert (await case.client.get("/api/v1/admin/events", params=invalid)).status_code == 422
+    for role in ("teacher", "user"):
+        _, username = await case.create(role)
+        await case.client.post(
+            "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
+        )
+        assert (
+            await case.client.get("/api/v1/admin/events", params={"user_id": user_id})
+        ).status_code == 403
+        case.as_admin()
 
 
 @pytest.mark.integration

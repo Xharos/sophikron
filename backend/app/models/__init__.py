@@ -29,13 +29,11 @@ from app.models.lessons import (
 )
 from app.models.permissions import Permission, RolePermission
 from app.models.promotions import Promotion, PromotionAccountBlock, UserPromotion
+from app.models.releases import ReleaseCheck
 from app.models.site import (
     SiteSettings,
     Subject,
     TeacherSubject,
-    Timeline,
-    TimelineEvent,
-    TimelineEventBar,
 )
 from app.models.statistics import ApiMetric, CalendarUsageTotal, LoginStatistic
 from app.models.timetable import (
@@ -50,6 +48,7 @@ from app.models.timetable import (
 )
 
 __all__ = [
+    "ReleaseCheck",
     "ApiMetric",
     "CalendarUsageTotal",
     "PromotionCustomGroup",
@@ -65,9 +64,6 @@ __all__ = [
     "SiteSettings",
     "Subject",
     "TeacherSubject",
-    "Timeline",
-    "TimelineEvent",
-    "TimelineEventBar",
     "AccountInvitation",
     "ActivityEvent",
     "ApplicationState",

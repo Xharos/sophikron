@@ -113,6 +113,8 @@ def prepare_environment(directory: Path) -> dict[str, str]:
             "DB_PUBLISHED_PORT": "0",
             "BACKEND_PORT": "0",
             "FRONTEND_PORT": "0",
+            # Keep the logical origin used by journey.mjs independent of random host ports.
+            "SOPHIKRON_ORIGIN": "http://localhost:3000",
             "BFF_SUBNET": f"{network}.0/24",
             "BFF_ADDRESS": f"{network}.2",
             "API_ADDRESS": f"{network}.3",

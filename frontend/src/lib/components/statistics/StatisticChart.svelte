@@ -57,6 +57,7 @@
 	<div class="chart-legend" role="group" aria-label={`Séries : ${title}`}>
 		{#each displaySeries as item (item.key)}<button
 				type="button"
+				class="chart-toggle"
 				class:muted-series={hidden.includes(item.key)}
 				aria-pressed={!hidden.includes(item.key)}
 				onclick={() => toggle(item.key)}

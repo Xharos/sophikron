@@ -109,6 +109,7 @@ export interface ActivityEvent {
 
 export interface EventType {
 	code: string;
+	family: string;
 	label: string;
 	icon: string;
 	message: string;

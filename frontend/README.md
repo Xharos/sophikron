@@ -24,7 +24,7 @@ Administrators edit the name in `/dashboard?tab=configuration`. The frontend rea
 `GET /api/v1/site` contract on each server load; no environment variable or restart is required.
 The name appears in navigation, titles, metadata, dialogs and the footer and is always escaped.
 The same page configures the public welcome text and multiple annual timelines. See
-[site administration](../docs/site-administration.md) for subjects, collaboration and revocation.
+[site administration](../docs/administration.md) for subjects, collaboration and revocation.
 
 ## Account workspace
 

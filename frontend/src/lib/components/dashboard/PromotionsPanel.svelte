@@ -137,7 +137,9 @@
 			<p class="muted text-small">
 				{administrator
 					? 'Créez, organisez et retrouvez vos promotions.'
-					: 'Retrouvez les élèves de vos promotions, y compris les comptes archivés.'}
+					: canReadStudents
+						? 'Retrouvez les élèves de vos promotions, y compris les comptes archivés.'
+						: 'Retrouvez les groupes et les élèves actifs de vos promotions actives.'}
 			</p>
 		</div>
 		{#if administrator}<button class="button is-primary" onclick={() => (editor = 'new')}
@@ -260,9 +262,9 @@
 					aria-label="État des promotions"
 					bind:value={filterState}
 					onchange={() => (offset = 0)}
-					><option value="true">Actives</option><option value="false">Archivées</option><option
-						value="">Toutes les promotions</option
-					></select
+					><option value="true">Actives</option>{#if administrator || canReadStudents}<option
+							value="false">Archivées</option
+						><option value="">Toutes les promotions</option>{/if}</select
 				>
 			</div>
 		</div>
@@ -275,14 +277,13 @@
 		{:else}<div class="promotion-grid">
 				{#each items as promotion (promotion.id)}<button
 						class="promotion-card"
-						style={`--promotion-color: ${promotion.color}`}
+						style:--promotion-color={promotion.color}
 						onclick={() => (selected = promotion)}
 					>
 						<span class="promotion-card-top"
-							><span class="promotion-year">{promotion.year}</span><Icon
-								name="open"
-								size={14}
-							/></span
+							><span class="promotion-year"
+								><span class="promotion-swatch" aria-hidden="true"></span>{promotion.year}</span
+							><Icon name="open" size={14} /></span
 						>
 						<strong>{promotion.identifier}</strong><span class="muted text-small"
 							>{promotionCounts(promotion)} · {promotion.is_active ? 'Active' : 'Archivée'}</span

@@ -27,7 +27,7 @@ function pickerServer() {
 						return 'export const beforeNavigate = () => {}; export const goto = async () => {}; export const invalidateAll = async () => {};';
 					if (id === '\0test-state')
 						return `export const page = {
-							url: new URL(window.location.href),
+							url: new URL(new URL(window.location.href).searchParams.get('testPath') || window.location.href, window.location.href),
 							status: Number(new URL(window.location.href).searchParams.get('status') || 404),
 							error: { message: 'Accès refusé.' },
 							data: { establishmentName: 'Sophikron' }
@@ -35,17 +35,21 @@ function pickerServer() {
 				},
 				configureServer(vite) {
 					vite.middlewares.use('/__picker', async (_request, response) => {
-						const fixture = _request.url.includes('directory')
-							? 'DirectoryHarness'
-							: _request.url.includes('groups')
-								? 'GroupsHarness'
-								: _request.url.includes('error')
-									? 'ErrorHarness'
-									: _request.url.includes('lesson')
-										? 'LessonHarness'
-										: _request.url.includes('theme')
-											? 'ThemeHarness'
-											: 'VisualPickerHarness';
+						const fixture = _request.url.includes('header')
+							? 'HeaderHarness'
+							: _request.url.includes('journal')
+								? 'JournalHarness'
+								: _request.url.includes('directory')
+									? 'DirectoryHarness'
+									: _request.url.includes('groups')
+										? 'GroupsHarness'
+										: _request.url.includes('error')
+											? 'ErrorHarness'
+											: _request.url.includes('lesson')
+												? 'LessonHarness'
+												: _request.url.includes('theme')
+													? 'ThemeHarness'
+													: 'VisualPickerHarness';
 						const preference = /(?:^|;\s*)sophikron_theme=([^;]*)/.exec(
 							_request.headers.cookie || ''
 						)?.[1];
@@ -70,6 +74,323 @@ function pickerServer() {
 		server: { host: '127.0.0.1', port: 0, watch: null, hmr: false }
 	});
 }
+
+test('header navigation and colored account menu work on desktop, mobile and keyboard', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage();
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		for (const width of [320, 390, 768, 1100, 1440]) {
+			await page.setViewportSize({ width, height: 850 });
+			for (const colorScheme of ['light', 'dark']) {
+				await page.emulateMedia({ colorScheme });
+				await page.goto(`${server.resolvedUrls.local[0]}__picker?header`);
+				const trigger = page.getByRole('button', {
+					name: 'Menu du compte de Valentin Burgaud',
+					exact: true
+				});
+				await trigger.waitFor();
+				assert.equal(
+					await page.getByRole('button', { name: 'Se déconnecter', exact: true }).count(),
+					0
+				);
+				if (width < 1100) {
+					assert.equal(
+						await page.getByRole('link', { name: 'Cours', exact: true }).isVisible(),
+						false
+					);
+					const toggle = page.locator('.navigation-toggle');
+					await toggle.click();
+					assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+					assert.ok(
+						(await page.getByRole('link', { name: 'Cours', exact: true }).boundingBox())
+							.height >= 44
+					);
+					await page.keyboard.press('Escape');
+					assert.equal(
+						await toggle.evaluate((el) => el === document.activeElement),
+						true
+					);
+				} else {
+					const links = await page.locator('.header-links').boundingBox();
+					assert.ok(Math.abs(links.x + links.width / 2 - width / 2) < 2);
+				}
+				await trigger.focus();
+				await page.keyboard.press('Enter');
+				const dropdown = page.locator('.account-dropdown');
+				await dropdown.waitFor();
+				assert.equal(await dropdown.locator('.role-admin').count(), 1);
+				assert.equal(await dropdown.locator('.role-teacher').count(), 1);
+				assert.notEqual(
+					await dropdown
+						.locator('.role-admin')
+						.evaluate((el) => getComputedStyle(el).color),
+					await dropdown
+						.locator('.role-teacher')
+						.evaluate((el) => getComputedStyle(el).color)
+				);
+				await page.keyboard.press('Tab');
+				assert.equal(
+					await page
+						.getByRole('link', { name: 'Mon profil', exact: true })
+						.evaluate((el) => el === document.activeElement),
+					true
+				);
+				await page.keyboard.press('Tab');
+				const logout = page.getByRole('button', { name: 'Se déconnecter', exact: true });
+				assert.equal(await logout.evaluate((el) => el === document.activeElement), true);
+				assert.equal(await logout.evaluate((el) => el.closest('form').method), 'post');
+				assert.equal(
+					await logout.evaluate((el) => new URL(el.closest('form').action).pathname),
+					'/logout'
+				);
+				const bounds = await dropdown.boundingBox();
+				if (
+					process.env.HEADER_PREVIEW &&
+					colorScheme === 'light' &&
+					[390, 1440].includes(width)
+				)
+					await page.screenshot({ path: `.svelte-kit/header-${width}-preview.png` });
+				assert.ok(
+					bounds.x >= 0 && bounds.x + bounds.width <= width,
+					JSON.stringify({ width, bounds })
+				);
+				assert.equal(
+					await dropdown.evaluate((el) => el.scrollWidth <= el.clientWidth),
+					true
+				);
+				await page.keyboard.press('Escape');
+				assert.equal(await trigger.evaluate((el) => el === document.activeElement), true);
+				assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+				await trigger.click();
+				await page
+					.getByRole('button', { name: 'Action hors du header', exact: true })
+					.click();
+				assert.equal(await trigger.getAttribute('aria-expanded'), 'false');
+				assert.equal(
+					await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+					true
+				);
+			}
+		}
+		await page.setViewportSize({ width: 1440, height: 850 });
+		await page.goto(`${server.resolvedUrls.local[0]}__picker?header&testPath=/dashboard/user`);
+		assert.equal(
+			await page
+				.getByRole('link', { name: 'Administration', exact: true })
+				.getAttribute('aria-current'),
+			'page'
+		);
+		for (const variant of ['anonymous', 'role=user', 'role=teacher', 'role=kholleur', 'long']) {
+			await page.setViewportSize({ width: 320, height: 700 });
+			await page.goto(`${server.resolvedUrls.local[0]}__picker?header&${variant}`);
+			if (variant === 'anonymous') {
+				await page.getByRole('link', { name: 'Se connecter', exact: true }).waitFor();
+				assert.equal(await page.locator('.account-trigger').count(), 0);
+			} else {
+				await page
+					.getByRole('button', { name: 'Afficher le menu de navigation', exact: true })
+					.click();
+				assert.equal(
+					await page.getByRole('link', { name: 'Emploi du temps', exact: true }).count(),
+					variant === 'role=user' ? 0 : 1
+				);
+				await page.locator('.account-trigger').click();
+				await page.locator('.account-dropdown').waitFor();
+			}
+			assert.equal(
+				await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+				true,
+				variant
+			);
+		}
+		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
+
+test('journal menus and account pickers stay compact, styled and usable on mobile', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage();
+		const errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		const requests = [];
+		const users = [
+			{
+				id: 9,
+				first_name: 'Alice',
+				last_name: 'Martin',
+				username: 'alice123',
+				status: 'disabled',
+				roles: ['teacher', 'kholleur'],
+				promotions: [
+					{ id: 2, identifier: 'PTSI', year: 2026, color: '#67449a', is_active: true }
+				]
+			}
+		];
+		await page.route('**/dashboard/data?**', async (route) => {
+			const params = new URL(route.request().url()).searchParams;
+			requests.push(Object.fromEntries(params));
+			switch (params.get('resource')) {
+				case 'events':
+					return route.fulfill({ json: { items: [], next_cursor: null } });
+				case 'eventTypes':
+					return route.fulfill({
+						json: [
+							{
+								code: 'user.calendar_regenerate',
+								family: 'accounts',
+								label: 'Abonnements calendrier régénérés avec un intitulé particulièrement long',
+								message: '{actor} a agi.',
+								icon: 'clock'
+							}
+						]
+					});
+				case 'search':
+					return route.fulfill({ json: users });
+				case 'users':
+					return route.fulfill({ json: { items: users, total: 1 } });
+				default:
+					throw new Error('Unexpected resource');
+			}
+		});
+		for (const width of [320, 390, 1280]) {
+			await page.setViewportSize({ width, height: 900 });
+			for (const colorScheme of ['light', 'dark']) {
+				await page.emulateMedia({ colorScheme });
+				await page.goto(`${server.resolvedUrls.local[0]}__picker?journal`);
+				await page.locator('.event-list[aria-busy="false"]').waitFor();
+				assert.equal(await page.getByLabel('Événements par page').inputValue(), '5');
+				const navigation = page.getByRole('navigation', { name: 'Navigation de test' });
+				for (const name of ['Comptes', 'Vue d’ensemble']) {
+					const button = navigation.getByRole('button', { name, exact: true });
+					const before = await button.boundingBox();
+					await button.hover();
+					await page.waitForTimeout(200);
+					const after = await button.boundingBox();
+					assert.deepEqual(after, before);
+					assert.equal(
+						await button.evaluate((el) => getComputedStyle(el).backgroundImage),
+						'none'
+					);
+				}
+				await page.locator('.event-trigger').click();
+				await page
+					.locator('.event-family > summary')
+					.filter({ hasText: 'Comptes' })
+					.click();
+				const menu = page.locator('.event-menu-content');
+				assert.equal(
+					await menu.evaluate((el) => el.scrollWidth <= el.clientWidth),
+					true,
+					JSON.stringify(
+						await menu.evaluate((el) => ({
+							width: el.clientWidth,
+							scroll: el.scrollWidth,
+							children: [...el.querySelectorAll('*')].map((child) => ({
+								tag: child.tagName,
+								text: child.textContent,
+								width: child.getBoundingClientRect().width,
+								scroll: child.scrollWidth
+							}))
+						}))
+					)
+				);
+				const option = page.getByRole('button', {
+					name: 'Abonnements calendrier régénérés avec un intitulé particulièrement long',
+					exact: true
+				});
+				assert.ok((await option.boundingBox()).height < 85);
+				await option.click();
+				assert.equal(await page.locator('.event-menu').getAttribute('open'), null);
+				await page.getByRole('button', { name: 'Tous les membres', exact: true }).click();
+				const dialog = page.getByRole('dialog');
+				await dialog.locator('.member-choice').waitFor();
+				assert.equal(
+					await dialog
+						.getByText('Tous les membres, actifs et archivés', { exact: true })
+						.count(),
+					0
+				);
+				const input = await dialog
+					.getByLabel('Rechercher un compte', { exact: true })
+					.boundingBox();
+				const select = await dialog
+					.getByLabel('Rôle du compte', { exact: true })
+					.boundingBox();
+				assert.ok(
+					Math.abs(input.y - select.y) < 3 && select.x > input.x,
+					JSON.stringify({ input, select })
+				);
+				assert.equal(await dialog.locator('.role-teacher').count(), 1);
+				assert.equal(await dialog.locator('.role-kholleur').count(), 1);
+				assert.equal(await dialog.locator('.promotion-tag').count(), 1);
+				await dialog.getByLabel('Rechercher un compte', { exact: true }).fill('Alice');
+				await dialog.getByLabel('Rôle du compte', { exact: true }).selectOption('teacher');
+				await page.waitForResponse(
+					(response) =>
+						response.url().includes('resource=search') &&
+						response.url().includes('role=teacher')
+				);
+				await dialog.getByRole('radio').check();
+				await dialog.getByRole('button', { name: 'Appliquer', exact: true }).click();
+				await page.waitForResponse(
+					(response) =>
+						response.url().includes('resource=events') &&
+						response.url().includes('user_id=9')
+				);
+				await page.getByRole('button', { name: 'Alice Martin', exact: true }).click();
+				await dialog
+					.getByRole('button', { name: 'Effacer la sélection', exact: true })
+					.click();
+				await dialog.getByRole('button', { name: 'Appliquer', exact: true }).click();
+				await page.getByRole('button', { name: 'Tous les membres', exact: true }).waitFor();
+				assert.equal(
+					await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+					true
+				);
+				await page
+					.getByRole('button', { name: 'Ajouter des membres', exact: true })
+					.click();
+				await dialog.locator('.member-choice').waitFor();
+				assert.equal(await dialog.locator('.role-teacher').count(), 1);
+				assert.equal(await dialog.locator('.promotion-tag').count(), 1);
+				assert.equal(
+					await dialog
+						.locator('.dialog-body')
+						.evaluate((el) => el.scrollWidth <= el.clientWidth),
+					true
+				);
+				await page.keyboard.press('Escape');
+			}
+		}
+		assert.ok(
+			requests.some(
+				(params) =>
+					params.event_type === 'user.calendar_regenerate' && params.family === 'accounts'
+			)
+		);
+		assert.ok(
+			requests
+				.filter((params) => params.resource === 'users' || params.resource === 'search')
+				.every((params) => !params.status)
+		);
+		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
 
 test('staff profiles hide school sections in account and dashboard views', async () => {
 	const server = await pickerServer();
@@ -1014,6 +1335,104 @@ test('theme follows the device, persists overrides and keeps colored controls re
 		assert.equal(await background(), light);
 		for (const scheme of ['light', 'dark']) {
 			await page.emulateMedia({ colorScheme: scheme });
+			const redButton = page.getByRole('button', {
+				name: 'Révoquer les abonnements',
+				exact: true
+			});
+			for (const control of [
+				page.getByRole('button', { name: 'Annuler', exact: true }),
+				page.getByRole('button', { name: 'Exemple de bouton icône', exact: true }),
+				redButton,
+				page.getByRole('button', { name: 'Action sensible', exact: true })
+			]) {
+				await page.mouse.move(0, 0);
+				for (const hover of [false, true]) {
+					if (hover) await control.hover();
+					const style = await control.evaluate((element) => ({
+						image: getComputedStyle(element).backgroundImage,
+						border: getComputedStyle(element).borderTopWidth
+					}));
+					assert.match(
+						style.image,
+						/linear-gradient/,
+						`${await control.textContent()} ${scheme} hover=${hover}`
+					);
+					assert.equal(style.border, '1px');
+				}
+			}
+			await redButton.hover();
+			assert.equal(
+				await redButton.evaluate(
+					(element) =>
+						getComputedStyle(element).getPropertyValue('--action-fg').trim() ===
+						getComputedStyle(document.documentElement)
+							.getPropertyValue('--color-danger')
+							.trim()
+				),
+				true
+			);
+			for (const card of await page.locator('.promotion-card').all()) {
+				assert.equal(
+					await card.evaluate(
+						(element) =>
+							getComputedStyle(element).getPropertyValue('--action-bg').trim() !==
+							element.style.getPropertyValue('--promotion-color').trim()
+					),
+					true
+				);
+				assert.notEqual(
+					await card.evaluate((element) => getComputedStyle(element).backgroundImage),
+					'none'
+				);
+				assert.equal(
+					await card
+						.locator('.card-emblem')
+						.evaluate((element) => getComputedStyle(element).width),
+					'44px'
+				);
+			}
+			const toggle = page.locator('.chart-toggle').first();
+			for (const pressed of [true, false]) {
+				if ((await toggle.getAttribute('aria-pressed')) !== String(pressed))
+					await toggle.click();
+				await toggle.hover();
+				const style = await toggle.evaluate((element) => ({
+					border: getComputedStyle(element).borderTopWidth,
+					shadow: getComputedStyle(element).boxShadow,
+					background: getComputedStyle(element).backgroundColor
+				}));
+				assert.equal(style.border, '0px');
+				assert.equal(style.shadow, 'none');
+				assert.notEqual(style.background, 'rgba(0, 0, 0, 0)');
+			}
+			await toggle.click();
+			for (const button of await page.locator('.workspace-panel > button.button').all()) {
+				await button.hover();
+				const colors = await button.evaluate((element) => {
+					const context = document.createElement('canvas').getContext('2d');
+					const hex = (value) => {
+						context.fillStyle = value;
+						context.fillRect(0, 0, 1, 1);
+						return (
+							'#' +
+							[...context.getImageData(0, 0, 1, 1).data]
+								.slice(0, 3)
+								.map((channel) => channel.toString(16).padStart(2, '0'))
+								.join('')
+						);
+					};
+					const style = getComputedStyle(element);
+					const background =
+						style.backgroundColor === 'rgba(0, 0, 0, 0)'
+							? getComputedStyle(element.parentElement).backgroundColor
+							: style.backgroundColor;
+					return [hex(style.color), hex(background)];
+				});
+				assert.ok(
+					contrastRatio(...colors) >= 4.5,
+					`Hovered button contrast in ${scheme}: ${await button.textContent()} ${colors}`
+				);
+			}
 			const failures = await page.evaluate(() => {
 				const canvas = document.createElement('canvas');
 				canvas.width = canvas.height = 1;

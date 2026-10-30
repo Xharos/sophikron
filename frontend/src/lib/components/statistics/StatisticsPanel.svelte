@@ -1,4 +1,5 @@
 <script lang="ts">
+	import VersionsPanel from '../dashboard/VersionsPanel.svelte';
 	import { onMount } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { resolve } from '$app/paths';
@@ -366,6 +367,7 @@
 							>Gérer les matières <Icon name="arrow" size={13} /></a
 						>{/if}
 				</StatCard>
+				<VersionsPanel />
 			{/if}
 		</div>
 		{#if statistics.scope === 'author'}<section class="workspace-panel author-course-list">

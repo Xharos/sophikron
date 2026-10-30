@@ -31,11 +31,16 @@ A protected page redirects anonymous visitors to `/login?next=…`. Successful l
 local path, preserving query parameters; direct logins default to `/`. External, malformed and cyclic
 login/logout destinations are rejected. Expired dashboard/course sessions retain their current page.
 Page authorization still runs after login. Homepage content is identical for guests and accounts.
-Only the header changes: guests see the logo and login button; accounts see their identity linked
-to `/me`, logout and permission-based navigation. `/lessons` requires authentication; `/dashboard`
+Only the header changes: guests see the logo and login button; accounts see permission-based
+navigation with icon capsules and an active-page marker. A single identity button opens the account
+disclosure: full name, username, existing colored role badges, a link to `/me`, and a separately
+styled logout form that retains POST semantics. Outside clicks and Escape close the disclosure;
+Escape returns focus to its trigger. On mobile the account stays in the first row alongside a
+navigation toggle; navigation opens underneath with touch targets of at least 44 px. The menus
+are mutually exclusive and close after navigation. `/lessons` requires authentication; `/dashboard`
 accepts permanent staff with administrator or teaching-directory capabilities. `/admin` redirects
 to the shared workspace and `/admin/users/new` opens its account modal for administrators. Checks
-run in server loads as well as on every protected API operation. `/lessons` remains a placeholder.
+run in server loads as well as on every protected API operation. `/lessons` provides the course catalogue and authorized course content.
 
 `/me` displays first/family names, generated username, email, own promotions, roles, status,
 creation/update dates, last successful login, password-change date, email-verification date and login
@@ -129,8 +134,7 @@ FastAPI's CSRF validation independently of CORS. SvelteKit checks the exact requ
 any write reaches FastAPI, then supplies the backend's required origin and custom CSRF header.
 Native SvelteKit form protection remains enabled. This explicit BFF check also runs in development.
 The response policy is `Referrer-Policy: same-origin`: native POST forms retain their Origin header,
-while cross-origin referrers are withheld. The previous `no-referrer` policy made native logout
-forms send `Origin: null` in Chromium and triggered SvelteKit's CSRF rejection. Null/missing and
+while cross-origin referrers are withheld. Null/missing and
 foreign origins remain rejected; logout stays a POST and redirects to the shared home.
 
 Only the expected session cookie is relayed, with its HttpOnly, Secure, SameSite=Lax, host-only,
@@ -174,7 +178,7 @@ retain its notices. No external fonts, analytics or consent banner
 are loaded. The common home remains SSR because the header depends on the session. Only `/` appears
 in the sitemap. Account routes have noindex metadata/headers; robots.txt is not an authorization boundary.
 
-See [release verification](CONTRIBUTING.md#verification-before-a-release) for the shared commands,
+See [release verification](../CONTRIBUTING.md#verification-before-a-release) for the shared commands,
 Node/browser requirements and disposable BFF journey options. Playwright is a development-only
 dependency; it does not run in production or require a hosted service.
 The BFF tests exercise cookie relay, CSRF rejection, replacement of forged IP headers, session
@@ -184,3 +188,12 @@ temporary profile; otherwise that browser-specific test is explicitly skipped. B
 tests exercise actual PostgreSQL invitation, archive, role/scope and account activity semantics.
 The real BFF journey (`frontend/tests/journey.mjs`) covers HTTP setup, profiles,
 account/promotion creation, invitations, active-account reset, archiving, journal and teacher scope.
+
+## Health endpoints
+
+The frontend `GET /health` is unauthenticated and returns only `ok`. Docker probes it directly
+on container localhost; it checks frontend availability without calling the API. The backend
+`GET /health` checks a bounded PostgreSQL `SELECT 1` and returns 503 on failure. The API is
+unpublished in the production base and loopback-only with the local overlay. The frontend route
+remains accessible through any proxy that forwards it; healthcheck use of localhost is not an
+access-control rule. PostgreSQL readiness and successful migration completion gate application startup.

@@ -21,6 +21,7 @@ from app.models import (
 )
 from app.schemas.teacher_availability import AvailabilitySave
 from app.schemas.timetable import YearSettings
+from app.services.activity import record_event
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
 from app.services.timetable import TimetableService
@@ -536,8 +537,34 @@ class TeacherAvailabilityService:
                 row.kholle_min_hours = data.kholle_min_hours
                 row.kholle_max_hours = data.kholle_max_hours
             if row.ranges is None and row.kholle_min_hours == row.kholle_max_hours == 0:
+                await record_event(
+                    self.db,
+                    "user.availability_updated",
+                    actor.id,
+                    subject_user_id=teacher_id,
+                    data={
+                        "school_year": school_year,
+                        "default_availability": True,
+                        "range_count": 0,
+                        "kholle_min_hours": 0,
+                        "kholle_max_hours": 0,
+                    },
+                )
                 await self.db.flush()
                 await self.db.delete(row)
                 return {"revision": None}
             row.revision = uuid4().hex
+            await record_event(
+                self.db,
+                "user.availability_updated",
+                actor.id,
+                subject_user_id=teacher_id,
+                data={
+                    "school_year": school_year,
+                    "default_availability": row.ranges is None,
+                    "range_count": len(row.ranges or []),
+                    "kholle_min_hours": row.kholle_min_hours,
+                    "kholle_max_hours": row.kholle_max_hours,
+                },
+            )
             return {"revision": row.revision}

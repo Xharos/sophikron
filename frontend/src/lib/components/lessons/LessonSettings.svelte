@@ -10,7 +10,7 @@
 	import type { Promotion } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
-	import RoleTag from '../RoleTag.svelte';
+	import AccountIdentity from '../AccountIdentity.svelte';
 	let {
 		lesson,
 		onsaved,
@@ -286,8 +286,8 @@
 				{#if searching}<p class="help" role="status">Recherche…</p>
 				{:else if searchMessage}<p class="help is-danger" role="alert">{searchMessage}</p>
 				{:else}{#each candidates as person (person.id)}<div class="access-row candidate-row">
-							<div class="candidate-identity">
-								<strong>{person.label}</strong><RoleTag role={person.role} />
+							<div>
+								<AccountIdentity user={person} />
 							</div>
 							<button
 								class="icon-button"
@@ -352,17 +352,11 @@
 		margin-top: 0.5rem;
 	}
 	.candidate-row {
-		padding: 0.65rem 0;
-	}
-	.candidate-identity {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.4rem 0.6rem;
-	}
-	.candidate-identity strong {
-		font-size: 0.87rem;
-		overflow-wrap: anywhere;
+		padding: 0.65rem;
+		border: var(--border-thin);
+		border-radius: var(--radius-small);
+		background: var(--color-subtle);
+		margin-bottom: 0.4rem;
 	}
 	.checkbox {
 		display: flex;

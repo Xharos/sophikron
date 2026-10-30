@@ -1,5 +1,5 @@
 import { roleLabels } from './roles.ts';
-import { lessonIcons, lessonDate } from './lessons.ts';
+import { lessonIcons } from './lessons.ts';
 import type { Subject } from './site.ts';
 import type { ActivityEvent } from './types';
 import { partitionLabels } from './groups.ts';
@@ -67,9 +67,7 @@ const fieldLabels: Record<string, string> = {
 	name: 'Nom',
 	home_text: 'Texte d’accueil',
 	text_color: 'Couleur du texte',
-	holiday_color: 'Couleur des vacances',
 	kind: 'Type',
-	timeline_ids: 'Timelines concernées',
 	responsible_id: 'Responsable principal',
 	subject_id: 'Matière'
 };
@@ -103,6 +101,49 @@ export function eventSubjects(value: unknown): ActivitySubject[] {
 /** Explain recorded facts without copying private profile values or invitation secrets. */
 export function eventDetails(event: ActivityEvent): string[] {
 	const data = event.data;
+	if (
+		event.event_type.startsWith('timetable.') ||
+		event.event_type === 'user.availability_updated'
+	) {
+		const details: string[] = [];
+		if (typeof data.calendar_name === 'string') details.push(`Calendrier : ${data.calendar_name}`);
+		if (typeof data.school_year === 'number')
+			details.push(`Année : ${data.school_year}–${data.school_year + 1}`);
+		if (typeof data.title === 'string' && data.title) details.push(data.title);
+		if (typeof data.occurrence === 'string') details.push(`Date : ${data.occurrence}`);
+		if (data.scope === 'one') details.push('Cette occurrence uniquement');
+		if (data.scope === 'future') details.push('Cette occurrence et les suivantes');
+		if (typeof data.is_paused === 'boolean')
+			details.push(data.is_paused ? 'Diffusion en pause' : 'Diffusion active');
+		if (typeof data.auto_archive === 'boolean')
+			details.push(`Archivage automatique : ${data.auto_archive ? 'activé' : 'désactivé'}`);
+		if (typeof data.default_availability === 'boolean')
+			details.push(
+				data.default_availability
+					? 'Disponibilités par défaut'
+					: `${data.range_count} plages de disponibilité`
+			);
+		if (typeof data.kholle_min_hours === 'number' && typeof data.kholle_max_hours === 'number')
+			details.push(`Khôlles : ${data.kholle_min_hours} à ${data.kholle_max_hours} h par semaine`);
+		return details;
+	}
+	if (event.event_type.startsWith('promotion.custom_group_'))
+		return typeof data.group_name === 'string'
+			? [`Groupe : ${data.group_name}`, `${data.student_count} élèves`]
+			: [];
+	if (event.event_type === 'promotion.attendance_exported') {
+		const variants: Record<string, string> = {
+			roster: 'Liste simple',
+			global: 'Liste avec groupes',
+			halves: 'Demi-groupes',
+			thirds: 'Tiers de groupe',
+			kholles: 'Groupes de khôlle',
+			custom: 'Groupes personnalisés'
+		};
+		return [variants[String(data.variant)] ?? 'Liste d’appel', `${data.student_count} élèves`];
+	}
+	if (event.event_type === 'lesson.file_downloaded')
+		return typeof data.document_title === 'string' ? [`Document : ${data.document_title}`] : [];
 	if (['promotion.groups_saved', 'promotion.groups_deleted'].includes(event.event_type)) {
 		const kind = data.kind;
 		if (kind !== 'halves' && kind !== 'thirds' && kind !== 'kholles') return [];
@@ -186,49 +227,6 @@ export function eventDetails(event: ActivityEvent): string[] {
 		if (remaining.length)
 			details.push(
 				'Champs modifiés : ' + remaining.map((field) => fieldLabels[field] ?? field).join(', ')
-			);
-		return details;
-	}
-	if (event.event_type === 'calendar.saved' || event.event_type === 'calendar.deleted') {
-		if (typeof data.name !== 'string') return [];
-		const details = [(data.entry_type === 'timeline' ? 'Timeline : ' : 'Événement : ') + data.name];
-		const actions: Record<string, string> = {
-			created: 'Création',
-			updated: 'Modification',
-			deleted: 'Suppression'
-		};
-		if (typeof data.action === 'string' && Object.hasOwn(actions, data.action))
-			details.push('Action : ' + actions[data.action]);
-		if (typeof data.starts_on === 'string' && typeof data.ends_on === 'string')
-			details.push('Dates : ' + lessonDate(data.starts_on) + ' → ' + lessonDate(data.ends_on));
-		const kinds: Record<string, string> = {
-			holiday: 'Vacances',
-			oral: 'Oraux',
-			written: 'Écrits',
-			school: 'École',
-			other: 'Autre'
-		};
-		if (typeof data.kind === 'string' && Object.hasOwn(kinds, data.kind))
-			details.push('Type : ' + kinds[data.kind]);
-		if (typeof data.timeline_count === 'number')
-			details.push(
-				`${data.timeline_count} timeline${data.timeline_count === 1 ? '' : 's'} concernée${data.timeline_count === 1 ? '' : 's'}`
-			);
-		if (Array.isArray(data.changed_fields) && data.changed_fields.length)
-			details.push(
-				'Champs modifiés : ' +
-					data.changed_fields
-						.filter((field): field is string => typeof field === 'string')
-						.map((field) => fieldLabels[field] ?? field)
-						.join(', ')
-			);
-		if (typeof data.deleted_events === 'number' && data.deleted_events > 0)
-			details.push(
-				`${data.deleted_events} événement${data.deleted_events === 1 ? '' : 's'} exclusif${data.deleted_events === 1 ? '' : 's'} supprimé${data.deleted_events === 1 ? '' : 's'}`
-			);
-		if (typeof data.retained_events === 'number' && data.retained_events > 0)
-			details.push(
-				`${data.retained_events} événement${data.retained_events === 1 ? '' : 's'} partagé${data.retained_events === 1 ? '' : 's'} conservé${data.retained_events === 1 ? '' : 's'}`
 			);
 		return details;
 	}

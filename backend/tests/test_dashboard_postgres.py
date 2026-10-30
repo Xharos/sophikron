@@ -610,6 +610,42 @@ async def test_atomic_creation_and_immutable_username(auth_case: Harness) -> Non
 
 
 @pytest.mark.asyncio
+async def test_admin_picker_badges_include_roles_and_archived_promotions(
+    auth_case: Harness,
+) -> None:
+    """Enrich only authorized admin results with current roles and membership badges."""
+    case = auth_case
+    user_id, username = await case.create("teacher")
+    promotion_id = await make_promotion(case, "PICKER")
+    try:
+        assert (
+            await case.client.put(f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}")
+        ).status_code == 204
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/promotions/{promotion_id}", json={"is_active": False}
+            )
+        ).status_code == 200
+        assert (
+            await case.client.patch(
+                f"/api/v1/admin/users/{user_id}/archive", json={"archived": True}
+            )
+        ).status_code == 204
+        search = await case.client.get("/api/v1/admin/users/search", params={"q": username})
+        directory = await case.client.get("/api/v1/admin/users", params={"role": "teacher"})
+        assert search.status_code == directory.status_code == 200
+        for items in (search.json(), directory.json()["items"]):
+            item = next(row for row in items if row["id"] == user_id)
+            assert item["roles"] == ["teacher"] and item["status"] == "disabled"
+            badge = item["promotions"][0]
+            assert badge["id"] == promotion_id and badge["identifier"] == "PICKER"
+            assert badge["is_active"] is False and badge["color"].startswith("#")
+        assert "email" not in search.json()[0]
+    finally:
+        await clear_promotions([promotion_id])
+
+
+@pytest.mark.asyncio
 async def test_search_filters_and_permissions(auth_case: Harness) -> None:
     """Expose identities only to administrators and enforce permission independence from roles."""
     case = auth_case

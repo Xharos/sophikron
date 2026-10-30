@@ -10,7 +10,7 @@ import pytest
 from sqlalchemy import delete
 
 from app.models.lessons import LessonCollaborator
-from app.models.site import SiteSettings, Subject, TeacherSubject, Timeline, TimelineEvent
+from app.models.site import Subject, TeacherSubject
 from tests.test_auth_postgres import HEADERS, Harness
 from tests.test_lessons_postgres import CourseHarness
 from tests.test_lessons_postgres import course as course_fixture
@@ -585,168 +585,45 @@ async def test_collaborator_subject_loss_and_transfer_to_another_subject(
 
 
 @pytest.mark.asyncio
-async def test_public_configuration_calendar_shared_events_conflicts_and_deletion(
-    auth_case: Harness,
-) -> None:
-    """Publish only intended content and preserve shared events when one bar is deleted."""
+async def test_public_settings_only_and_retired_calendar_routes(auth_case: Harness) -> None:
+    """Publish only current settings and reject removed configuration fields and routes."""
     case = auth_case
     case.as_admin()
     original = (await case.client.get("/api/v1/site")).json()["settings"]
-    ids = []
-    event_ids = []
     try:
-        settings = {
-            "name": "Lycée <test>",
-            "home_text": "# Bienvenue\n**Bonjour**",
-            "text_color": "#123ABC",
-            "holiday_color": "#ab12cd",
-            "expected_version": original["version"],
-        }
-        saved = await case.client.put("/api/v1/admin/site", json=settings)
+        saved = await case.client.put(
+            "/api/v1/admin/site",
+            json={
+                "name": "Lycée",
+                "home_text": "# Bienvenue",
+                "text_color": "#123ABC",
+                "expected_version": original["version"],
+            },
+        )
         assert saved.status_code == 200, saved.text
-        assert (await case.client.put("/api/v1/admin/site", json=settings)).status_code == 409
-        for name in ("Première année", "Deuxième année"):
-            result = await case.client.post(
-                "/api/v1/admin/timelines",
-                json={"name": name, "starts_on": "2026-09-01", "ends_on": "2027-08-31"},
-            )
-            assert result.status_code == 201, result.text
-            ids.append(result.json()["id"])
-        event = {
-            "name": "Vacances",
-            "kind": "holiday",
-            "starts_on": "2026-12-20",
-            "ends_on": "2027-01-03",
-            "timeline_ids": ids,
-        }
-        saved_event = await case.client.post("/api/v1/admin/timeline-events", json=event)
-        assert saved_event.status_code == 201, saved_event.text
-        event_id = saved_event.json()["id"]
-        event_ids.append(event_id)
-        assert saved_event.json()["color"] == "#AB12CD"
-        for name, kind, color in (
-            ("Printemps", "holiday", "#FFFFFF"),
-            ("Oraux", "oral", "#998877"),
-        ):
-            extra = await case.client.post(
-                "/api/v1/admin/timeline-events",
-                json={
-                    **event,
-                    "name": name,
-                    "kind": kind,
-                    "color": color,
-                    "starts_on": "2027-04-01",
-                    "ends_on": "2027-04-02",
-                },
-            )
-            assert extra.status_code == 201, extra.text
-            event_ids.append(extra.json()["id"])
-            assert extra.json()["color"] == ("#AB12CD" if kind == "holiday" else color)
-        changed_settings = await case.client.put(
+        public = (await case.client.get("/api/v1/site")).json()
+        assert set(public) == {"settings"}
+        assert set(public["settings"]) == {"name", "home_text", "text_color", "version"}
+        for path in ("/api/v1/admin/timelines", "/api/v1/admin/timeline-events"):
+            assert (await case.client.post(path, json={})).status_code == 404
+        invalid = await case.client.put(
             "/api/v1/admin/site",
             json={
-                **settings,
-                "holiday_color": "#AABBCC",
-                "expected_version": saved.json()["version"],
+                **public["settings"],
+                "expected_version": public["settings"]["version"],
+                "holiday_color": "#123ABC",
             },
-        )
-        assert changed_settings.status_code == 200, changed_settings.text
-        invalid_color = await case.client.put(
-            "/api/v1/admin/site",
-            json={
-                **settings,
-                "holiday_color": "red",
-                "expected_version": changed_settings.json()["version"],
-            },
-        )
-        assert invalid_color.status_code == 422
-        unchanged = await case.client.put(
-            "/api/v1/admin/site",
-            json={
-                key: value
-                for key, value in changed_settings.json().items()
-                if key not in {"version", "holiday_color"}
-            }
-            | {"expected_version": changed_settings.json()["version"]},
-        )
-        assert unchanged.status_code == 200 and unchanged.json()["holiday_color"] == "#AABBCC"
-        assert unchanged.json()["version"] == changed_settings.json()["version"]
-        old_event = await case.client.put(
-            f"/api/v1/admin/timeline-events/{event_id}", json={**event, "expected_version": 0}
-        )
-        assert old_event.status_code == 409
-        settings_log = (
-            await case.client.get("/api/v1/admin/events", params={"event_type": "site.updated"})
-        ).json()["items"][0]
-        assert settings_log["data"]["changed_fields"] == ["holiday_color"]
-        assert "home_text" not in settings_log["data"]
-        calendar_log = (
-            await case.client.get("/api/v1/admin/events", params={"event_type": "calendar.saved"})
-        ).json()["items"][0]
-        assert (
-            calendar_log["data"]["name"] == "Oraux"
-            and calendar_log["data"]["entry_type"] == "event"
-        )
-        invalid = await case.client.post(
-            "/api/v1/admin/timeline-events", json={**event, "ends_on": "2028-01-03"}
         )
         assert invalid.status_code == 422
-        changed = await case.client.put(
-            f"/api/v1/admin/timelines/{ids[0]}",
+    finally:
+        current = (await case.client.get("/api/v1/site")).json()["settings"]
+        await case.client.put(
+            "/api/v1/admin/site",
             json={
-                "name": "Bad period",
-                "starts_on": "2027-02-01",
-                "ends_on": "2027-08-31",
-                "expected_version": 0,
+                **{key: value for key, value in original.items() if key != "version"},
+                "expected_version": current["version"],
             },
         )
-        assert changed.status_code == 409
-        case.client.cookies.clear()
-        public = (await case.client.get("/api/v1/site")).json()
-        assert (
-            public["settings"]["name"] == "Lycée <test>"
-            and public["events"][0]["timeline_ids"] == ids
-        )
-        assert {item["color"] for item in public["events"] if item["kind"] == "holiday"} == {
-            "#AABBCC"
-        }
-        assert (
-            next(item for item in public["events"] if item["kind"] == "oral")["color"] == "#998877"
-        )
-        assert "email" not in str(public) and "permissions" not in str(public)
-        assert (await case.client.put("/api/v1/admin/site", json=settings)).status_code == 401
-        case.as_admin()
-        assert (
-            await case.client.request(
-                "DELETE", f"/api/v1/admin/timelines/{ids[0]}", json={"expected_version": 0}
-            )
-        ).status_code == 204
-        deletion = (
-            await case.client.get("/api/v1/admin/events", params={"event_type": "calendar.deleted"})
-        ).json()["items"][0]
-        assert deletion["data"]["name"] == "Première année"
-        assert deletion["data"]["retained_events"] == 3 and deletion["data"]["deleted_events"] == 0
-        public = (await case.client.get("/api/v1/site")).json()
-        event_state = next(item for item in public["events"] if item["id"] == event_id)
-        assert event_state["timeline_ids"] == ids[1:] and event_state["version"] == 2
-        assert (
-            await case.client.put(
-                f"/api/v1/admin/timeline-events/{event_id}", json={**event, "expected_version": 0}
-            )
-        ).status_code == 409
-        assert (
-            await case.client.request(
-                "DELETE", f"/api/v1/admin/timelines/{ids[1]}", json={"expected_version": 0}
-            )
-        ).status_code == 204
-        assert not (await case.client.get("/api/v1/site")).json()["events"]
-    finally:
-        async with case.database.sessions.begin() as session:
-            await session.execute(delete(Timeline).where(Timeline.id.in_(ids)))
-            await session.execute(delete(TimelineEvent).where(TimelineEvent.id.in_(event_ids)))
-            row = await session.get(SiteSettings, 1)
-            for key, value in original.items():
-                setattr(row, key, value)
 
 
 @pytest.mark.asyncio

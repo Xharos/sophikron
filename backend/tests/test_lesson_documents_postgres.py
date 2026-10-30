@@ -173,6 +173,19 @@ async def test_named_upload_download_dates_and_integrity(documents: CourseHarnes
         storage = DocumentStorage(course.case.app.state.document_settings)
         storage.path(file.storage_key).write_bytes(b"x" * len(PAYLOAD))
     assert (await course.case.client.get(path)).status_code == 503
+    course.case.as_admin()
+    history = await course.case.client.get(
+        "/api/v1/admin/events",
+        params={"event_type": "lesson.file_downloaded", "resource_id": course.state["id"]},
+    )
+    assert history.status_code == 200, history.text
+    entries = history.json()["items"]
+    assert len(entries) == 2
+    assert [item["data"]["document_title"] for item in entries] == [
+        "Nom modifié sans nouveau fichier",
+        "Mon nom pédagogique",
+    ]
+    assert all("original.py" not in str(item["data"]) for item in entries)
 
 
 @pytest.mark.asyncio

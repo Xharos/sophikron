@@ -55,3 +55,9 @@ as a full week's subject hours. No alternating multiweek cycle or isolated excep
 Modules: **client.py** (HTTP/session), **identities.py** (names and staff), **catalog.py**
 (preflight/accounts/subjects), **groups.py** (partitions/options), **planning.py** (pure weekly
 allocation), **timetables.py** (annual API writes), **runner.py** (orchestration).
+
+## Image builds
+
+Use the root-level [build.ps1](../build.ps1) to embed the local Git revision in images. See [build instructions](../docs/database.md#building-images-with-revision-metadata).
+Use `./build.ps1 -Local -Start` to build and start locally, or
+`./build.ps1 -Start` for production. Without `-Start`, only images are built.

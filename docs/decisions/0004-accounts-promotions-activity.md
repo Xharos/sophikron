@@ -30,9 +30,10 @@ Record successful actions as structured versioned activity events in the busines
 Store actor/subject account references, generic resource references and validated bounded metadata;
 derive presentation text separately. Preserve the journal through runtime SELECT/INSERT-only grants.
 
-The owner authorized rebuilding applied development migrations because there are no retained local
-volumes: 0001 accounts/authentication/permissions, 0002 promotions, 0003 events. Fold manual invitations
-into 0001 and remove historical empty-baseline adoption. Future applied migrations remain immutable.
+The current baseline places accounts/authentication/permissions and activity in `0001_authentication`,
+configuration in `0002_configuration`, and promotions in `0003_promotions`.
+[ADR 0005](0005-release-baseline-and-configuration.md) records the seven-revision release baseline
+and compatibility limits. Future published migrations remain immutable.
 
 ## Consequences
 

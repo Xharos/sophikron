@@ -11,6 +11,7 @@ from app.models import (
     TimetableYear,
 )
 from app.schemas.groups import CustomGroupSave, CustomGroupVersion
+from app.services.activity import record_event
 from app.services.auth import UserContext
 from app.services.errors import AuthError
 from app.services.groups import GroupsService
@@ -40,6 +41,13 @@ class CustomGroupsService(GroupsService):
                     )
                 )
             )
+            if await self.active_only(actor):
+                active_ids = {
+                    pupil.id
+                    for pupil in await self.repo.pupils(promotion_id)
+                    if pupil.status == "active"
+                }
+                members = [member for member in members if member.user_id in active_ids]
             live = await self.db.scalar(
                 select(TimetableCalendar.id).where(
                     TimetableCalendar.promotion_id == promotion_id,
@@ -125,6 +133,16 @@ class CustomGroupsService(GroupsService):
                 ]
             )
             # Membership changes affect personal exports even when session times stay unchanged.
+            await record_event(
+                self.db,
+                "promotion.custom_group_updated"
+                if identifier
+                else "promotion.custom_group_created",
+                actor.id,
+                resource_type="promotion",
+                resource_id=promotion_id,
+                data={"group_name": row.name, "student_count": len(selected)},
+            )
             from app.services.timetable import TimetableService
 
             for year in await self.db.scalars(
@@ -160,6 +178,19 @@ class CustomGroupsService(GroupsService):
             if live is not None and not data.confirmed_live:
                 raise AuthError(409, "Confirmez la suppression dans cette promotion diffusée.")
             row.is_active = False
+            members = await self.db.scalars(
+                select(PromotionCustomGroupMember.user_id).where(
+                    PromotionCustomGroupMember.group_id == row.id
+                )
+            )
+            await record_event(
+                self.db,
+                "promotion.custom_group_deleted",
+                actor.id,
+                resource_type="promotion",
+                resource_id=promotion_id,
+                data={"group_name": row.name, "student_count": len(list(members))},
+            )
             row.name_key = f"retired:{row.id}:{uuid4().hex}"
             row.revision = uuid4().hex
             from app.services.timetable import TimetableService

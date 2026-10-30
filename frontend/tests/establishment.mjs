@@ -23,10 +23,7 @@ async function startFrontend(name) {
 					home_text: '# Bienvenue\n**Bonjour** <script>alert(1)</script>',
 					text_color: '#244BC1',
 					version: 0
-				},
-				timelines: [],
-				events: [],
-				today: '2026-10-25'
+				}
 			})
 		);
 	});

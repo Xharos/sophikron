@@ -350,6 +350,28 @@ async def test_unique_name_assignment_archival_and_restore(workspace: Workspace)
     )
     assert response.status_code == 200, response.text
     archive_revision = response.json()["revision"]
+    catalog = (await w.case.client.get("/api/v1/timetable/catalog")).json()
+    assert any(item["id"] == w.calendar_id and item["is_archived"] for item in catalog["calendars"])
+    await w.login(w.teacher_name)
+    catalog = (await w.case.client.get("/api/v1/timetable/catalog")).json()
+    assert catalog["can_read_archives"]
+    assert any(item["id"] == w.calendar_id for item in catalog["calendars"])
+    assert (
+        await w.case.client.get("/api/v1/timetable/board", params={"calendar_ids": w.calendar_id})
+    ).status_code == 200
+    w.case.as_admin()
+    kholleur, username = await w.case.create("kholleur")
+    assert (
+        await w.case.client.put(f"/api/v1/admin/users/{kholleur}/promotions/{w.promotion_id}")
+    ).status_code == 204
+    await w.login(username)
+    catalog = (await w.case.client.get("/api/v1/timetable/catalog")).json()
+    assert not catalog["can_read_archives"]
+    assert all(item["id"] != w.calendar_id for item in catalog["calendars"])
+    assert (
+        await w.case.client.get("/api/v1/timetable/board", params={"calendar_ids": w.calendar_id})
+    ).status_code == 404
+    w.case.as_admin()
     year = state["years"][0]
     assert (
         await w.case.client.put(

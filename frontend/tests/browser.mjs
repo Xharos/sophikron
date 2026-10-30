@@ -759,11 +759,6 @@ export async function browserJourney({
 
 		await page.getByLabel('Nom du site', { exact: true }).fill('Lycée des sciences');
 		await page
-			.locator('#holiday-color')
-			.locator('..')
-			.getByLabel('Code couleur hexadécimal', { exact: true })
-			.fill('#AA33CC');
-		await page
 			.getByLabel('Texte d’accueil', { exact: true })
 			.fill('# Notre école\n**Bienvenue**');
 		await page
@@ -772,93 +767,6 @@ export async function browserJourney({
 		await page.getByRole('status').filter({ hasText: 'sans redémarrage' }).waitFor();
 		assert.equal(new URL(page.url()).searchParams.get('tab'), 'configuration');
 		assert.equal(await page.locator('.brand-name').textContent(), 'Lycée des sciences');
-		for (const bar of ['Première année', 'Deuxième année']) {
-			await page.getByRole('button', { name: 'Ajouter une timeline', exact: true }).click();
-			await dialog.getByLabel('Intitulé', { exact: true }).fill(bar);
-			await dialog.getByLabel('Début inclus', { exact: true }).fill('2026-09-01');
-			await dialog.getByLabel('Fin incluse', { exact: true }).fill('2027-08-31');
-			await dialog.getByRole('button', { name: 'Enregistrer', exact: true }).click();
-			await dialog.waitFor({ state: 'hidden' });
-		}
-		for (const [name, start, end, kind] of [
-			['Vacances communes', '2026-12-20', '2027-01-03', 'holiday'],
-			['Vacances de printemps', '2027-04-10', '2027-04-25', 'holiday'],
-			['Oraux du concours', '2027-05-10', '2027-05-12', 'oral']
-		]) {
-			await page.getByRole('button', { name: 'Ajouter un événement', exact: true }).click();
-			await dialog.getByLabel('Intitulé', { exact: true }).fill(name);
-			await dialog.getByLabel('Début inclus', { exact: true }).fill(start);
-			await dialog.getByLabel('Fin incluse', { exact: true }).fill(end);
-			await dialog.getByLabel('Type', { exact: true }).selectOption(kind);
-			await dialog.getByLabel('Deuxième année', { exact: true }).check();
-			if (kind === 'holiday') {
-				assert.equal(
-					await dialog.getByLabel('Code couleur hexadécimal', { exact: true }).count(),
-					0
-				);
-				await dialog.getByText('Couleur commune aux vacances.', { exact: false }).waitFor();
-				await dialog.getByLabel('Première année', { exact: true }).check();
-			} else
-				await dialog
-					.getByLabel('Code couleur hexadécimal', { exact: true })
-					.fill('#FF8800');
-			await dialog.getByRole('button', { name: 'Enregistrer', exact: true }).click();
-			await dialog.waitFor({ state: 'hidden' });
-		}
-		await page.goto(origin);
-		await page.getByRole('heading', { name: 'Notre école', exact: true }).waitFor();
-		assert.equal(await page.locator('.timeline-rail').count(), 2);
-		assert.equal(await page.locator('.timeline-months > span').count(), 24);
-		assert.equal(
-			await page.locator('.calendar-legend').getByText('Vacances', { exact: true }).count(),
-			1
-		);
-		assert.equal(await page.locator('.timeline-event').count(), 5);
-		assert.equal(
-			await page
-				.locator('.calendar-legend')
-				.getByText('Oraux du concours', { exact: true })
-				.count(),
-			1
-		);
-		const holidayColors = await page
-			.locator('.timeline-event')
-			.evaluateAll((elements) =>
-				elements
-					.filter((element) =>
-						element.getAttribute('aria-label').includes('· Vacances ·')
-					)
-					.map((element) => element.style.getPropertyValue('--event-color'))
-			);
-		assert.deepEqual(holidayColors, ['#AA33CC', '#AA33CC', '#AA33CC', '#AA33CC']);
-		if (screenshots) {
-			await page.screenshot({ path: screenshots + '/timelines-mobile.png', fullPage: true });
-			await page.setViewportSize({ width: 1440, height: 1000 });
-			await page.screenshot({ path: screenshots + '/timelines-desktop.png', fullPage: true });
-			await page.setViewportSize({ width: 390, height: 844 });
-		}
-		assert.ok(
-			await page
-				.locator('.calendar-overview')
-				.evaluate(
-					(element) =>
-						element.compareDocumentPosition(document.querySelector('.home-hero')) &
-						Node.DOCUMENT_POSITION_FOLLOWING
-				)
-		);
-		await page.getByLabel('Informations sur Première année', { exact: true }).click();
-		await page
-			.getByText(/jours de cours restants/)
-			.first()
-			.waitFor();
-		const event = page.locator('.timeline-event').first();
-		await event.focus();
-		assert.equal(
-			await event.locator('.tip').evaluate((element) => getComputedStyle(element).visibility),
-			'visible'
-		);
-		await page.getByLabel('Informations sur Première année', { exact: true }).click();
-		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 		await page.goto(`${origin}/dashboard/user?id=${kholleur.id}`);
 		await page.getByRole('group', { name: 'Rôles du compte', exact: true }).waitFor();
 		await page

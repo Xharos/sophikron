@@ -21,16 +21,20 @@ class AdministrationRepository:
             statement = statement.with_for_update()
         return await self.db.scalar(statement)
 
-    async def member_counts(self, ids: list[int]) -> dict[int, int]:
+    async def member_counts(self, ids: list[int], *, active_only: bool = False) -> dict[int, int]:
         """Count current memberships in one grouped query for a page of promotions."""
         rows = await self.db.execute(
             select(UserPromotion.promotion_id, func.count())
+            .join(User, User.id == UserPromotion.user_id)
             .where(UserPromotion.promotion_id.in_(ids))
+            .where(User.status == "active" if active_only else True)
             .group_by(UserPromotion.promotion_id)
         )
         return dict(rows.all())
 
-    async def display_counts(self, ids: list[int]) -> dict[int, dict[str, int]]:
+    async def display_counts(
+        self, ids: list[int], *, active_only: bool = False
+    ) -> dict[int, dict[str, int]]:
         """Count non-archived pupils, unique teaching accounts and all archived members.
 
         Parameters
@@ -64,6 +68,7 @@ class AdministrationRepository:
             )
             .join(User, User.id == UserPromotion.user_id)
             .where(UserPromotion.promotion_id.in_(ids))
+            .where(User.status == "active" if active_only else True)
             .group_by(UserPromotion.promotion_id)
         )
         return {
@@ -107,13 +112,20 @@ class AdministrationRepository:
             blocks.setdefault(user_id, set()).add(promotion_id)
         return blocks
 
-    async def student_counts(self, ids: list[int]) -> dict[int, int]:
+    async def student_counts(self, ids: list[int], *, active_only: bool = False) -> dict[int, int]:
         """Count students separately from role-independent promotion memberships."""
         rows = await self.db.execute(
             select(UserPromotion.promotion_id, func.count())
             .join(UserRole, UserRole.user_id == UserPromotion.user_id)
             .join(Role)
             .where(UserPromotion.promotion_id.in_(ids), Role.code == "user")
+            .where(
+                select(User.id)
+                .where(User.id == UserPromotion.user_id, User.status == "active")
+                .exists()
+                if active_only
+                else True
+            )
             .group_by(UserPromotion.promotion_id)
         )
         return dict(rows.all())

@@ -31,6 +31,34 @@ function event(event_type: string, data: Record<string, unknown>): ActivityEvent
 	};
 }
 
+test('downloads display course titles, including historical entries with no saved title', () => {
+	assert.deepEqual(
+		eventDetails(event('lesson.file_downloaded', { document_title: 'Exercices', file_id: 12 })),
+		['Document : Exercices']
+	);
+	assert.deepEqual(eventDetails(event('lesson.file_downloaded', { file_id: 12 })), []);
+});
+
+test('recent scheduling and group actions expose useful bounded details', () => {
+	assert.deepEqual(
+		eventDetails(
+			event('timetable.occurrence_deleted', {
+				calendar_name: 'PT',
+				title: 'Maths',
+				occurrence: '2026-11-02',
+				scope: 'future'
+			})
+		),
+		['Calendrier : PT', 'Maths', 'Date : 2026-11-02', 'Cette occurrence et les suivantes']
+	);
+	assert.deepEqual(
+		eventDetails(
+			event('promotion.custom_group_created', { group_name: 'Allemand', student_count: 10 })
+		),
+		['Groupe : Allemand', '10 élèves']
+	);
+});
+
 test('partition activity distinguishes independent group families without pupil identities', () => {
 	assert.deepEqual(eventDetails(event('promotion.groups_saved', { kind: 'halves' })), [
 		'Demi-groupes'
@@ -124,42 +152,21 @@ test('assignment deltas validate historical subject tags and retain automatic ca
 	assert.deepEqual(eventDetails(event('user.subjects_updated', { reason: 'account_archived' })), [
 		'Retrait automatique lors de l’archivage du compte.'
 	]);
-	for (const type of [
-		'user.subjects_updated',
-		'subject.saved',
-		'calendar.saved',
-		'calendar.deleted',
-		'site.updated'
-	])
+	for (const type of ['user.subjects_updated', 'subject.saved', 'site.updated'])
 		assert.deepEqual(eventDetails(event(type, {})), []);
 });
-test('site, subject and calendar details identify saved facts without copying text bodies', () => {
+test('site and subject details identify saved facts without copying text bodies', () => {
 	const site = eventDetails(
 		event('site.updated', {
-			changed_fields: ['name', 'home_text', 'holiday_color'],
+			changed_fields: ['name', 'home_text', 'text_color'],
 			previous_name: 'Avant',
 			name: 'Après',
 			home_text: 'PRIVATE-BODY'
 		})
 	);
 	assert.ok(site.includes('Nom du site : Avant → Après'));
-	assert.ok(site.some((line) => line.includes('Texte d’accueil, Couleur des vacances')));
+	assert.ok(site.some((line) => line.includes('Texte d’accueil, Couleur du texte')));
 	assert.ok(!site.join(' ').includes('PRIVATE-BODY'));
-	const calendar = eventDetails(
-		event('calendar.deleted', {
-			entry_type: 'timeline',
-			action: 'deleted',
-			name: 'Deuxième année',
-			starts_on: '2026-09-01',
-			ends_on: '2027-08-31',
-			deleted_events: 2,
-			retained_events: 1
-		})
-	);
-	assert.ok(calendar.includes('Timeline : Deuxième année'));
-	assert.ok(calendar.includes('Action : Suppression'));
-	assert.ok(calendar.includes('2 événements exclusifs supprimés'));
-	assert.ok(calendar.includes('1 événement partagé conservé'));
 	assert.ok(
 		eventDetails(
 			event('subject.saved', { action: 'updated', changed_fields: ['name', 'color'] })
@@ -204,11 +211,6 @@ test('activity counts use singular only for one, including adjective agreements'
 			);
 		}
 		assert.ok(
-			eventDetails(event('calendar.saved', { name: 'Année', timeline_count: count })).includes(
-				`${count} timeline${suffix} concernée${suffix}`
-			)
-		);
-		assert.ok(
 			eventDetails(event('lesson.element_deleted', { removed_count: count })).includes(
 				`${count} élément${suffix} supprimé${suffix}, enfants compris`
 			)
@@ -218,15 +220,6 @@ test('activity counts use singular only for one, including adjective agreements'
 				eventDetails(
 					event('subject.archived', { action: 'archived', removed_assignments: count })
 				).includes(`${count} affectation${suffix} retirée${suffix}`)
-			);
-			const calendar = eventDetails(
-				event('calendar.deleted', { name: 'Année', deleted_events: count, retained_events: count })
-			);
-			assert.ok(
-				calendar.includes(`${count} événement${suffix} exclusif${suffix} supprimé${suffix}`)
-			);
-			assert.ok(
-				calendar.includes(`${count} événement${suffix} partagé${suffix} conservé${suffix}`)
 			);
 		}
 	}

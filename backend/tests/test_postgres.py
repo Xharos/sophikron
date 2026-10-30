@@ -376,10 +376,17 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
             assert await session.scalar(text("SELECT to_regclass('sophikron.activity_events')"))
             assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')")) is None
             assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.release_check')")) is None
+            )
+            assert (
                 await session.scalar(text("SELECT to_regclass('sophikron.site_settings')")) is None
             )
         run_alembic("upgrade", "0002_configuration")
         async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT id FROM sophikron.release_check")) == 1
+            assert await session.scalar(
+                text("SELECT attempted_at FROM sophikron.release_check WHERE id = 1")
+            ) is None
             assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')"))
             assert (
                 await session.scalar(text("SELECT to_regclass('sophikron.calendar_usage_totals')"))
@@ -387,25 +394,34 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
             )
             assert (
                 await session.scalar(
-                    text("SELECT holiday_color FROM sophikron.site_settings WHERE id = 1")
+                    text("SELECT text_color FROM sophikron.site_settings WHERE id = 1")
                 )
                 == "#244BC1"
             )
-            for name in ("promotions", "subjects", "lessons"):
+            for name in (
+                "promotions",
+                "subjects",
+                "lessons",
+                "timelines",
+                "timeline_events",
+                "timeline_event_bars",
+            ):
                 assert (
                     await session.scalar(
                         text("SELECT to_regclass(:name)"), {"name": "sophikron." + name}
                     )
                     is None
                 )
-        async with migration.sessions() as session:
-            with pytest.raises(IntegrityError):
-                async with session.begin():
-                    await session.execute(
-                        text(
-                            "UPDATE sophikron.site_settings SET holiday_color = 'red' WHERE id = 1"
-                        )
+            assert (
+                await session.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_schema = 'sophikron' AND table_name = 'site_settings' "
+                        "AND column_name = 'holiday_color'"
                     )
+                )
+                == 0
+            )
         run_alembic("upgrade", "0003_promotions")
         async with migration.sessions() as session:
             assert await session.scalar(text("SELECT to_regclass('sophikron.user_promotions')"))

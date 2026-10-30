@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
 	import { command, read } from '#lib/dashboard';
+	import { colorForeground } from '#lib/lessons';
 	import type { Subject } from '#lib/site';
 	import type { Page } from '#lib/types';
 	import Icon from '../Icon.svelte';
@@ -165,12 +166,15 @@
 				{#each items as subject (subject.id)}<button
 						class="promotion-card subject-card"
 						style:--promotion-color={subject.color}
+						style:--promotion-ink={colorForeground(subject.color)}
 						onclick={() => {
 							selected = subject;
 							message = '';
 						}}
 						><span class="promotion-card-top"
-							><Icon name={subject.icon} size={22} /><Icon name="open" size={14} /></span
+							><span class="card-emblem" aria-hidden="true"
+								><Icon name={subject.icon} size={22} /></span
+							><Icon name="open" size={14} /></span
 						><strong>{subject.name}</strong><span class="muted text-small"
 							>{subject.teacher_count} enseignant{subject.teacher_count === 1 ? '' : 's'} · {subject.lesson_count}
 							cours · {subject.is_active ? 'Active' : 'Archivée'}</span

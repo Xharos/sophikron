@@ -154,10 +154,10 @@
 	{#if message}<p class="notification is-danger is-light mt-3" role="alert">{message}</p>{/if}
 	{#if data && !loading && !message}
 		<div class="monitor-kpis mt-4">
-			<p><strong>{number(data.requests)}</strong>Requêtes</p>
-			<p><strong>{number(data.mean_ms)} ms</strong>Temps moyen</p>
-			<p><strong>{number(data.p95_ms)} ms</strong>P95 approximatif</p>
-			<p><strong>{number(data.server_error_rate)} %</strong>Erreurs serveur</p>
+			<p><strong>{number(data.requests)}</strong> Requêtes</p>
+			<p><strong>{number(data.mean_ms)} ms</strong> Temps moyen</p>
+			<p><strong>{number(data.p95_ms)} ms</strong> P95 approximatif</p>
+			<p><strong>{number(data.server_error_rate)} %</strong> Erreurs serveur</p>
 		</div>
 		{#if data.dropped_measurements}<p class="notification is-warning is-light mt-3">
 				{number(data.dropped_measurements)} mesures perdues : historique incomplet.
@@ -170,11 +170,13 @@
 				{#each families as family (family.key)}
 					<button
 						type="button"
+						class="chart-toggle"
 						class:muted-series={hidden.includes(family.key)}
 						aria-pressed={!hidden.includes(family.key)}
 						onclick={() => toggle(family.key)}
 					>
-						<span style:color={family.color} aria-hidden="true">●</span>{family.label}
+						<span style:color={family.color} aria-hidden="true">●</span>
+						{family.label}
 					</button>
 				{/each}
 			</div>
@@ -182,6 +184,7 @@
 				{#each latencySeries as series (series.key)}
 					<button
 						type="button"
+						class="chart-toggle"
 						class:muted-series={hidden.includes(series.key)}
 						aria-pressed={!hidden.includes(series.key)}
 						onclick={() => toggle(series.key)}

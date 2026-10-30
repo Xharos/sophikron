@@ -177,9 +177,16 @@ class GroupsService:
         promotion = await self.db.get(Promotion, promotion_id)
         if promotion is None:
             raise AuthError(404, "Promotion introuvable.")
+        if not promotion.is_active and await self.active_only(actor):
+            raise AuthError(404, "Promotion introuvable.")
         if write and not promotion.is_active:
             raise AuthError(409, "Cette promotion est archivée ; ses groupes restent consultables.")
         return promotion
+
+    async def active_only(self, actor: UserContext) -> bool:
+        """Return whether this caller has only khôlleur consultation rights."""
+        permissions = await self.auth.repo.permissions(actor.id)
+        return not {"promotions.read", "teaching.read"}.intersection(permissions)
 
     async def promotions(
         self,
@@ -196,6 +203,8 @@ class GroupsService:
         async with self.db.begin():
             global_scope = await self._authorize(actor)
             statement = select(Promotion)
+            if await self.active_only(actor):
+                statement = statement.where(Promotion.is_active.is_(True))
             if not global_scope:
                 statement = statement.join(UserPromotion).where(UserPromotion.user_id == actor.id)
             if is_active is not None:
@@ -212,7 +221,9 @@ class GroupsService:
                 )
             )
             return PromotionPage(
-                items=await AdministrationService(self.auth)._promotion_profiles(items),
+                items=await AdministrationService(self.auth)._promotion_profiles(
+                    items, active_only=await self.active_only(actor)
+                ),
                 total=total,
                 offset=offset,
                 limit=limit,
@@ -223,6 +234,8 @@ class GroupsService:
         async with self.db.begin():
             await self._promotion(actor, promotion_id, write=False)
             pupils = await self.repo.pupils(promotion_id)
+            if await self.active_only(actor):
+                pupils = [pupil for pupil in pupils if pupil.status == "active"]
             return PromotionGroupsResponse(
                 students=[
                     GroupStudent(
@@ -244,7 +257,11 @@ class GroupsService:
         """Read one promotion's display metadata inside current staff scope."""
         async with self.db.begin():
             promotion = await self._promotion(actor, promotion_id, write=False)
-            return (await AdministrationService(self.auth)._promotion_profiles([promotion]))[0]
+            return (
+                await AdministrationService(self.auth)._promotion_profiles(
+                    [promotion], active_only=await self.active_only(actor)
+                )
+            )[0]
 
     async def _version(
         self,

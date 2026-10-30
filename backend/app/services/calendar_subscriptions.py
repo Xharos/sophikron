@@ -19,6 +19,7 @@ from app.models import (
     UserPromotion,
     UserRole,
 )
+from app.services.activity import record_event
 from app.services.errors import AuthError
 from app.services.timetable_engine import PARIS, current_school_year
 
@@ -138,6 +139,9 @@ class CalendarSubscriptionService:
             if eligible and action is not None:
                 row = await ensure_subscription(self.db, self.auth.cipher, user, self.auth.clock())
                 self.apply(row, action)
+                await record_event(
+                    self.db, f"user.calendar_{action}", actor.id, subject_user_id=user.id
+                )
             return {
                 "eligible": eligible,
                 "exists": row is not None,
@@ -174,4 +178,7 @@ class CalendarSubscriptionService:
             for user in users:
                 row = await ensure_subscription(self.db, self.auth.cipher, user, self.auth.clock())
                 self.apply(row, action)
+                await record_event(
+                    self.db, f"user.calendar_{action}", actor.id, subject_user_id=user.id
+                )
             return {"affected": len(users)}

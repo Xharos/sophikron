@@ -9,6 +9,9 @@ COPY backend/app ./app
 COPY backend/alembic.ini ./alembic.ini
 COPY backend/alembic ./alembic
 
+ARG SOPHIKRON_BUILD_REVISION=unknown
+RUN printf '%s' "$SOPHIKRON_BUILD_REVISION" > app/core/revision.txt
+
 RUN pip install --no-cache-dir .
 
 RUN useradd --system --uid 10001 --create-home appuser

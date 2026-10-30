@@ -51,6 +51,18 @@ async def test_archive_restore_and_renew_access(auth_case: Harness, activated: b
     assert (
         await case.client.post(f"/api/v1/admin/users/{user_id}/access-invitation")
     ).status_code == 409
+    async with case.database.sessions() as db:
+        revoked = await db.scalar(
+            select(AccountInvitation).where(
+                AccountInvitation.user_id == user_id, AccountInvitation.used_at.is_(None)
+            )
+        )
+        assert revoked is not None and revoked.revoked_at is not None
+    assert (
+        await case.client.post(
+            "/api/v1/auth/activate", json={"token": token, "password": SECOND_PASSWORD}
+        )
+    ).status_code == 400
     if old_cookie:
         case.client.cookies.set(
             case.app.state.auth_settings.cookie_name,

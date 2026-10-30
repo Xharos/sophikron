@@ -141,6 +141,7 @@ class DirectoryAccountResponse(UserResponse):
     """Extend only administrator directory responses with current saved group tags."""
 
     group_assignments: list[GroupAssignment] = Field(default_factory=list)
+    promotions: list[PromotionBadge] = Field(default_factory=list)
 
 
 class UserPage(BaseModel):
@@ -161,6 +162,8 @@ class SearchResult(BaseModel):
     last_name: str
     status: str
     group_assignments: list[GroupAssignment] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    promotions: list[PromotionBadge] = Field(default_factory=list)
 
 
 class EventResponse(BaseModel):
@@ -189,6 +192,7 @@ class EventTypeResponse(BaseModel):
     """Describe registered event types without querying the journal or exposing identities."""
 
     code: str
+    family: str
     label: str
     icon: str
     message: str

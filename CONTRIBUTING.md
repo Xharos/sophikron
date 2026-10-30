@@ -47,7 +47,7 @@ The existing `run_tests.py` launcher runs the complete suite, including migratio
 reapplication and SQLAlchemy metadata comparison, in a disposable Docker Compose project with
 synthetic secrets. Docker Desktop must be running. It reuses the project Compose files, keeps the
 development `.env` and persistent database untouched, and removes only its own test services and
-volumes. See [database verification](database.md#verification) for configuration and manual subsets.
+volumes. See [database verification](docs/database.md#verification) for configuration and manual subsets.
 
 From `frontend/`:
 
@@ -83,19 +83,39 @@ Keep each operational subject in one reference and link to it from related featu
 | Subject | Reference |
 | --- | --- |
 | Verification commands and release checks | This document |
-| PostgreSQL, migration history and database operations | [database.md](database.md) |
-| Annual timetables, audiences, diagnostics and ICS | [timetable.md](timetable.md) |
-| Local demo scenario and API-only seeding | [timetable demo data](timetable.md#local-demo-data) |
-| Identities, sessions, keys and account recovery | [authentication.md](authentication.md) |
-| Accounts, promotion partitions and activity journal | [administration.md](administration.md) |
-| Subjects and public site configuration | [site-administration.md](site-administration.md) |
-| Frontend/BFF boundaries and deployment | [frontend-bff.md](frontend-bff.md) |
-| Course content and private files | [lessons.md](lessons.md), [lesson-documents.md](lesson-documents.md) |
-| Pedagogical statistics | [statistics.md](statistics.md) |
+| PostgreSQL, migration history and database operations | [database.md](docs/database.md) |
+| Annual timetables, audiences, diagnostics and ICS | [timetable.md](docs/timetable.md) |
+| Local demo scenario and API-only seeding | [timetable demo data](docs/timetable.md#local-demo-data) |
+| Identities, sessions, keys and account recovery | [authentication.md](docs/authentication.md) |
+| Accounts, promotion partitions and activity journal | [administration.md](docs/administration.md) |
+| Subjects and public site configuration | [administration.md](docs/administration.md) |
+| Frontend/BFF boundaries and deployment | [frontend-bff.md](docs/frontend-bff.md) |
+| Course content and private files | [lessons.md](docs/lessons.md) |
+| Pedagogical statistics | [statistics.md](docs/statistics.md) |
 
-Keep historical audits and architecture decisions as records. They do not replace current feature
-or deployment instructions. Avoid appending implementation diaries, repeated migration inventories
-or copied verification commands to feature documents.
+Keep `/docs` focused on architecture, component contracts and deployment design, written in English.
+Keep contribution and release verification instructions in this root-level guide.
+Do not add temporary security reviews, audit reports or implementation diaries to `/docs`.
+
+## Button design contract
+
+Use the shared rules in `frontend/src/app.css`; do not introduce local button palettes, borders,
+hover effects or shadows. The three variants are filled primary (`button is-primary`), secondary
+(`button`, optionally `is-light`), and quiet (`button is-text`). Icon-only controls use the shared
+`icon-button` geometry; navigation and selection controls use the quiet variant.
+Secondary and icon controls use a subtle gradient and thin tinted border. The shared `--action-tone`
+drives both resting and hover gradients, including warning/danger tones; never hard-code a primary
+hover for semantic actions. Filled primary actions remain solid and graph legends remain borderless.
+Warning (`button is-warning`) and danger (`button is-danger`) are semantic tones with the same
+geometry, motion and focus rules. Every danger action must open a confirmation first, or be the
+explicit confirmation button inside an already-open dialog/panel. Informational warning controls
+must not use danger styling. Retain disabled/loading states, accessible labels and reduced-motion
+support. Check text contrast at rest and on hover in light and dark themes.
+Chart visibility legends use the dedicated borderless soft-background `chart-toggle` variant;
+keep it independent of pressed-button primary styling. Subject/promotion cards use neutral surfaces
+with subtle assigned-color tints, a bounded subject emblem or promotion swatch, and neutral readable
+labels. Emblems use an automatically contrasting foreground. Semantic warning and danger
+tones take precedence over the secondary `is-light` treatment.
 
 ## Licensing
 
@@ -104,3 +124,5 @@ By contributing, you agree that your contributions will be distributed under the
 ## Questions
 
 Use GitHub Discussions for questions and general discussions, when available. Use issues for bug reports and feature requests.
+
+For builds containing local commits or uncommitted changes, use the [revision-aware build script](docs/database.md#building-images-with-revision-metadata). A modified build is labelled explicitly in the dashboard.

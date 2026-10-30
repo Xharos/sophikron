@@ -5,6 +5,7 @@ from sqlalchemy import select
 
 from app.models import Promotion, PromotionCustomGroup, PromotionCustomGroupMember, UserPromotion
 from app.repositories.groups import GroupsRepository
+from app.services.activity import record_event
 from app.services.attendance_pdf import (
     AttendanceGroup,
     AttendanceStudent,
@@ -154,7 +155,7 @@ class AttendanceService:
             )
             name, color = f"{promotion.identifier} - {promotion.year}", promotion.color
             generated_at = self.auth.clock()
-        return await anyio.to_thread.run_sync(
+        result = await anyio.to_thread.run_sync(
             render_attendance_pdf,
             name,
             color,
@@ -165,3 +166,13 @@ class AttendanceService:
             groups,
             defined,
         )
+        async with self.auth.db.begin():
+            await record_event(
+                self.auth.db,
+                "promotion.attendance_exported",
+                actor.id,
+                resource_type="promotion",
+                resource_id=promotion_id,
+                data={"variant": variant, "student_count": len(students)},
+            )
+        return result

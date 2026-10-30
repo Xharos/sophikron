@@ -60,6 +60,167 @@
 	color-scheme: dark;
 }
 
+/* Three button variants: filled primary, outlined secondary, and quiet. Semantic
+   warning/danger tones use the same geometry, motion, focus and disabled rules. */
+:root body :where(button, a.button, .icon-button) {
+	--action-tone: var(--color-primary);
+	--action-soft-bg: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--action-tone) 5%, var(--color-surface)),
+		var(--color-surface) 65%
+	);
+	--action-soft-hover: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--action-tone) 9%, var(--color-surface)),
+		var(--color-surface) 75%
+	);
+	--action-fg: var(--color-primary);
+	--action-bg: var(--action-soft-bg);
+	--action-border: color-mix(in srgb, var(--action-tone) 22%, var(--color-border));
+	--action-hover: var(--action-soft-hover);
+}
+:root body :is(button, a.button, .icon-button) {
+	box-sizing: border-box;
+	border: 1px solid var(--action-border);
+	border-radius: var(--radius-small);
+	background: var(--action-bg);
+	color: var(--action-fg);
+	font-family: var(--font-body);
+	font-weight: 600;
+	text-decoration: none;
+	cursor: pointer;
+	box-shadow: 0 1px 2px light-dark(rgb(23 43 54 / 6%), rgb(0 0 0 / 18%));
+	transition:
+		background-color 160ms ease,
+		border-color 160ms ease,
+		box-shadow 160ms ease,
+		transform 160ms ease;
+}
+:root body button:where(:not(.button):not(.icon-button)),
+:root body :is(.button.is-text, .button.is-ghost) {
+	--action-bg: transparent;
+	--action-border: transparent;
+	--action-hover: var(--color-soft);
+	--action-hover-shadow: none;
+	box-shadow: none;
+}
+:root body .button.is-primary:where(:not(.is-light)),
+:root body button:where([aria-pressed='true']:not(.chart-toggle), .active) {
+	--action-bg: var(--color-primary);
+	--action-fg: var(--color-on-primary);
+	--action-hover: var(--color-primary-hover);
+}
+:root body .button.is-light {
+	--action-bg: var(--action-soft-bg);
+	--action-fg: var(--color-primary);
+	--action-hover: var(--action-soft-hover);
+}
+:root body :is(.button.is-warning, button.action-warning) {
+	--action-tone: var(--color-warning);
+	--action-bg: var(--action-soft-bg);
+	--action-fg: var(--color-warning);
+	--action-hover: var(--action-soft-hover);
+}
+:root body :is(.button.is-danger, button.action-danger) {
+	--action-tone: var(--color-danger);
+	--action-bg: var(--action-soft-bg);
+	--action-fg: var(--color-danger);
+	--action-hover: var(--action-soft-hover);
+}
+/* Chart legends intentionally use a borderless, softly filled control. */
+:root body button.chart-toggle {
+	--action-bg: var(--color-subtle);
+	--action-fg: var(--color-ink);
+	--action-border: transparent;
+	--action-hover: var(--color-soft);
+	--action-hover-shadow: none;
+	padding: 0.35rem 0.65rem;
+	border: 0;
+	box-shadow: none;
+}
+:root body button.chart-toggle:hover:not(:disabled):not([aria-disabled='true']) {
+	border: 0;
+	box-shadow: none;
+}
+/* Colored identity is concentrated in emblems and swatches, not full-card fills. */
+:root body button.promotion-card {
+	--action-bg: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--promotion-color) 5%, var(--color-surface)),
+		var(--color-surface) 65%
+	);
+	--action-fg: var(--color-ink);
+	--action-border: color-mix(in srgb, var(--promotion-color) 22%, var(--color-border));
+	--action-hover: linear-gradient(
+		135deg,
+		color-mix(in srgb, var(--promotion-color) 9%, var(--color-surface)),
+		var(--color-surface) 75%
+	);
+}
+:root body button.promotion-card strong {
+	color: var(--color-ink);
+}
+:root body button.promotion-card :is(.muted, .promotion-card-top) {
+	color: var(--color-muted);
+}
+.card-emblem {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 44px;
+	height: 44px;
+	flex-shrink: 0;
+	border-radius: 12px;
+	background: var(--promotion-color);
+	color: var(--promotion-ink);
+	box-shadow: inset 0 0 0 1px rgb(0 0 0 / 8%);
+}
+.promotion-swatch {
+	width: 10px;
+	height: 10px;
+	border-radius: 50%;
+	background: var(--promotion-color);
+	border: 1px solid color-mix(in srgb, var(--promotion-color), var(--color-border));
+}
+.promotion-card .promotion-year {
+	display: inline-flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+.promotion-card .promotion-card-top {
+	padding-bottom: 0.8rem;
+	border-bottom: 1px solid color-mix(in srgb, var(--promotion-color) 12%, var(--color-border));
+}
+:root body :is(button, a.button, .icon-button):hover:not(:disabled):not([aria-disabled='true']) {
+	background: var(--action-hover);
+	color: var(--action-fg);
+	border-color: var(--action-border);
+	box-shadow: var(
+		--action-hover-shadow,
+		0 3px 8px light-dark(rgb(23 43 54 / 12%), rgb(0 0 0 / 28%))
+	);
+}
+:root body :is(button, a.button, .icon-button):focus-visible {
+	outline: 2px solid var(--action-fg);
+	outline-offset: 3px;
+}
+:root body :is(button, a.button, .icon-button):is(:disabled, [aria-disabled='true']) {
+	opacity: 0.5;
+	cursor: not-allowed;
+	box-shadow: none;
+	transform: none;
+}
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+	:root body :is(.button, .promotion-card):hover:not(:disabled):not([aria-disabled='true']) {
+		transform: translateY(-1px);
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	:root body :is(button, a.button, .icon-button) {
+		transition: none;
+	}
+}
+
 html {
 	background: var(--color-paper);
 }
@@ -124,7 +285,7 @@ strong,
 	color: var(--color-on-primary);
 	border-color: transparent;
 }
-.button.is-primary:hover {
+.button.is-primary:not(.is-light):hover {
 	background: var(--color-primary-hover);
 }
 .button.is-light {
@@ -186,30 +347,22 @@ strong,
 }
 /* Bulma's light status variants otherwise keep pale backgrounds in dark mode. */
 .notification.is-success,
-.notification.is-success.is-light,
-.button.is-success,
-.button.is-success.is-light {
+.notification.is-success.is-light {
 	background: var(--color-success-soft);
 	color: var(--color-success);
 }
 .notification.is-warning,
-.notification.is-warning.is-light,
-.button.is-warning,
-.button.is-warning.is-light {
+.notification.is-warning.is-light {
 	background: var(--color-warning-soft);
 	color: var(--color-warning);
 }
 .notification.is-danger,
-.notification.is-danger.is-light,
-.button.is-danger,
-.button.is-danger.is-light {
+.notification.is-danger.is-light {
 	background: var(--color-danger-soft);
 	color: var(--color-danger);
 }
 .notification.is-info,
-.notification.is-info.is-light,
-.button.is-info,
-.button.is-info.is-light {
+.notification.is-info.is-light {
 	background: var(--color-info-soft);
 	color: var(--color-info);
 }
@@ -243,20 +396,6 @@ textarea:focus-visible {
 	border-bottom: var(--border-thin);
 	padding: var(--space-2) var(--space-3);
 }
-.navbar {
-	background: transparent;
-	min-height: 3.5rem;
-}
-.navbar-item {
-	color: var(--color-muted);
-	font-size: 0.88rem;
-	border-radius: var(--radius-small);
-}
-a.navbar-item:hover,
-a.navbar-item[aria-current='page'] {
-	color: var(--color-ink);
-	background: var(--color-soft);
-}
 .brand {
 	flex-shrink: 1;
 	min-width: 0;
@@ -284,22 +423,10 @@ a.navbar-item[aria-current='page'] {
 	min-width: 0;
 	overflow-wrap: anywhere;
 }
-.account-name {
-	max-width: 14rem;
-	overflow-wrap: anywhere;
-}
-.anonymous-nav .navbar-brand {
-	width: 100%;
-	align-items: center;
-	justify-content: space-between;
-}
 .header-login {
 	flex-shrink: 0;
 	margin-left: auto;
 	font-size: 0.875rem;
-}
-.anonymous-nav .brand {
-	margin-right: var(--space-1);
 }
 .site-footer {
 	border-top: var(--border-thin);
@@ -506,10 +633,6 @@ a.navbar-item[aria-current='page'] {
 }
 
 @media (max-width: 1023px) {
-	.navbar-menu {
-		background: var(--color-paper);
-		box-shadow: none;
-	}
 	.home-hero {
 		gap: var(--space-4);
 	}
@@ -1430,16 +1553,68 @@ a.navbar-item[aria-current='page'] {
 }
 .member-picker {
 	max-height: 360px;
-	overflow: auto;
+	overflow-y: auto;
+	overflow-x: hidden;
+	display: grid;
+	gap: 0.5rem;
+	padding: 0.2rem;
 }
 .member-choice {
 	display: flex;
 	align-items: center;
-	gap: 1rem;
-	padding: 0.85rem 0.3rem;
-	border-bottom: var(--border-thin);
+	gap: 0.7rem;
+	padding: 0.7rem;
+	border: var(--border-thin);
+	border-radius: var(--radius-small);
+	background: var(--color-surface);
+	min-width: 0;
 	font-size: 0.87rem;
 	cursor: pointer;
+}
+.member-choice:hover,
+.member-choice.selected {
+	background: var(--color-soft);
+	border-color: var(--color-primary);
+}
+.member-choice:focus-within {
+	outline: 2px solid var(--color-primary);
+	outline-offset: 1px;
+}
+.account-picker-toolbar {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) minmax(0, 10rem);
+	align-items: center;
+	gap: 0.6rem;
+	margin-bottom: 0.8rem;
+}
+.account-picker-toolbar .search-field {
+	min-width: 0;
+	display: flex;
+}
+.account-picker-toolbar :is(.input, select) {
+	box-sizing: border-box;
+	min-height: 0;
+	height: 2.65rem;
+	font-size: 0.8rem;
+	width: 100%;
+	min-width: 0;
+}
+.account-picker-toolbar .select {
+	min-width: 0;
+	width: 100%;
+	height: 2.65rem;
+}
+@media (max-width: 450px) {
+	.account-picker-toolbar {
+		grid-template-columns: minmax(0, 1fr) minmax(0, 7.3rem);
+		gap: 0.4rem;
+	}
+	.account-picker-toolbar .search-field .input {
+		padding-left: 2rem;
+	}
+	.account-picker-toolbar .search-field > .app-icon {
+		left: 0.65rem;
+	}
 }
 
 @media (max-width: 1150px) {

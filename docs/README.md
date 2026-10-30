@@ -1,22 +1,25 @@
-# Documentation
+# Architecture documentation
 
-This directory contains the documentation for Sophikron.
+This directory documents the application architecture, component contracts and deployment design in English.
+Contribution and release verification instructions belong in [CONTRIBUTING.md](../CONTRIBUTING.md).
+Temporary reviews, audit reports and implementation diaries do not belong here.
 
-## Contents
+Start with [local installation, secrets and migrations](database.md). The root
+[Getting started](../README.md#getting-started) gives the shortest path to a working test instance.
+Use synthetic data locally; the [demo guide](../script/README.md) describes API-only seeding.
 
-- `CONTRIBUTING.md`: guidelines for contributing to the project.
-- `database.md`: PostgreSQL setup, secrets, transactions, migrations and tests.
-- `authentication.md`: encrypted identities, account activation, sessions, roles and initial setup.
-- `administration.md`: account identities, permissions, promotions, interactive search and activity.
-- `frontend-bff.md`: responsive administrator/teacher workspace, invitations, BFF security and deployment.
-- `site-administration.md`: subjects, public homepage/calendar, khôlleurs and course-right revocation.
-- `lessons.md`: course pages, inherited availability, collaborators, promotion access and audit events.
-- `timetable.md`: whole-class timetables, annual settings, publication and personal ICS subscriptions.
-- `statistics.md`: dashboard statistics, ICS adoption and bounded API monitoring.
-- `lesson-documents.md`: private files, validation, quotas, disk cleanup, backup and restore.
-- `lesson-resources-audit.md`: historical audit preceding document/table implementation.
-- `security-audit.md`: security review, antivirus removal, verified controls and remaining risks.
-- `decisions/`: Architecture Decision Records documenting significant technical decisions.
+| Reference | Contents |
+| --- | --- |
+| [Environment configuration](environment.md) | Variable reference, defaults, secret provisioning and Compose overrides |
+| [Database and setup](database.md) | Docker, six secrets, startup, roles, migrations and isolated tests |
+| [Authentication](authentication.md) | Identities, sessions, setup, invitations, recovery and key rotation |
+| [Administration](administration.md) | Accounts, promotions, subjects, public settings, course responsibility, journal and versions |
+| [Frontend/BFF](frontend-bff.md) | Pages, cookies, same-origin requests, proxy trust and HTTPS deployment |
+| [Courses and documents](lessons.md) | Content trees, inherited access, private files, quotas, cleanup and backup/restore |
+| [Timetables](timetable.md) | Audiences, annual settings, publication, diagnostics and ICS |
+| [Statistics](statistics.md) | Pedagogical indicators, storage and API monitoring |
+| [Architecture decisions](decisions/README.md) | Why schema and deployment boundaries were chosen |
 
-Release verification commands and documentation ownership are centralized in
-[CONTRIBUTING.md](CONTRIBUTING.md#verification-before-a-release).
+Subject/site operations are consolidated into administration; document operations into courses.
+
+See also [building images with revision metadata](database.md#building-images-with-revision-metadata).
