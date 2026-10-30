@@ -16,7 +16,7 @@ def test_root(settings_factory: Callable[..., DatabaseSettings]) -> None:
     """Serve the root even when no PostgreSQL server is running."""
     with patch.object(AsyncEngine, "connect", autospec=True) as connect:
         with TestClient(create_app(settings_factory())) as client:
-            response = client.get("/")
+            response = client.get("/api/v1")
         connect.assert_not_called()
     assert response.status_code == 200
     assert response.json() == {"message": "Welcome to Sophikron API"}
@@ -46,7 +46,7 @@ def test_health_check_database_unavailable(
         check.side_effect = failure
         with TestClient(create_app(settings_factory())) as client:
             response = client.get("/health")
-            assert client.get("/").status_code == 200
+            assert client.get("/api/v1").status_code == 200
             check.side_effect = None
             assert client.get("/health").status_code == 200
     assert response.status_code == 503

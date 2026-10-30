@@ -1,0 +1,27 @@
+# Explicit local overlay: never load this file in production.
+services:
+  db:
+    ports:
+      - "127.0.0.1:${DB_PUBLISHED_PORT:-5432}:5432"
+  backend:
+    environment:
+      AUTH_ENVIRONMENT: ${AUTH_ENVIRONMENT:-development}
+      AUTH_COOKIE_SECURE: "false"
+      AUTH_CORS_ENABLED: "true"
+      # Exact browser/BFF origin; direct API tools use the loopback API origin.
+      AUTH_ALLOWED_ORIGINS: '["${SOPHIKRON_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}","http://localhost:3000","http://localhost:${BACKEND_PORT:-8000}","http://127.0.0.1:${BACKEND_PORT:-8000}"]'
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+  frontend:
+    build:
+      args:
+        SITE_ORIGIN: ${SOPHIKRON_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
+    environment:
+      ORIGIN: ${SOPHIKRON_ORIGIN:-http://localhost:${FRONTEND_PORT:-3000}}
+      # Ignore all browser-supplied forwarding headers in local direct access.
+      ADDRESS_HEADER: ""
+
+# Docker must allow host access on this network for the loopback PostgreSQL port.
+networks:
+  sophikron_network:
+    internal: false

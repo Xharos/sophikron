@@ -18,6 +18,12 @@ RUN npm run check && npm run lint
 
 FROM dependencies AS build
 
+ARG SOPHIKRON_BUILD_REVISION=unknown
+ENV SOPHIKRON_BUILD_REVISION=$SOPHIKRON_BUILD_REVISION
+
+ARG SITE_ORIGIN=http://localhost:3000
+ENV ORIGIN=$SITE_ORIGIN
+
 COPY frontend/ ./
 
 RUN npm ci

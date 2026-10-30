@@ -2,7 +2,14 @@
 
 on:
   push:
+    branches:
+      - main
+      - develop
+
   pull_request:
+    branches:
+      - main
+      - develop
 
 permissions:
   contents: read
@@ -41,31 +48,40 @@ jobs:
           umask 077
           secret_dir="$RUNNER_TEMP/sophikron-db-secrets"
           mkdir -p "$secret_dir"
+          openssl rand -hex 32 > "$secret_dir/bootstrap_password"
+          touch "$secret_dir/smtp_password"
+          chmod 0444 "$secret_dir/bootstrap_password" "$secret_dir/smtp_password"
+          echo "SOPHIKRON_SECRETS_DIRECTORY=$secret_dir" >> "$GITHUB_ENV"
+          echo "AUTH_BOOTSTRAP_USERNAME=ci_setup" >> "$GITHUB_ENV"
           for role in admin app migration; do
-            openssl rand -hex 32 > "$secret_dir/$role"
-            chmod 0444 "$secret_dir/$role"
+            openssl rand -hex 32 > "$secret_dir/db_${role}_password"
+            chmod 0444 "$secret_dir/db_${role}_password"
           done
-          echo "DB_ADMIN_SECRET_PATH=$secret_dir/admin" >> "$GITHUB_ENV"
-          echo "DB_APP_SECRET_PATH=$secret_dir/app" >> "$GITHUB_ENV"
-          echo "DB_MIGRATION_SECRET_PATH=$secret_dir/migration" >> "$GITHUB_ENV"
+          encryption_key=$(openssl rand -base64 32)
+          lookup_key=$(openssl rand -base64 32)
+          printf '{"active_key":"ci","encryption_keys":{"ci":"%s"},"lookup_key":"%s"}\n' \
+            "$encryption_key" "$lookup_key" > "$secret_dir/identity_keys.json"
+          chmod 0444 "$secret_dir/identity_keys.json"
           echo "DB_NAME=sophikron_test" >> "$GITHUB_ENV"
           echo "DB_HOST=127.0.0.1" >> "$GITHUB_ENV"
           echo "DB_PORT=5432" >> "$GITHUB_ENV"
           echo "DB_USER=sophikron_app" >> "$GITHUB_ENV"
-          echo "DB_PASSWORD_FILE=$secret_dir/app" >> "$GITHUB_ENV"
-          echo "DB_TEST_MIGRATION_PASSWORD_FILE=$secret_dir/migration" >> "$GITHUB_ENV"
+          echo "DB_PASSWORD_FILE=$secret_dir/db_app_password" >> "$GITHUB_ENV"
+          echo "DB_TEST_MIGRATION_PASSWORD_FILE=$secret_dir/db_migration_password" >> "$GITHUB_ENV"
           echo "DB_TEST_API_URL=http://127.0.0.1:8000" >> "$GITHUB_ENV"
+          echo "AUTH_ENVIRONMENT=development" >> "$GITHUB_ENV"
+          echo 'AUTH_ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:8000"]' >> "$GITHUB_ENV"
+          echo "AUTH_COOKIE_SECURE=false" >> "$GITHUB_ENV"
 
       - name: Validate Compose configuration
         working-directory: .
-        run: docker compose config --quiet
+        run: docker compose -f compose.yaml -f compose.local.yaml config --quiet
 
       - name: Start full PostgreSQL and API services
         working-directory: .
         timeout-minutes: 15
         run: |
-          docker compose -p sophikron-ci up -d --build --wait db backend
-          docker compose -p sophikron-ci run --build --rm migrate
+          docker compose -f compose.yaml -f compose.local.yaml -p sophikron-ci up -d --build --wait db backend
 
       - name: PostgreSQL integration tests
         env:
@@ -73,10 +89,11 @@ jobs:
         run: python -m pytest -q -m integration
 
       - name: Stop verification services
-        if: always()
+        # Earlier failures can skip secret preparation; Compose down also needs this path.
+        if: ${{ always() && env.SOPHIKRON_SECRETS_DIRECTORY != '' }}
         working-directory: .
         run: >-
-          docker compose -p sophikron-ci down
+          docker compose -f compose.yaml -f compose.local.yaml -p sophikron-ci down
 
   frontend:
     name: Frontend checks
@@ -92,7 +109,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: "22"
+          node-version: "24"
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
@@ -104,6 +121,12 @@ jobs:
 
       - name: Check Svelte and TypeScript
         run: npm run check
+
+      - name: Install Chromium for browser security tests
+        run: npx playwright install --with-deps chromium
+
+      - name: Test BFF security boundaries
+        run: npm test
 
       - name: Build frontend
         run: npm run build

@@ -1,0 +1,108 @@
+<script lang="ts">
+	import { onMount } from 'svelte';
+	import { command, promotionCandidates } from '#lib/dashboard';
+	import type { DirectoryUser, Promotion } from '#lib/types';
+	import Modal from '../Modal.svelte';
+	import Icon from '../Icon.svelte';
+	import AccountIdentity from '../AccountIdentity.svelte';
+	let {
+		promotion,
+		onclose,
+		onsaved
+	}: { promotion: Promotion; onclose: () => void; onsaved: () => void } = $props();
+	let query = $state('');
+	let role = $state<'user' | 'teaching'>('user');
+	let users = $state<DirectoryUser[]>([]);
+	let selected = $state<number[]>([]);
+	let loading = $state(true);
+	let busy = $state(false);
+	let message = $state('');
+	let ready = $state(false);
+	onMount(() => {
+		ready = true;
+	});
+	$effect(() => {
+		const q = query;
+		const r = role;
+		if (!ready) return;
+		const controller = new AbortController();
+		const timer = setTimeout(
+			async () => {
+				loading = true;
+				message = '';
+				try {
+					const candidates = await promotionCandidates(r, q, controller.signal, promotion.id);
+					if (!controller.signal.aborted) users = candidates;
+				} catch (cause) {
+					if (!controller.signal.aborted) message = (cause as Error).message;
+				} finally {
+					if (!controller.signal.aborted) loading = false;
+				}
+			},
+			q ? 220 : 0
+		);
+		return () => {
+			controller.abort();
+			clearTimeout(timer);
+		};
+	});
+	async function save(): Promise<void> {
+		busy = true;
+		message = '';
+		try {
+			await command('addMembers', { id: promotion.id, data: { user_ids: selected } });
+			onsaved();
+			onclose();
+		} catch (cause) {
+			message = (cause as Error).message;
+		} finally {
+			busy = false;
+		}
+	}
+</script>
+
+<Modal
+	title={`Ajouter à ${promotion.identifier} ${promotion.year}`}
+	description="Sélectionnez les comptes à affecter à cette promotion."
+	{busy}
+	{onclose}
+>
+	<div class="account-picker-toolbar">
+		<div class="search-field">
+			<Icon name="search" /><input
+				class="input"
+				aria-label="Rechercher des comptes à ajouter"
+				placeholder="Nom, prénom ou identifiant…"
+				bind:value={query}
+			/>
+		</div>
+		<div class="select">
+			<select aria-label="Type de compte" bind:value={role}
+				><option value="user">Élèves</option><option value="teaching">Enseignants</option></select
+			>
+		</div>
+	</div>
+	{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
+	<div class="member-picker" aria-busy={loading}>
+		{#if loading}<p class="loading-state">Recherche…</p>{:else}{#each users as user (user.id)}<label
+					class="member-choice"
+					class:selected={selected.includes(user.id)}
+					><input type="checkbox" value={user.id} bind:group={selected} disabled={busy} />
+					<AccountIdentity {user} /></label
+				>{/each}
+			{#if users.length === 0}<p class="empty-state">Aucun compte trouvé.</p>{/if}{/if}
+	</div>
+	<p class="help mt-3">
+		{selected.length} compte{selected.length === 1 ? '' : 's'} sélectionné{selected.length === 1
+			? ''
+			: 's'}. Les affectations existantes seront conservées.
+	</p>
+	<div class="dialog-actions">
+		<button class="button is-light" disabled={busy} onclick={onclose}>Annuler</button><button
+			class="button is-primary"
+			class:is-loading={busy}
+			disabled={busy || selected.length === 0}
+			onclick={save}><Icon name="plus" />Ajouter la sélection</button
+		>
+	</div>
+</Modal>

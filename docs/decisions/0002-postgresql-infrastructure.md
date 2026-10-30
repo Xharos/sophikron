@@ -16,7 +16,8 @@ before introducing business models.
   secret files at startup; never construct URLs through string interpolation.
 - Own engines in the FastAPI lifespan and use request/task-specific sessions. Services explicitly
   delimit atomic transactions; dependency teardown never commits and writes are not retried blindly.
-- Keep the API running during database outages with bounded readiness checks and anonymous 503s.
+- Require migrated installation state and database access at startup; after startup, bound readiness
+  checks and return anonymous 503s during outages. This supersedes the initial startup-without-DB design.
 - Separate administrator, migration and runtime accounts. Restrict the runtime account to data
   operations in the dedicated application schema; deny access to Alembic version tracking.
 - Run Alembic explicitly with the migration account, the shared metadata and an unpooled connection.
@@ -26,11 +27,11 @@ before introducing business models.
 
 ## Consequences
 
-Configuration errors stop startup, while temporary database failures do not. Secret rotation requires
+Configuration errors and an unavailable database stop startup; readiness can recover after a later outage. Secret rotation requires
 coordinating PostgreSQL role passwords, mounted files and process restarts. Migrations and provisioning
 are explicit operational steps. No business schema, replica orchestration, automatic retries or
-encryption of personal data is introduced. The latter is a separate application concern to resolve
-before storing real user information. No additional paid infrastructure is required.
+encryption of personal data was introduced by this infrastructure decision. Application encryption
+was subsequently adopted in ADR 0003/0004. No additional paid infrastructure is required.
 
 ## Alternatives
 

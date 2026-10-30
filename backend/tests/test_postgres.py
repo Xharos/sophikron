@@ -3,12 +3,9 @@
 import asyncio
 import json
 import os
-import subprocess
-import sys
 from collections.abc import AsyncIterator
 from contextlib import aclosing
 from pathlib import Path
-from urllib.parse import quote
 from urllib.request import urlopen
 from uuid import uuid4
 
@@ -22,64 +19,28 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
+from app.models import Promotion, PromotionGroup, PromotionPartition, TimetablePreferences
+from tests.postgres import run_alembic
 
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.usefixtures("migrated_database"),
     pytest.mark.skipif(
         os.environ.get("DB_INTEGRATION") != "1", reason="Configure the dedicated test database"
     ),
 ]
 
 
-def run_alembic(*arguments: str) -> None:
-    """Run migration commands against the isolated test database without logging secrets."""
-    environment = os.environ.copy()
-    environment["DB_USER"] = "sophikron_migrator"
-    environment["DB_PASSWORD_FILE"] = environment["DB_TEST_MIGRATION_PASSWORD_FILE"]
-    result = subprocess.run(
-        [sys.executable, "-m", "alembic", *arguments],
-        cwd=Path(__file__).resolve().parents[1], env=environment,
-        capture_output=True, text=True, timeout=60, check=False,
-    )
-    if result.returncode != 0:
-        diagnostics = "\n".join((result.stdout, result.stderr)).strip()
-        for secret_path in {os.environ.get("DB_PASSWORD_FILE"), environment["DB_PASSWORD_FILE"]}:
-            if secret_path is None:
-                continue
-            try:
-                secret = Path(secret_path).read_text(encoding="utf-8").rstrip("\r\n")
-            except (OSError, UnicodeError):
-                continue
-            if secret:
-                diagnostics = diagnostics.replace(secret, "[REDACTED]")
-                diagnostics = diagnostics.replace(quote(secret, safe=""), "[REDACTED]")
-        pytest.fail(
-            f"Alembic {' '.join(arguments)} failed (exit {result.returncode}):\n{diagnostics}",
-            pytrace=False,
-        )
-
-
-@pytest.fixture(scope="session", autouse=True)
-def migrated_database() -> None:
-    """Refuse other databases and migrate the explicitly designated test database."""
-    if os.environ.get("DB_NAME") != "sophikron_test" or (
-        os.environ.get("DB_USER") != "sophikron_app"
-    ):
-        pytest.fail(
-            "Integration tests require DB_NAME=sophikron_test and DB_USER=sophikron_app",
-            pytrace=False,
-        )
-    run_alembic("upgrade", "head")
-
-
 @pytest_asyncio.fixture
 async def databases(migrated_database: None) -> AsyncIterator[tuple[Database, Database]]:
     """Own application and migration engines for one test and release both pools."""
     application = Database(DatabaseSettings())
-    migration = Database(DatabaseSettings(
-        user="sophikron_migrator",
-        password_file=Path(os.environ["DB_TEST_MIGRATION_PASSWORD_FILE"]),
-    ))
+    migration = Database(
+        DatabaseSettings(
+            user="sophikron_migrator",
+            password_file=Path(os.environ["DB_TEST_MIGRATION_PASSWORD_FILE"]),
+        )
+    )
     try:
         yield application, migration
     finally:
@@ -95,7 +56,8 @@ async def records(databases: tuple[Database, Database]) -> AsyncIterator[Table]:
     _, migration = databases
     metadata = MetaData(schema="sophikron")
     table = Table(
-        f"test_{uuid4().hex}", metadata,
+        f"test_{uuid4().hex}",
+        metadata,
         Column("id", Integer, Identity(), primary_key=True),
         Column("value", String, unique=True, nullable=False),
     )
@@ -123,11 +85,83 @@ def test_migration_roundtrip(migrated_database: None) -> None:
     run_alembic("check")
 
 
+@pytest.mark.asyncio
+async def test_timetable_migration_roundtrip_preserves_partitions(
+    databases: tuple[Database, Database],
+) -> None:
+    """Rollback timetable storage without removing prior promotion and partition data."""
+    _, migration = databases
+    timetable_tables = {
+        "timetable_calendars",
+        "timetable_rooms",
+        "timetable_school_years",
+        "teacher_availability",
+        "timetable_years",
+        "timetable_series",
+        "timetable_subscriptions",
+        "promotion_custom_groups",
+        "promotion_custom_group_members",
+        "timetable_preferences",
+    }
+    async with migration.sessions.begin() as session:
+        promotion_id = await session.scalar(
+            Promotion.__table__.insert()
+            .values(year=2026, identifier=f"migration-{uuid4().hex}", color="#244BC1")
+            .returning(Promotion.id)
+        )
+        await session.execute(
+            PromotionPartition.__table__.insert().values(
+                promotion_id=promotion_id, kind="halves", revision=uuid4().hex, target_size=3
+            )
+        )
+        await session.execute(
+            PromotionGroup.__table__.insert().values(
+                promotion_id=promotion_id, kind="halves", number=1, x=123, y=456
+            )
+        )
+    try:
+        run_alembic("downgrade", "0006_promotion_groups")
+        async with migration.sessions() as session:
+            tables = set(
+                await session.scalars(
+                    text(
+                        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'sophikron'"
+                    )
+                )
+            )
+            assert timetable_tables.isdisjoint(tables)
+            assert {"promotion_partitions", "promotion_groups", "promotion_group_members"} <= tables
+            assert await session.scalar(select(Promotion.id).where(Promotion.id == promotion_id))
+            assert (
+                await session.execute(
+                    select(PromotionGroup.x, PromotionGroup.y).where(
+                        PromotionGroup.promotion_id == promotion_id
+                    )
+                )
+            ).one() == (123, 456)
+    finally:
+        run_alembic("upgrade", "head")
+        async with migration.sessions.begin() as session:
+            await session.execute(Promotion.__table__.delete().where(Promotion.id == promotion_id))
+    async with migration.sessions() as session:
+        tables = set(
+            await session.scalars(
+                text("SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'sophikron'")
+            )
+        )
+        assert timetable_tables <= tables
+        assert "timetable_template_versions" not in tables
+        preference = await session.get(TimetablePreferences, 1)
+        assert preference is not None and preference.auto_archive
+        assert len(preference.revision) == 32
+    run_alembic("check")
+
+
 def test_running_api() -> None:
     """Verify the root and readiness JSON responses of the running API."""
     base_url = os.environ["DB_TEST_API_URL"]
     for path, expected in (
-        ("/", {"message": "Welcome to Sophikron API"}),
+        ("/api/v1", {"message": "Welcome to Sophikron API"}),
         ("/health", {"status": "ok", "database": "connected"}),
     ):
         with urlopen(base_url + path, timeout=5) as response:
@@ -175,7 +209,9 @@ async def test_transaction_rollback(databases: tuple[Database, Database], record
 
 @pytest.mark.asyncio
 async def test_request_session_isolation_and_rollback(
-    databases: tuple[Database, Database], records: Table, database_request: Request,
+    databases: tuple[Database, Database],
+    records: Table,
+    database_request: Request,
 ) -> None:
     """Isolate uncommitted writes and roll them back when the real request dependency closes."""
     application, _ = databases
@@ -191,7 +227,9 @@ async def test_request_session_isolation_and_rollback(
 
 @pytest.mark.asyncio
 async def test_cancelled_transaction(
-    databases: tuple[Database, Database], records: Table, database_request: Request,
+    databases: tuple[Database, Database],
+    records: Table,
+    database_request: Request,
 ) -> None:
     """Release the connection and roll back writes when a request task is cancelled."""
     application, _ = databases
@@ -219,17 +257,21 @@ async def test_cancelled_transaction(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("statement", [
-    "CREATE TABLE sophikron.forbidden (id integer)",
-    "CREATE TABLE public.forbidden (id integer)",
-    "CREATE SCHEMA forbidden",
-    "CREATE ROLE forbidden_role",
-    "SET ROLE sophikron_migrator",
-    "SELECT * FROM sophikron.alembic_version",
-    "DELETE FROM sophikron.alembic_version",
-])
+@pytest.mark.parametrize(
+    "statement",
+    [
+        "CREATE TABLE sophikron.forbidden (id integer)",
+        "CREATE TABLE public.forbidden (id integer)",
+        "CREATE SCHEMA forbidden",
+        "CREATE ROLE forbidden_role",
+        "SET ROLE sophikron_migrator",
+        "SELECT * FROM sophikron.alembic_version",
+        "DELETE FROM sophikron.alembic_version",
+    ],
+)
 async def test_application_permissions(
-    databases: tuple[Database, Database], statement: str,
+    databases: tuple[Database, Database],
+    statement: str,
 ) -> None:
     """Deny runtime DDL, privilege escalation and access to migration tracking."""
     application, _ = databases
@@ -249,10 +291,14 @@ async def test_roles_are_not_administrators(databases: tuple[Database, Database]
     application, migration = databases
     for database in (application, migration):
         async with database.sessions() as session:
-            row = (await session.execute(text(
-                "SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls "
-                "FROM pg_catalog.pg_roles WHERE rolname = current_user"
-            ))).one()
+            row = (
+                await session.execute(
+                    text(
+                        "SELECT rolsuper, rolcreaterole, rolcreatedb, rolreplication, rolbypassrls "
+                        "FROM pg_catalog.pg_roles WHERE rolname = current_user"
+                    )
+                )
+            ).one()
             assert not any(row)
 
 
@@ -318,3 +364,91 @@ async def test_lock_timeout(databases: tuple[Database, Database], records: Table
                 assert error.value.orig.sqlstate == "55P03"
     finally:
         await limited.close()
+
+
+@pytest.mark.asyncio
+async def test_feature_migration_stages(databases: tuple[Database, Database]) -> None:
+    """Create each feature only at its revision and enforce configuration constraints."""
+    _, migration = databases
+    try:
+        run_alembic("downgrade", "0001_authentication")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.activity_events')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')")) is None
+            assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.release_check')")) is None
+            )
+            assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.site_settings')")) is None
+            )
+        run_alembic("upgrade", "0002_configuration")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT id FROM sophikron.release_check")) == 1
+            assert await session.scalar(
+                text("SELECT attempted_at FROM sophikron.release_check WHERE id = 1")
+            ) is None
+            assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')"))
+            assert (
+                await session.scalar(text("SELECT to_regclass('sophikron.calendar_usage_totals')"))
+                is None
+            )
+            assert (
+                await session.scalar(
+                    text("SELECT text_color FROM sophikron.site_settings WHERE id = 1")
+                )
+                == "#244BC1"
+            )
+            for name in (
+                "promotions",
+                "subjects",
+                "lessons",
+                "timelines",
+                "timeline_events",
+                "timeline_event_bars",
+            ):
+                assert (
+                    await session.scalar(
+                        text("SELECT to_regclass(:name)"), {"name": "sophikron." + name}
+                    )
+                    is None
+                )
+            assert (
+                await session.scalar(
+                    text(
+                        "SELECT count(*) FROM information_schema.columns "
+                        "WHERE table_schema = 'sophikron' AND table_name = 'site_settings' "
+                        "AND column_name = 'holiday_color'"
+                    )
+                )
+                == 0
+            )
+        run_alembic("upgrade", "0003_promotions")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.user_promotions')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.subjects')")) is None
+        run_alembic("upgrade", "0004_subjects")
+        async with migration.sessions() as session:
+            assert await session.scalar(text("SELECT to_regclass('sophikron.teacher_subjects')"))
+            assert await session.scalar(text("SELECT to_regclass('sophikron.lessons')")) is None
+        run_alembic("upgrade", "0006_promotion_groups")
+        async with migration.sessions() as session:
+            assert (
+                await session.scalar(
+                    text("SELECT to_regclass('sophikron.timetable_subscriptions')")
+                )
+                is None
+            )
+        run_alembic("upgrade", "head")
+        async with migration.sessions() as session:
+            assert await session.scalar(
+                text("SELECT to_regclass('sophikron.calendar_usage_totals')")
+            )
+            assert await session.scalar(
+                text("""
+                SELECT is_nullable = 'YES' FROM information_schema.columns
+                WHERE table_schema = 'sophikron' AND table_name = 'teacher_availability'
+                AND column_name = 'ranges'
+            """)
+            )
+    finally:
+        run_alembic("upgrade", "head")
