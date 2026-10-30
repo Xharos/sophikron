@@ -1,5 +1,6 @@
 """Private timetable APIs and read-only, capability-authorized ICS retrieval."""
 
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request, Response
@@ -24,6 +25,7 @@ from app.services.errors import AuthError
 from app.services.teacher_availability import TeacherAvailabilityService
 from app.services.timetable import TimetableService
 from app.services.timetable_configuration import TimetableConfigurationService
+from app.services.timetable_export import TimetableExportService
 
 
 class SubscriptionCommand(InputModel):
@@ -47,6 +49,34 @@ def timetable_service(auth: AuthServiceDependency) -> TimetableService:
 
 
 Service = Annotated[TimetableService, Depends(timetable_service)]
+
+
+@router.get("/calendars/{identifier}/pdf", response_class=Response)
+async def export_pdf(
+    identifier: int,
+    actor: AuthenticatedUser,
+    auth: AuthServiceDependency,
+    year_id: Annotated[int, Query(gt=0)],
+    day: date,
+    node: Annotated[
+        str,
+        Query(
+            pattern=r"^(promotion|unassigned|(halves|thirds|kholles|custom|student)-[1-9][0-9]{0,15})$"
+        ),
+    ] = "promotion",
+) -> Response:
+    """Export the selected authorized week and audience without khôlle sessions or exact dates."""
+    document = await TimetableExportService(auth).generate(actor, identifier, year_id, day, node)
+    return Response(
+        document,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="emploi-du-temps-{identifier}.pdf"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
 
 
 @router.get("/staff/catalog")

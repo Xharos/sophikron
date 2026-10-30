@@ -309,7 +309,7 @@
 			promotionId={selected.id}
 			onchanged={changed}
 		/>{/key}
-	<PromotionAttendance promotionId={selected.id} />
+	<PromotionAttendance promotionId={selected.id} revision={revision + groupsRevision} />
 {/if}
 {#if editor}<PromotionEditor
 		promotion={editor === 'new' ? undefined : editor}

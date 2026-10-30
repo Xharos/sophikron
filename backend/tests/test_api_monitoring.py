@@ -1,11 +1,41 @@
 """Monitoring bounds, distributions and ASGI transfer/error behavior without a database."""
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
 
-from app.services.api_monitoring import ApiMonitor, ApiMonitoringMiddleware, category_for, p95
+from app.services.api_monitoring import (
+    ApiMonitor,
+    ApiMonitoringMiddleware,
+    category_for,
+    monitoring_timestamps,
+    p95,
+)
+from app.services.statistics import PARIS, statistics_window
+
+
+@pytest.mark.parametrize("month,day,count", [(10, 30, 1440), (3, 29, 1380), (10, 25, 1500)])
+def test_daily_axis_covers_full_paris_day(month: int, day: int, count: int) -> None:
+    """Include future daily buckets and respect both daylight-saving transitions."""
+    now = datetime(2026, month, day, 12, tzinfo=PARIS)
+    points = monitoring_timestamps(now, "day")
+    assert len(points) == count
+    assert points[0].astimezone(PARIS).hour == 0
+    end = (points[-1] + timedelta(minutes=1)).astimezone(PARIS)
+    assert end.hour == end.minute == 0
+    assert end.date() == now.date() + timedelta(days=1)
+    assert points[-1] > now
+
+
+@pytest.mark.parametrize("period", ["week", "month"])
+def test_longer_axes_keep_current_time_cutoff(period: str) -> None:
+    """Keep existing week/month bounds and omit future intervals."""
+    now = datetime(2026, 10, 30, 12, 34, tzinfo=PARIS)
+    points = monitoring_timestamps(now, period)
+    assert points[0] == statistics_window(now, period)[0]
+    assert points[-1] <= now
+    assert (now - points[-1]) < timedelta(hours=1 if period == "week" else 24)
 
 
 def test_categories_and_histograms_are_bounded_and_keep_exact_http_codes() -> None:

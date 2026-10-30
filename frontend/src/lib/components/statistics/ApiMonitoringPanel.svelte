@@ -48,8 +48,8 @@
 		{ key: 'max_ms', label: 'Maximum', color: '#c65b39' }
 	] as const;
 	type LatencyKey = (typeof latencySeries)[number]['key'];
-	let hidden = $state<LatencyKey[]>([]);
-	let percentage = $state(false);
+	type SeriesKey = LatencyKey | (typeof families)[number]['key'];
+	let hidden = $state<SeriesKey[]>([]);
 	let message = $state('');
 	onMount(() => {
 		ready = true;
@@ -90,13 +90,16 @@
 			)
 		)
 	);
-	const maxRequests = $derived(Math.max(1, ...points.map((point) => point.requests)));
+	const visibleFamilies = $derived(families.filter((family) => !hidden.includes(family.key)));
 	const maxCount = $derived(
-		percentage ? 100 : Math.max(1, ...points.map((point) => point.requests))
+		Math.max(
+			1,
+			...points.map((point) => visibleFamilies.reduce((sum, family) => sum + point[family.key], 0))
+		)
 	);
 	const barWidth = $derived(974 / Math.max(1, points.length));
 	const x = (index: number): number => 58 + (index + 0.5) * barWidth;
-	function toggle(key: LatencyKey): void {
+	function toggle(key: SeriesKey): void {
 		hidden = hidden.includes(key) ? hidden.filter((item) => item !== key) : [...hidden, key];
 	}
 	function latencyPath(key: LatencyKey): string {
@@ -163,7 +166,18 @@
 				Aucune requête enregistrée sur cette période pour ces opérations.
 			</p>{/if}
 		<div class="monitor-controls mt-4">
-			<div class="monitor-legend"><span style="color:#517c91">▮ Requêtes (axe gauche)</span></div>
+			<div class="monitor-legend" role="group" aria-label="Réponses HTTP (axe gauche)">
+				{#each families as family (family.key)}
+					<button
+						type="button"
+						class:muted-series={hidden.includes(family.key)}
+						aria-pressed={!hidden.includes(family.key)}
+						onclick={() => toggle(family.key)}
+					>
+						<span style:color={family.color} aria-hidden="true">●</span>{family.label}
+					</button>
+				{/each}
+			</div>
 			<div class="monitor-legend" role="group" aria-label="Courbes des durées (axe droit)">
 				{#each latencySeries as series (series.key)}
 					<button
@@ -194,19 +208,27 @@
 					stroke="currentColor"
 					opacity=".15"
 				/>
-				<text x="50" y={185 - tick * 150} text-anchor="end">{number(maxRequests * tick)}</text>
+				<text x="50" y={185 - tick * 150} text-anchor="end">{number(maxCount * tick)}</text>
 				<text x="1040" y={185 - tick * 150}>{number(maxLatency * tick)}</text>
 			{/each}
 			{#each points as point, index (point.timestamp)}
-				<rect
-					class="request-bar"
-					x={58 + index * barWidth}
-					y={180 - (point.requests / maxRequests) * 150}
-					width={Math.max(0.2, barWidth - 0.4)}
-					height={(point.requests / maxRequests) * 150}
-					fill="#517c91"
-					opacity=".3"
-				/>
+				{#each visibleFamilies as family, layer (family.key)}
+					{@const value = point[family.key]}
+					{@const base = visibleFamilies
+						.slice(0, layer)
+						.reduce((sum, item) => sum + point[item.key], 0)}
+					<rect
+						class="request-bar"
+						data-series={family.key}
+						x={58 + index * barWidth}
+						y={180 - ((base + value) / maxCount) * 150}
+						width={Math.max(0.2, barWidth - 0.4)}
+						height={(value / maxCount) * 150}
+						fill={family.color}
+					>
+						<title>{instant(point.timestamp)} · {family.label} : {number(point[family.key])}</title>
+					</rect>
+				{/each}
 			{/each}
 			{#each visibleSeries as series (series.key)}
 				<path
@@ -230,61 +252,8 @@
 			{#if points.length}<text x="58" y="210">{instant(points[0].timestamp)}</text><text
 					x="1032"
 					y="210"
-					text-anchor="end">{instant(points[points.length - 1].timestamp)}</text
-				>{/if}
-		</svg>
-		<div class="monitor-controls">
-			<h4 class="title is-6 mb-0">Réponses HTTP</h4>
-			<label class="checkbox"
-				><input type="checkbox" bind:checked={percentage} /> Afficher en pourcentage</label
-			>
-		</div>
-		<div class="monitor-legend">
-			{#each families as family (family.key)}<span style:color={family.color}>● {family.label}</span
-				>{/each}
-		</div>
-		<svg
-			class="monitor-plot"
-			viewBox="0 0 1100 220"
-			role="img"
-			aria-label="Répartition des réponses HTTP"
-		>
-			{#each [0, 0.5, 1] as tick (tick)}<line
-					x1="58"
-					x2="1078"
-					y1={180 - tick * 150}
-					y2={180 - tick * 150}
-					stroke="currentColor"
-					opacity=".15"
-				/><text x="50" y={185 - tick * 150} text-anchor="end"
-					>{number(maxCount * tick)}{percentage ? '%' : ''}</text
-				>{/each}
-			{#each points as point, index (point.timestamp)}
-				{#each families as family, layer (family.key)}
-					{@const value = percentage
-						? point.requests
-							? (point[family.key] / point.requests) * 100
-							: 0
-						: point[family.key]}
-					{@const offset = families.slice(0, layer).reduce((sum, item) => sum + point[item.key], 0)}
-					{@const base = percentage
-						? point.requests
-							? (offset / point.requests) * 100
-							: 0
-						: offset}
-					<rect
-						x={58 + (index / Math.max(1, points.length)) * 1020}
-						y={180 - ((base + value) / maxCount) * 150}
-						width={Math.max(0.2, 1020 / Math.max(1, points.length) - 0.4)}
-						height={(value / maxCount) * 150}
-						fill={family.color}
-					/>
-				{/each}
-			{/each}
-			{#if points.length}<text x="58" y="210">{instant(points[0].timestamp)}</text><text
-					x="1078"
-					y="210"
-					text-anchor="end">{instant(points[points.length - 1].timestamp)}</text
+					text-anchor="end"
+					>{period === 'day' ? '00:00' : instant(points[points.length - 1].timestamp)}</text
 				>{/if}
 		</svg>
 		<div class="table-container mt-4">

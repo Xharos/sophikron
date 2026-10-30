@@ -4,10 +4,12 @@ import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from io import BytesIO
 
 import pytest
 import pytest_asyncio
 from icalendar import Calendar
+from pypdf import PdfReader
 from sqlalchemy import delete, select
 from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.exc import IntegrityError
@@ -178,6 +180,36 @@ async def workspace(auth_case: Harness) -> AsyncIterator[Workspace]:
                 delete(TimetableSchoolYear).where(TimetableSchoolYear.school_year == school_year)
             )
         await clear_promotions([promotion])
+
+
+@pytest.mark.asyncio
+async def test_week_pdf_scope_and_private_unpublished_calendar(workspace: Workspace) -> None:
+    """Allow authorized unpublished exports and deny unrelated calendars, pupils and bad nodes."""
+    w = workspace
+    state = await w.add(title="Export PDF")
+    year = state["years"][0]
+    params = {"year_id": year["id"], "day": state["events"][0]["start"][:10]}
+    path = f"/api/v1/timetable/calendars/{w.calendar_id}/pdf"
+    response = await w.case.client.get(path, params=params)
+    assert response.status_code == 200, response.text
+    assert "no-store" in response.headers["cache-control"]
+    assert len(PdfReader(BytesIO(response.content)).pages) == 1
+    assert (
+        await w.case.client.get(path, params={**params, "node": "student-999999"})
+    ).status_code == 404
+    standalone = await w.create()
+    own = await w.board(standalone)
+    standalone_params = {**params, "year_id": own["years"][0]["id"]}
+    standalone_path = f"/api/v1/timetable/calendars/{standalone}/pdf"
+    exported = await w.case.client.get(standalone_path, params=standalone_params)
+    assert exported.status_code == 200
+    assert PdfReader(BytesIO(exported.content)).metadata.title == own["calendars"][0]["name"]
+    await w.login(w.teacher_name)
+    assert (await w.case.client.get(standalone_path, params=standalone_params)).status_code == 404
+    await w.login(w.pupil_name)
+    assert (await w.case.client.get(path, params=params)).status_code == 403
+    w.case.client.cookies.clear()
+    assert (await w.case.client.get(path, params=params)).status_code == 401
 
 
 @pytest.mark.asyncio

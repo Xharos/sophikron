@@ -2,6 +2,7 @@
 	import { untrack } from 'svelte';
 	import { resolve } from '$app/paths';
 	import Modal from '#lib/components/Modal.svelte';
+	import Icon from '#lib/components/Icon.svelte';
 	import TimetableTree from '#lib/components/TimetableTree.svelte';
 	import TimetableGrid from '#lib/components/TimetableGrid.svelte';
 	import TimetableBlockEditor from '#lib/components/TimetableBlockEditor.svelte';
@@ -475,6 +476,18 @@
 			/></label
 		>
 		<div class="toolbar-spacer"></div>
+		{#if activeYear && date && !loading}
+			<a
+				class="button is-small is-light"
+				aria-label="Exporter cette vue en PDF"
+				title="Exporter cette vue en PDF"
+				target="_blank"
+				rel="noopener noreferrer"
+				href={`${resolve('/timetable/[id]/pdf', { id: String(agenda.id) })}?${new URLSearchParams({ year_id: String(activeYear.id), day: date, node: selected.key })}`}
+			>
+				<Icon name="pdf" />
+			</a>
+		{/if}
 		{#if editable && activeYear}<button
 				class="button is-small is-light"
 				disabled={busy}

@@ -36,15 +36,29 @@ async def create_roster(case: Harness, promotion_id: int, count: int = 7) -> lis
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("variant", ["roster", "halves", "thirds", "kholles", "custom", "global"])
 async def test_attendance_export_respects_directory_scope_and_current_roster(
     auth_case: Harness,
+    variant: str,
 ) -> None:
     """Export archived/current pupils privately and deny unrelated or inactive callers."""
     case = auth_case
     promotion_id = await make_promotion(case, "PRESENCE")
-    path = f"/api/v1/promotion-groups/{promotion_id}/attendance"
+    path = f"/api/v1/promotion-groups/{promotion_id}/attendance?variant={variant}"
     try:
         pupils = await create_roster(case, promotion_id, 3)
+        if variant in {"halves", "thirds", "kholles", "custom"}:
+            assert (await case.client.get(path)).status_code == 404
+            if variant == "custom":
+                saved = await case.client.put(
+                    f"/api/v1/promotion-groups/{promotion_id}/custom/0",
+                    json={"name": "Option", "student_ids": pupils, "expected_revision": None},
+                )
+                assert saved.status_code == 200, saved.text
+            else:
+                await preview_and_save(
+                    case, f"/api/v1/promotion-groups/{promotion_id}", pupils, variant
+                )
         response = await case.client.patch(
             f"/api/v1/admin/users/{pupils[0]}/archive", json={"archived": True}
         )
@@ -57,7 +71,9 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
         pdf = PdfReader(BytesIO(response.content))
         assert pdf.metadata.title.endswith(" - 2019")
         # Three pupil rows, plus the fixture administrator's name in the footer.
-        assert pdf.pages[0].extract_text().count("Valentin") == 4
+        assert pdf.pages[0].extract_text().count("Valentin") == (
+            4
+        )
         for role in ("teacher", "kholleur", "user"):
             identifier, username = await case.create(role)
             response = await case.client.put(
@@ -86,7 +102,9 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
         )).status_code == 204
         response = await case.client.get(path)
         # Includes the remaining two pupils plus the newly attached student account.
-        assert PdfReader(BytesIO(response.content)).pages[0].extract_text().count("Valentin") == 4
+        assert PdfReader(BytesIO(response.content)).pages[0].extract_text().count("Valentin") == (
+            4 if variant in {"roster", "global", "halves", "thirds", "kholles"} else 3
+        )
         case.client.cookies.clear()
         assert (await case.client.get(path)).status_code == 401
     finally:

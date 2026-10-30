@@ -575,14 +575,14 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		await page.getByRole('button', { name: 'Voir l’utilisation', exact: true }).waitFor();
 		assert.ok(releaseMonitoring);
 		releaseMonitoring();
-		await page.getByRole('checkbox', { name: 'Afficher en pourcentage' }).waitFor();
+		await page.getByRole('button', { name: 'Succès 2xx', exact: true }).waitFor();
 		const monitor = page.locator('.api-monitoring');
 		assert.equal(await monitor.getByRole('slider').count(), 0);
 		assert.equal(await monitor.locator('.monitor-details').count(), 0);
-		assert.equal(await monitor.getByRole('img').count(), 2);
+		assert.equal(await monitor.getByRole('img').count(), 1);
 		const latencyPlot = monitor.getByRole('img').first();
 		assert.equal(await latencyPlot.getAttribute('viewBox'), '0 0 1100 220');
-		assert.equal(await latencyPlot.locator('.request-bar').count(), 1);
+		assert.equal(await latencyPlot.locator('.request-bar').count(), 4);
 		assert.equal(await latencyPlot.locator('path[data-series]').count(), 3);
 		for (const [label, key] of [
 			['Moyenne', 'mean_ms'],
@@ -594,7 +594,21 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 			assert.equal(await legend.getAttribute('aria-pressed'), 'false');
 			assert.equal(await latencyPlot.locator(`path[data-series="${key}"]`).count(), 0);
 		}
-		assert.equal(await latencyPlot.locator('.request-bar').count(), 1);
+		assert.equal(await latencyPlot.locator('.request-bar').count(), 4);
+		for (const [label, key] of [
+			['Succès 2xx', 'successes'],
+			['Redirections 3xx', 'redirects'],
+			['Refus et erreurs 4xx', 'client_errors'],
+			['Erreurs serveur 5xx', 'server_errors']
+		]) {
+			const legend = monitor.getByRole('button', { name: label, exact: true });
+			await legend.click();
+			assert.equal(await legend.getAttribute('aria-pressed'), 'false');
+			assert.equal(await latencyPlot.locator(`rect[data-series="${key}"]`).count(), 0);
+			await legend.focus();
+			await page.keyboard.press('Enter');
+			assert.equal(await latencyPlot.locator(`rect[data-series="${key}"]`).count(), 1);
+		}
 		assert.ok(!(await latencyPlot.innerHTML()).includes('NaN'));
 		for (const label of ['Moyenne', 'P95 approximatif', 'Maximum']) {
 			const legend = monitor.getByRole('button', { name: label, exact: true });
@@ -623,7 +637,10 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 						monitor.closest('.statistics-panel').lastElementChild === monitor
 				)
 		);
-		await page.getByRole('checkbox', { name: 'Afficher en pourcentage' }).check();
+		assert.equal(
+			await monitor.getByRole('checkbox', { name: 'Afficher en pourcentage' }).count(),
+			0
+		);
 		await page.setViewportSize({ width: 390, height: 844 });
 		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
 		await page.setViewportSize({ width: 1440, height: 1000 });
@@ -769,6 +786,17 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 		assert.equal(await archivePolicy.isChecked(), false);
 		await page.goto(origin + '/timetable/1');
 		await page.locator('.ec-event:not(.ec-bg-event)').first().waitFor();
+		const pdfExport = page.getByRole('link', { name: 'Exporter cette vue en PDF' });
+		await pdfExport.waitFor();
+		assert.equal(await pdfExport.getAttribute('target'), '_blank');
+		const exportUrl = new URL(await pdfExport.getAttribute('href'), origin);
+		assert.equal(exportUrl.pathname, '/timetable/1/pdf');
+		assert.equal(exportUrl.searchParams.get('year_id'), '1');
+		assert.equal(exportUrl.searchParams.get('node'), 'promotion');
+		assert.equal(
+			exportUrl.searchParams.get('day'),
+			await page.getByLabel('Date affichée').inputValue()
+		);
 		assert.equal(await page.getByRole('button', { name: 'Publier', exact: true }).count(), 0);
 		assert.equal(
 			await page.getByRole('button', { name: 'Éditer la semaine type', exact: true }).count(),

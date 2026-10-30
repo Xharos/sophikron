@@ -6,6 +6,30 @@ import { promotionAttendance } from '../src/lib/server/promotionAttendance.ts';
 process.env.ORIGIN = 'https://school.example';
 process.env.BACKEND_ORIGIN = 'http://internal.example';
 
+test('document variants relay only allowed values', async () => {
+	for (const variant of ['halves', 'thirds', 'kholles', 'custom', 'global']) {
+		await promotionAttendance(
+			event(['teaching.read'], `promotionId=12&variant=${variant}`).input,
+			async (url) => {
+				assert.equal(
+					url,
+					`http://internal.example/api/v1/promotion-groups/12/attendance?variant=${variant}`
+				);
+				return new Response('%PDF-test', { headers: { 'content-type': 'application/pdf' } });
+			}
+		);
+	}
+	await assert.rejects(
+		promotionAttendance(
+			event(['teaching.read'], 'promotionId=12&variant=other').input,
+			async () => {
+				throw new Error('Must not fetch');
+			}
+		),
+		{ status: 422 }
+	);
+});
+
 function event(permissions: string[] = ['teaching.read'], query = 'promotionId=12') {
 	const deleted: string[] = [];
 	const url = new URL(`https://school.example/dashboard/attendance?${query}`);

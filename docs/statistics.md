@@ -82,9 +82,11 @@ current day, seven calendar days or thirty calendar days in Europe/Paris. The au
 may produce 1,500 daily minutes or 169 weekly hours. Missing intervals use null latencies, not zeroes.
 The monitoring card sits after the other statistics, directly above the overview activity journal.
 It always combines all operations, without a moving cursor or interval summary. The first chart overlays
-request counts (left axis) with mean, approximate P95 and maximum durations (right axis); legend buttons
-toggle each duration series. The second chart shows HTTP 2xx/3xx/4xx/5xx counts or percentages.
-A table below both charts details request counts, durations and server errors per operation.
+stacked HTTP 2xx/3xx/4xx/5xx counts (left axis) with mean, approximate P95 and maximum
+durations (right axis). Legend buttons independently toggle every HTTP family and duration series.
+The daily axis spans midnight to the next midnight in Paris, including future empty intervals with
+null latencies. Week and month still stop at the current interval.
+A table below the chart details request counts, durations and server errors per operation.
 The API still supports protected diagnostic queries. Totals use weighted duration sums/counts;
 P95 merges fixed histogram counts rather than averaging percentiles.
 

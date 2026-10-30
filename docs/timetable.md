@@ -7,6 +7,28 @@ Create a separate calendar for the following year; no implicit copying or annual
 The existing full-screen week grid, group tree, subject colors, teaching-role badges, keyboard
 copy/paste, contextual menu, dragging and resizing remain available.
 
+## Weekly PDF export
+
+The small PDF icon on `/timetable/{id}` opens the displayed week and selected tree audience
+in a new tab for saving or printing. The export is one landscape A4 page: weekday names only
+(Saturday when enabled), a time axis, marked breaks and self-service lunch, and pale subject-colored
+blocks showing the subject, Cours/TD/TP, recipients and teacher names. Overlapping lessons occupy
+parallel columns. Text shrinks to fit each block; densely overlapping or very short lessons may
+therefore have small text. Exact calendar dates and session time ranges are omitted.
+Khôlle sessions and sessions targeting khôlle groups are always excluded.
+
+The only title is the promotion name (including its year), or the calendar name when unassigned;
+group and pupil selections append their display label. Group intersections and common lessons follow
+the same current membership rules as the screen. Holiday names replace breaks on closed days.
+
+`GET /api/v1/timetable/calendars/{id}/pdf?year_id={year}&day=YYYY-MM-DD&node={key}`
+uses the existing timetable board authorization and resolves all labels and sessions server-side.
+The SvelteKit relay is `/timetable/{id}/pdf` with the same query. Unpublished and unassigned
+calendars remain exportable by authorized administrators; other staff retain the existing board
+scope. Invalid or foreign years and recipients are rejected. PDFs are generated in memory using
+ReportLab, marked private/no-store/noindex, and never stored. No browser payload can supply events,
+colors, names or an arbitrary upstream URL.
+
 ## Rooms and academic years
 
 The administration page at /timetable/settings contains rooms, academic-year labels and the automatic archive policy.

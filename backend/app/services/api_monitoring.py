@@ -29,6 +29,36 @@ CATEGORIES = {
     "statistics": "Statistiques",
     "other": "Autres",
 }
+
+
+def monitoring_timestamps(now: datetime, period: Period) -> list[datetime]:
+    """Return chart intervals, covering the full Paris day for the daily view.
+
+    Parameters
+    ----------
+    now, period
+        Aware current instant and selected chart period.
+
+    Returns
+    -------
+    list[datetime]
+        UTC bucket starts; future daily buckets have no recorded measurements.
+    """
+    start, _ = statistics_window(now, period)
+    unit = {"day": "minute", "week": "hour", "month": "day"}[period]
+    end = (start.astimezone(PARIS) + timedelta(days=1)).astimezone(UTC) if period == "day" else now
+    timestamps = []
+    cursor = start.astimezone(UTC)
+    while cursor < end if period == "day" else cursor <= end:
+        timestamps.append(cursor)
+        cursor = (
+            (cursor.astimezone(PARIS) + timedelta(days=1)).astimezone(UTC)
+            if unit == "day"
+            else cursor + timedelta(**{unit + "s": 1})
+        )
+    return timestamps
+
+
 # Noncumulative finite upper bounds in microseconds; the final bucket is overflow.
 BOUNDS = (
     1000,
@@ -364,15 +394,7 @@ class ApiMonitoringService:
             ):
                 category_histograms.setdefault(name, {})[key] = int(count)
             points = {row["t"]: dict(row) for row in rows}
-            timestamps = []
-            cursor = start.astimezone(UTC)
-            while cursor <= now:
-                timestamps.append(cursor)
-                cursor = (
-                    (cursor.astimezone(PARIS) + timedelta(days=1)).astimezone(UTC)
-                    if unit == "day"
-                    else cursor + timedelta(**{unit + "s": 1})
-                )
+            timestamps = monitoring_timestamps(now, period)
             result = []
             total_histogram = Counter()
             total_requests = total_duration = total_errors = maximum = 0

@@ -1,9 +1,8 @@
 /** Relay private roster PDFs through a fixed, authenticated backend endpoint. */
-import { isIP } from 'node:net';
 import type { RequestEvent } from '@sveltejs/kit';
 import { hasPermission } from '../access.ts';
-import { configuration } from './api.ts';
-import { BackendError, relayCookies, sessionCookie } from './backend.ts';
+import { privatePdf } from './privatePdf.ts';
+import { BackendError } from './backend.ts';
 
 export async function promotionAttendance(
 	event: RequestEvent,
@@ -20,49 +19,14 @@ export async function promotionAttendance(
 	const promotionId = Number(value);
 	if (!value || !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(promotionId))
 		throw new BackendError(422, 'Promotion invalide.');
-	const config = configuration();
-	const address = event.getClientAddress().replace(/^::ffff:/, '');
-	if (!isIP(address)) throw new BackendError(503, 'Adresse client indisponible.');
-	const headers = new Headers({ accept: 'application/pdf', 'x-forwarded-for': address });
-	const cookie = event.cookies.get(sessionCookie(config));
-	if (cookie && /^[A-Za-z0-9_-]{1,128}$/.test(cookie))
-		headers.set('cookie', `${sessionCookie(config)}=${cookie}`);
-	let response: Response;
-	try {
-		response = await transport(
-			`${config.backendOrigin}/api/v1/promotion-groups/${promotionId}/attendance`,
-			{
-				headers,
-				redirect: 'error',
-				cache: 'no-store',
-				signal: AbortSignal.any([event.request.signal, AbortSignal.timeout(60000)])
-			}
-		);
-	} catch {
-		throw new BackendError(503, 'La génération du PDF a échoué. Réessayez.');
-	}
-	relayCookies(response, event.cookies, config);
-	if (response.status === 401)
-		event.cookies.delete(sessionCookie(config), { path: '/', secure: config.secure });
-	if (!response.ok) {
-		let message = 'La génération du PDF a échoué.';
-		try {
-			const failure = await response.json();
-			if (typeof failure.detail === 'string') message = failure.detail;
-		} catch {
-			/* Do not expose raw infrastructure errors. */
-		}
-		throw new BackendError(response.status, message);
-	}
-	if (response.headers.get('content-type')?.split(';')[0] !== 'application/pdf')
-		throw new BackendError(502, 'Le service a renvoyé un document invalide.');
-	return new Response(response.body, {
-		headers: {
-			'Content-Type': 'application/pdf',
-			'Content-Disposition': `inline; filename="presence-promotion-${promotionId}.pdf"`,
-			'Cache-Control': 'private, no-store',
-			'X-Content-Type-Options': 'nosniff',
-			'X-Robots-Tag': 'noindex, nofollow'
-		}
-	});
+	const variant = event.url.searchParams.get('variant') ?? 'roster';
+	if (!['roster', 'halves', 'thirds', 'kholles', 'custom', 'global'].includes(variant))
+		throw new BackendError(422, 'Document invalide.');
+	const query = variant === 'roster' ? '' : `?variant=${variant}`;
+	return privatePdf(
+		event,
+		`/promotion-groups/${promotionId}/attendance${query}`,
+		`presence-promotion-${promotionId}.pdf`,
+		transport
+	);
 }

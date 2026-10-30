@@ -111,29 +111,47 @@ test('attendance PDF opens from below the promotion roster with the selected ide
 		await server.listen();
 		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
 		for (const role of ['admin', 'teacher', 'kholleur']) {
+			let hasGroups = false;
 			const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
 			await page.route('**/dashboard/data?**', (route) => {
 				const resource = new URL(route.request().url()).searchParams.get('resource');
 				return route.fulfill({
 					json:
 						resource === 'promotionGroups'
-							? { students: [], partitions: [] }
-							: resource === 'promotions'
-								? {
-										items: [
-											{
-												id: 1,
-												identifier: 'PT',
-												year: 2026,
-												color: '#244BC1',
-												is_active: true
-											}
-										],
-										total: 1,
-										offset: 0,
-										limit: 12
-									}
-								: { items: [], total: 0, offset: 0, limit: 50 }
+							? {
+									students: [],
+									partitions: hasGroups
+										? [
+												{
+													kind: 'halves',
+													revision: 'a',
+													target_size: 3,
+													groups: [
+														{ number: 1, x: 0, y: 0, student_ids: [] },
+														{ number: 2, x: 300, y: 0, student_ids: [] }
+													]
+												}
+											]
+										: []
+								}
+							: resource === 'customPromotionGroups'
+								? { groups: [], live: false }
+								: resource === 'promotions'
+									? {
+											items: [
+												{
+													id: 1,
+													identifier: 'PT',
+													year: 2026,
+													color: '#244BC1',
+													is_active: true
+												}
+											],
+											total: 1,
+											offset: 0,
+											limit: 12
+										}
+									: { items: [], total: 0, offset: 0, limit: 50 }
 				});
 			});
 			await page.goto(
@@ -145,6 +163,18 @@ test('attendance PDF opens from below the promotion roster with the selected ide
 				assert.equal(await link.count(), 0);
 			} else {
 				await link.waitFor();
+				await page.getByRole('link', { name: 'Liste globale', exact: true }).waitFor();
+				for (const label of [
+					'Demi-groupes',
+					'Tiers de groupe',
+					'Groupes de khôlle',
+					'Groupes personnalisés'
+				]) {
+					assert.equal(
+						await page.getByRole('link', { name: label, exact: true }).count(),
+						0
+					);
+				}
 				assert.equal(
 					await link.getAttribute('href'),
 					'/dashboard/attendance?promotionId=1'
@@ -173,6 +203,13 @@ test('attendance PDF opens from below the promotion roster with the selected ide
 				await popup.waitForLoadState();
 				assert.match(popup.url(), /\/dashboard\/attendance\?promotionId=1$/);
 				await popup.close();
+				hasGroups = true;
+				await page.reload();
+				await page.getByRole('link', { name: 'Demi-groupes', exact: true }).waitFor();
+				assert.equal(
+					await page.getByRole('link', { name: 'Tiers de groupe', exact: true }).count(),
+					0
+				);
 			}
 			await page.close();
 		}

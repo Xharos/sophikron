@@ -7,9 +7,92 @@ import pytest
 from pypdf import PdfReader
 from reportlab.lib.pagesizes import A4
 
-from app.services.attendance_pdf import AttendanceStudent, render_attendance_pdf
+from app.services.attendance_pdf import (
+    AttendanceGroup,
+    AttendanceStudent,
+    group_label,
+    render_attendance_pdf,
+)
 
 GENERATED = datetime(2026, 10, 29, 12, 34, 56, tzinfo=UTC)
+
+
+@pytest.mark.parametrize(
+    "variant,columns", [("halves", 2), ("thirds", 3), ("kholles", 3), ("custom", 3)]
+)
+def test_group_tables_paginate_with_parallel_headings(variant: str, columns: int) -> None:
+    """Repeat side-by-side headings over pages and render every pupil exactly once."""
+    groups = [
+        AttendanceGroup(
+            f"Groupe {index}",
+            [
+                AttendanceStudent(f"Élève-{index}-{pupil:03}", "Jean", archived=pupil == 89)
+                for pupil in range(90)
+            ],
+        )
+        for index in range(columns)
+    ]
+    pdf = PdfReader(
+        BytesIO(
+            render_attendance_pdf(
+                "PTSI",
+                "#4361EE",
+                [],
+                "Enseignant",
+                GENERATED,
+                variant,
+                groups,
+            )
+        )
+    )
+    assert len(pdf.pages) > 1
+    for page in pdf.pages:
+        text = page.extract_text()
+        for index in range(columns):
+            assert f"Groupe {index}" in text
+    text = "\n".join(page.extract_text() for page in pdf.pages)
+    for index in range(columns):
+        for pupil in range(90):
+            assert text.count(f"ÉLÈVE-{index}-{pupil:03}") == 1
+    assert "Remarque" not in text
+
+
+def test_global_contains_assignments_and_escaped_names() -> None:
+    """Export saved group labels alongside safely rendered identities and a blank remark."""
+    pdf = PdfReader(
+        BytesIO(
+            render_attendance_pdf(
+                "PTSI",
+                "#4361EE",
+                [AttendanceStudent("<Nom>", "Jean", assignments=("A", "X", "01"))],
+                "Enseignant",
+                GENERATED,
+                "global",
+            )
+        )
+    )
+    text = pdf.pages[0].extract_text()
+    for value in ("<NOM>", "Demi", "Tiers", "Khôlle", "Remarque", "A", "X", "01"):
+        assert value in text
+    assert [group_label(kind, 1) for kind in ("halves", "thirds", "kholles")] == ["A", "X", "01"]
+
+
+@pytest.mark.parametrize("variant", ["halves", "thirds", "kholles", "custom"])
+def test_empty_group_export_is_explicit(variant: str) -> None:
+    """Return a readable empty state when no saved composition exists."""
+    pdf = PdfReader(
+        BytesIO(
+            render_attendance_pdf(
+                "PTSI",
+                "#4361EE",
+                [],
+                "Enseignant",
+                GENERATED,
+                variant,
+            )
+        )
+    )
+    assert "Aucun groupe enregistré." in pdf.pages[0].extract_text()
 
 
 def render(students: list[AttendanceStudent]) -> PdfReader:
@@ -107,11 +190,13 @@ def test_empty_roster_and_long_names_render_without_overflow() -> None:
 
 def test_account_badges_distinguish_active_pending_and_archived_accounts() -> None:
     """Draw one green badge for an active account and red badges for other states."""
-    pdf = render([
-        AttendanceStudent("Active", "Alice", active=True),
-        AttendanceStudent("Pending", "Benoît"),
-        AttendanceStudent("Archived", "Camille", archived=True),
-    ])
+    pdf = render(
+        [
+            AttendanceStudent("Active", "Alice", active=True),
+            AttendanceStudent("Pending", "Benoît"),
+            AttendanceStudent("Archived", "Camille", archived=True),
+        ]
+    )
     fills = [
         tuple(float(value) for value in operands)
         for operands, operation in pdf.pages[0].get_contents().operations
@@ -121,3 +206,34 @@ def test_account_badges_distinguish_active_pending_and_archived_accounts() -> No
     red = (198 / 255, 40 / 255, 40 / 255)
     assert sum(color == pytest.approx(green, abs=1e-6) for color in fills) == 1
     assert sum(color == pytest.approx(red, abs=1e-6) for color in fills) == 2
+    operations = pdf.pages[0].get_contents().operations
+    assert sum(op == b"c" for _, op in operations) == 12  # Four Bezier arcs per circle.
+    assert "●" not in pdf.pages[0].extract_text()
+
+
+def test_global_omits_undefined_partitions_and_colors_only_letter_groups() -> None:
+    """Keep only defined group columns and use five distinct letter colors."""
+    from app.services.attendance_pdf import GROUP_COLORS
+
+    assert len(set(GROUP_COLORS.values())) == 5
+    assert "01" not in GROUP_COLORS
+    pdf = PdfReader(BytesIO(render_attendance_pdf(
+        "PTSI", "#4361EE", [AttendanceStudent("Nom", "Jean", assignments=("A", "", ""))],
+        "Enseignant", GENERATED, "global", defined_partitions=["halves"],
+    )))
+    text = pdf.pages[0].extract_text()
+    assert "Demi" in text and "Tiers" not in text and "Khôlle" not in text
+    assert "Remarque" in text
+
+
+def test_group_tables_have_gutters_and_no_unused_custom_columns() -> None:
+    """Separate mini tables horizontally and vertically, fitting columns to custom groups."""
+    from app.services.attendance_pdf import grouped_tables
+
+    groups = [AttendanceGroup(f"Groupe {index}", [AttendanceStudent("Nom", "Jean")])
+              for index in range(15)]
+    story = grouped_tables(groups, 3, 530)
+    assert len(story) == 10  # Five rows, each followed by vertical whitespace.
+    assert story[0]._colWidths[1::2] == [12, 12]
+    single = grouped_tables(groups[:1], 1, 530)[0]
+    assert single._colWidths == [530]

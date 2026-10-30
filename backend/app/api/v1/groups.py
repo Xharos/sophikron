@@ -18,6 +18,7 @@ from app.schemas.groups import (
     PromotionGroupsResponse,
 )
 from app.services.attendance import AttendanceService
+from app.services.attendance_pdf import AttendanceVariant
 from app.services.custom_groups import CustomGroupsService
 from app.services.groups import GroupsService
 
@@ -34,16 +35,23 @@ Service = Annotated[GroupsService, Depends(groups_service)]
 
 @router.get("/{promotion_id}/attendance", response_class=Response)
 async def attendance(
-    promotion_id: int, actor: AuthenticatedUser, auth: AuthServiceDependency
+    promotion_id: int,
+    actor: AuthenticatedUser,
+    auth: AuthServiceDependency,
+    variant: AttendanceVariant = "roster",
 ) -> Response:
     """Open an A4 PDF only for administrators or teachers sharing this promotion."""
-    document = await AttendanceService(auth).generate(actor, promotion_id)
-    return Response(document, media_type="application/pdf", headers={
-        "Content-Disposition": f'inline; filename="presence-promotion-{promotion_id}.pdf"',
-        "Cache-Control": "private, no-store",
-        "X-Content-Type-Options": "nosniff",
-        "X-Robots-Tag": "noindex, nofollow",
-    })
+    document = await AttendanceService(auth).generate(actor, promotion_id, variant)
+    return Response(
+        document,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="presence-promotion-{promotion_id}.pdf"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+            "X-Robots-Tag": "noindex, nofollow",
+        },
+    )
 
 
 @router.get("/{promotion_id}/custom/groups")
