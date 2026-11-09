@@ -46,7 +46,7 @@ class Settings:
     """Control sizes, staff, teaching hours and dates from the executable entry point."""
 
     school_year: int = 2026
-    class_count: int = 2
+    class_count: int = 1
     pupils_per_class: int = 45
     german_pupils: int = 10
     kholle_group_size: int = 3
@@ -54,7 +54,7 @@ class Settings:
     namespace: str = "demo"
     email_domain: str = "example.org"
     subject_prefix: str = ""
-    filled_calendar_indexes: tuple[int, ...] = (0,)
+    filled_calendar_indexes: tuple[int, ...] | None = None
     broadcast: bool = False
     include_summer_holidays: bool = True
     rooms: tuple[str, ...] = ("B208", "C105", "C106", "D202", "E301")
@@ -85,6 +85,7 @@ class Settings:
             "english": {"course": 1, "td": 1},
             "computer_science": {"td": 1, "tp": 1},
             "french": {"course": 2},
+            "tipe": {"course": 2},
         }
     )
     half_group_tp_subjects: tuple[str, ...] = ("si", "physics")
@@ -98,12 +99,23 @@ class Settings:
             ClassSpec(
                 prefix
                 + ("PTSI" if index % 2 == 0 else "PT")
-                + (f"{index // 2 + 1}" if index > 1 else ""),
-                prefix + f"{index + 1} année",
+                + (f"{index // 2 + 1}" if self.class_count > 1 else ""),
+                prefix
+                + ("PTSI" if index % 2 == 0 else "PT")
+                + (str(index // 2 + 1) if self.class_count > 1 else "")
+                + f" {self.school_year}/{self.school_year + 1}",
                 colors[index % len(colors)],
             )
-            for index in range(self.class_count)
+            for index in range(self.class_count * 2)
         ]
+
+    def calendar_indexes(self) -> tuple[int, ...]:
+        """Return every class by default, or the explicitly restricted subset."""
+        return (
+            self.filled_calendar_indexes
+            if self.filled_calendar_indexes is not None
+            else tuple(range(self.class_count * 2))
+        )
 
     def calendar_settings(self) -> dict:
         """Bound the calendar by the first September Monday and last July Friday."""
@@ -146,9 +158,9 @@ class Settings:
             or len(set(self.rooms)) != len(self.rooms)
         ):
             raise SeedError("Taille de groupe de khôlle ou salles invalides.")
-        if any(index < 0 or index >= self.class_count for index in self.filled_calendar_indexes):
+        if any(index < 0 or index >= self.class_count * 2 for index in self.calendar_indexes()):
             raise SeedError("Indice d’agenda à remplir invalide.")
-        if len(set(self.filled_calendar_indexes)) != len(self.filled_calendar_indexes):
+        if len(set(self.calendar_indexes())) != len(self.calendar_indexes()):
             raise SeedError("Les agendas à remplir doivent être distincts.")
         for counts in (self.teacher_counts, self.kholleur_counts):
             if any(

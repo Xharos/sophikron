@@ -35,12 +35,14 @@ async function responseData<T>(response: Response): Promise<T> {
 
 export async function read<T>(
 	resource: string,
-	params: Record<string, string | number | boolean | undefined> = {},
+	params: Record<string, string | number | boolean | number[] | undefined> = {},
 	signal?: AbortSignal
 ): Promise<T> {
 	const query = new URLSearchParams({ resource });
-	for (const [key, value] of Object.entries(params))
-		if (value !== undefined && value !== '') query.set(key, String(value));
+	for (const [key, value] of Object.entries(params)) {
+		if (Array.isArray(value)) value.forEach((id) => query.append(key, String(id)));
+		else if (value !== undefined && value !== '') query.set(key, String(value));
+	}
 	return responseData<T>(await fetch(`/dashboard/data?${query}`, { signal, cache: 'no-store' }));
 }
 

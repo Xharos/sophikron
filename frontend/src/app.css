@@ -61,7 +61,7 @@
 }
 
 /* Three button variants: filled primary, outlined secondary, and quiet. Semantic
-   warning/danger tones use the same geometry, motion, focus and disabled rules. */
+   success/warning/danger tones use the same geometry, motion, focus and disabled rules. */
 :root body :where(button, a.button, .icon-button) {
 	--action-tone: var(--color-primary);
 	--action-soft-bg: linear-gradient(
@@ -113,6 +113,12 @@
 :root body .button.is-light {
 	--action-bg: var(--action-soft-bg);
 	--action-fg: var(--color-primary);
+	--action-hover: var(--action-soft-hover);
+}
+:root body :is(.button.is-success, button.action-success) {
+	--action-tone: var(--color-success);
+	--action-bg: var(--action-soft-bg);
+	--action-fg: var(--color-success);
 	--action-hover: var(--action-soft-hover);
 }
 :root body :is(.button.is-warning, button.action-warning) {
@@ -312,6 +318,15 @@ strong,
 }
 .input {
 	min-height: 2.9rem;
+}
+/* Joined controls stretch together, including inputs taller than Bulma's default buttons. */
+.field.has-addons > .control {
+	display: flex;
+	align-items: stretch;
+}
+.field.has-addons > .control > .button {
+	height: auto;
+	align-self: stretch;
 }
 .input::placeholder,
 .textarea::placeholder {

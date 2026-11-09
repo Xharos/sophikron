@@ -88,6 +88,23 @@ function event(origin: string | null = config.origin, method = 'POST') {
 	return { input, changes };
 }
 
+test('only group assignment receives enough relay time for the bounded solver', async (t) => {
+	const timeouts: number[] = [];
+	t.mock.method(AbortSignal, 'timeout', (milliseconds: number) => {
+		timeouts.push(milliseconds);
+		return new AbortController().signal;
+	});
+	for (const [path, method] of [
+		['/timetable/kholloscope/2026/groups', 'PUT'],
+		['/timetable/kholloscope/2026/groups', 'GET'],
+		['/timetable/kholloscope/2026/generation', 'POST'],
+		['/timetable/years/1/settings', 'PUT']
+	] as const) {
+		await requestBackend(event().input, config, path, method, {}, async () => Response.json({}));
+	}
+	assert.deepEqual(timeouts, [45000, 15000, 15000, 15000]);
+});
+
 test('reject missing, null and foreign origins before adding trusted backend headers', async () => {
 	for (const origin of [null, 'null', 'https://evil.example', 'https://school.example.evil']) {
 		let calls = 0;

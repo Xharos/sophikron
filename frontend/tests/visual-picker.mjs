@@ -35,21 +35,23 @@ function pickerServer() {
 				},
 				configureServer(vite) {
 					vite.middlewares.use('/__picker', async (_request, response) => {
-						const fixture = _request.url.includes('header')
-							? 'HeaderHarness'
-							: _request.url.includes('journal')
-								? 'JournalHarness'
-								: _request.url.includes('directory')
-									? 'DirectoryHarness'
-									: _request.url.includes('groups')
-										? 'GroupsHarness'
-										: _request.url.includes('error')
-											? 'ErrorHarness'
-											: _request.url.includes('lesson')
-												? 'LessonHarness'
-												: _request.url.includes('theme')
-													? 'ThemeHarness'
-													: 'VisualPickerHarness';
+						const fixture = _request.url.includes('revision')
+							? 'RevisionHarness'
+							: _request.url.includes('header')
+								? 'HeaderHarness'
+								: _request.url.includes('journal')
+									? 'JournalHarness'
+									: _request.url.includes('directory')
+										? 'DirectoryHarness'
+										: _request.url.includes('groups')
+											? 'GroupsHarness'
+											: _request.url.includes('error')
+												? 'ErrorHarness'
+												: _request.url.includes('lesson')
+													? 'LessonHarness'
+													: _request.url.includes('theme')
+														? 'ThemeHarness'
+														: 'VisualPickerHarness';
 						const preference = /(?:^|;\s*)sophikron_theme=([^;]*)/.exec(
 							_request.headers.cookie || ''
 						)?.[1];
@@ -74,6 +76,391 @@ function pickerServer() {
 		server: { host: '127.0.0.1', port: 0, watch: null, hmr: false }
 	});
 }
+
+for (const temporary of [false, true])
+	test(`kholloscope revision keeps publication explicit (${temporary ? 'temporary' : 'permanent'})`, async () => {
+		const server = await pickerServer();
+		let browser;
+		try {
+			await server.listen();
+			browser = await chromium.launch({
+				channel: process.env.PLAYWRIGHT_CHANNEL || undefined
+			});
+			const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
+			const actions = [];
+			const errors = [];
+			let branch = null;
+			let publications = [];
+			page.on('pageerror', (e) => errors.push(e.message));
+			const subjects = [
+				{
+					id: 1,
+					name: 'Mathématiques',
+					color: '#123456',
+					icon: 'book',
+					cycle_weeks: 2,
+					required_service: 2,
+					staff: [
+						{
+							id: 1,
+							name: 'Ancien khôlleur',
+							first_name: 'Ancien',
+							last_name: 'Khôlleur',
+							roles: ['kholleur'],
+							sessions: 2
+						},
+						{
+							id: 2,
+							name: 'Nouveau khôlleur',
+							first_name: 'Nouveau',
+							last_name: 'Khôlleur',
+							roles: ['kholleur'],
+							sessions: 0
+						}
+					]
+				}
+			];
+			await page.route('**/timetable/command', async (route) => {
+				const c = route.request().postDataJSON();
+				actions.push(c);
+				if (c.path.endsWith('/revision')) {
+					assert.deepEqual(c.data.subject_ids, [1]);
+					branch = {
+						id: 'b',
+						revision: 'b'.repeat(32),
+						status: 'completed',
+						stale: false,
+						effective_on: c.data.effective_on,
+						return_on: c.data.return_on,
+						subject_id: 1,
+						subject_ids: [1],
+						wishes: [
+							{ subject_id: 1, user_id: 1, sessions: 2 },
+							{ subject_id: 1, user_id: 2, sessions: 0 }
+						],
+						allow_moves: false,
+						rooms: { 1: [1] },
+						history_sessions: [],
+						future_service: {},
+						closed: false,
+						logs: [],
+						result: null
+					};
+				} else if (c.path.endsWith('/calculate')) {
+					assert.deepEqual(c.data.wishes, [
+						{ subject_id: 1, user_id: 1, sessions: 0 },
+						{ subject_id: 1, user_id: 2, sessions: 2 }
+					]);
+					assert.deepEqual(c.data.rooms, { 1: [2] });
+					branch.wishes = c.data.wishes;
+					branch.rooms = c.data.rooms;
+					branch.revision = 'c'.repeat(32);
+					branch.result = { merged: false, sessions: [], changes: [], quotas: [] };
+				} else if (c.path.endsWith('/merge')) {
+					assert.equal(c.data.effective_on, '2026-11-09');
+					branch.closed = true;
+					branch.result.merged = true;
+					publications = [
+						{
+							id: branch.id,
+							revision: branch.revision,
+							effective_on: branch.effective_on,
+							can_rollback: true
+						}
+					];
+				} else if (c.path.endsWith('/rollback')) {
+					assert.equal(c.data.revision_id, branch.id);
+					publications = [];
+				}
+				await route.fulfill({ json: { id: 'b' } });
+			});
+			await page.route('**/timetable/kholloscope/data?**', (route) =>
+				route.fulfill({
+					json: {
+						source_revision: 'a'.repeat(64),
+						next_monday: '2026-11-09',
+						published_sessions: [],
+						calendars: [],
+						subjects,
+						branch,
+						problems: [],
+						pending_publications: publications,
+						rooms: [
+							{ id: 1, name: 'Salle A', kholle_capacity: 1 },
+							{ id: 2, name: 'Salle B', kholle_capacity: 2 }
+						]
+					}
+				})
+			);
+			await page.goto(`${server.resolvedUrls.local[0]}__picker?revision`);
+			await page.getByRole('heading', { name: 'Créer une proposition' }).waitFor();
+			const subjectButton = page.getByRole('button', { name: 'Mathématiques', exact: true });
+			assert.equal(await subjectButton.getAttribute('aria-pressed'), 'true');
+			await subjectButton.click();
+			assert.equal(
+				await page
+					.getByRole('button', { name: 'Créer la proposition préremplie' })
+					.isDisabled(),
+				true
+			);
+			await subjectButton.click();
+			assert.equal(await page.getByText('Service publié', { exact: true }).count(), 0);
+			assert.equal(await page.getByText(/Consulter le calendrier/).count(), 0);
+			assert.equal(
+				await page
+					.getByRole('heading', { name: 'Changer de salle sans déplacer les séances' })
+					.count(),
+				0
+			);
+			assert.equal(
+				await page.getByLabel('Prise d’effet · lundi à minuit (Europe/Paris)').inputValue(),
+				'2026-11-09'
+			);
+			if (temporary) {
+				await page.getByLabel('Congé temporaire avec retour prévu').check();
+				await page.getByLabel('Retour · lundi à minuit (Europe/Paris)').fill('2026-11-23');
+			}
+			await page.getByRole('button', { name: 'Créer la proposition préremplie' }).click();
+			const roomSelection = page.getByRole('group', {
+				name: 'Salles pour Mathématiques',
+				exact: true
+			});
+			assert.equal(
+				await roomSelection
+					.getByRole('checkbox', { name: 'Salle A', exact: true })
+					.isChecked(),
+				true
+			);
+			await roomSelection.getByRole('checkbox', { name: 'Salle B', exact: true }).check();
+			await roomSelection.getByRole('checkbox', { name: 'Salle A', exact: true }).uncheck();
+			await page
+				.getByRole('spinbutton', {
+					name: 'Séances sur deux semaines — Ancien khôlleur — Mathématiques'
+				})
+				.fill('0');
+			await page
+				.getByRole('spinbutton', {
+					name: 'Séances sur deux semaines — Nouveau khôlleur — Mathématiques'
+				})
+				.fill('2');
+			await page.getByRole('button', { name: 'Calculer la proposition' }).click();
+			await page
+				.getByRole('button', { name: 'Accepter et publier dans les agendas' })
+				.click();
+			const confirm = page.getByRole('button', { name: 'Confirmer la publication' });
+			assert.equal(await confirm.isDisabled(), false);
+			assert.equal(await page.getByLabel('Confirmer la date de prise d’effet').count(), 0);
+			await confirm.click();
+			await page.getByRole('heading', { name: 'Créer une proposition' }).waitFor();
+			assert.equal(actions.filter((c) => c.path.endsWith('/merge')).length, 1);
+			await page
+				.getByRole('heading', { name: 'Révisions publiées en attente de prise d’effet' })
+				.waitFor();
+			page.once('dialog', (dialog) => dialog.accept());
+			await page.getByRole('button', { name: 'Annuler la publication' }).click();
+			await page
+				.getByRole('heading', { name: 'Révisions publiées en attente de prise d’effet' })
+				.waitFor({ state: 'hidden' });
+			assert.equal(actions.filter((c) => c.path.endsWith('/rollback')).length, 1);
+			assert.ok(
+				await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
+			);
+			assert.deepEqual(errors, []);
+		} finally {
+			await browser?.close();
+			await server.close();
+		}
+	});
+test('kholloscope revision edits room sets and service together for several subjects', async () => {
+	const server = await pickerServer();
+	let browser;
+	try {
+		await server.listen();
+		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
+		const page = await browser.newPage({ viewport: { width: 390, height: 850 } });
+		const actions = [],
+			errors = [];
+		page.on('pageerror', (error) => errors.push(error.message));
+		const oldTeacher = {
+			id: 1,
+			name: 'Ancien khôlleur',
+			first_name: 'Ancien',
+			last_name: 'Khôlleur',
+			roles: ['kholleur'],
+			sessions: 2
+		};
+		const newTeacher = {
+			...oldTeacher,
+			id: 2,
+			name: 'Nouveau khôlleur',
+			first_name: 'Nouveau',
+			sessions: 0
+		};
+		const subjects = [
+			{
+				id: 1,
+				name: 'Mathématiques',
+				color: '#123456',
+				icon: 'book',
+				cycle_weeks: 2,
+				required_service: 2,
+				staff: [oldTeacher, newTeacher]
+			},
+			{
+				id: 2,
+				name: 'Physique',
+				color: '#734560',
+				icon: 'book',
+				cycle_weeks: 2,
+				required_service: 2,
+				staff: [oldTeacher]
+			}
+		];
+		const rooms = [
+			{ id: 1, name: 'Salle A', kholle_capacity: 1 },
+			{ id: 2, name: 'Salle B', kholle_capacity: 2 },
+			{ id: 3, name: 'Salle fermée aux khôlles', kholle_capacity: 0 }
+		];
+		let branch = null;
+		await page.route('**/timetable/command', async (route) => {
+			const command = route.request().postDataJSON();
+			actions.push(command);
+			if (command.path.endsWith('/revision')) {
+				assert.deepEqual(command.data.subject_ids, [1, 2]);
+				branch = {
+					id: 'b'.repeat(32),
+					revision: 'b'.repeat(32),
+					status: 'completed',
+					stale: false,
+					effective_on: command.data.effective_on,
+					subject_id: 1,
+					subject_ids: [1, 2],
+					wishes: [
+						{ subject_id: 1, user_id: 1, sessions: 2 },
+						{ subject_id: 1, user_id: 2, sessions: 0 },
+						{ subject_id: 2, user_id: 1, sessions: 2 }
+					],
+					rooms: { 1: [1, 3], 2: [1] },
+					allow_moves: false,
+					history_sessions: [],
+					future_service: {},
+					closed: false,
+					logs: [],
+					result: null
+				};
+			} else {
+				assert.equal(command.path, 'kholloscope/2026/revision/calculate');
+				assert.deepEqual(command.data.rooms, { 1: [2], 2: [1] });
+				assert.deepEqual(command.data.wishes, [
+					{ subject_id: 1, user_id: 1, sessions: 0 },
+					{ subject_id: 1, user_id: 2, sessions: 2 },
+					{ subject_id: 2, user_id: 1, sessions: 2 }
+				]);
+				branch = {
+					...branch,
+					rooms: command.data.rooms,
+					wishes: command.data.wishes,
+					status: 'queued',
+					revision: 'c'.repeat(32)
+				};
+			}
+			await route.fulfill({ json: { id: branch.id } });
+		});
+		await page.route('**/timetable/kholloscope/data?**', (route) =>
+			route.fulfill({
+				json: {
+					source_revision: 'a'.repeat(64),
+					next_monday: '2026-11-09',
+					published_sessions: [],
+					calendars: [],
+					subjects,
+					rooms,
+					branch,
+					problems: []
+				}
+			})
+		);
+		await page.goto(server.resolvedUrls.local[0] + '__picker?revision&multi');
+		assert.equal(
+			await page
+				.getByRole('heading', { name: 'Changer de salle sans déplacer les séances' })
+				.count(),
+			0
+		);
+		await page.getByRole('button', { name: 'Créer la proposition préremplie' }).click();
+		const maths = page.getByRole('group', { name: 'Salles pour Mathématiques', exact: true });
+		const physics = page.getByRole('group', { name: 'Salles pour Physique', exact: true });
+		await maths.waitFor();
+		assert.ok(
+			await maths.evaluate(
+				(el) => !!el.closest('.wishes .subject-panel')?.querySelector('.wish-table')
+			)
+		);
+		assert.equal(await maths.getByText('1 simultanée(s)', { exact: true }).count(), 1);
+		assert.equal(await maths.getByText('2 simultanée(s)', { exact: true }).count(), 1);
+		const forbidden = maths.getByRole('checkbox', {
+			name: 'Salle fermée aux khôlles',
+			exact: true
+		});
+		assert.equal(await forbidden.isDisabled(), false);
+		await forbidden.uncheck();
+		assert.equal(await forbidden.isDisabled(), true);
+		await maths.getByRole('checkbox', { name: 'Salle B', exact: true }).check();
+		assert.equal(
+			await maths.getByText('2 salle(s) sélectionnée(s)', { exact: true }).count(),
+			1
+		);
+		await maths.getByRole('checkbox', { name: 'Salle A', exact: true }).uncheck();
+		assert.equal(
+			await physics.getByRole('checkbox', { name: 'Salle A', exact: true }).isChecked(),
+			true
+		);
+		await page
+			.getByRole('spinbutton', {
+				name: 'Séances sur deux semaines — Ancien khôlleur — Mathématiques'
+			})
+			.fill('0');
+		await page
+			.getByRole('spinbutton', {
+				name: 'Séances sur deux semaines — Nouveau khôlleur — Mathématiques'
+			})
+			.fill('2');
+		await page.getByRole('button', { name: 'Calculer la proposition' }).click();
+		await page.waitForFunction(() => document.querySelector('.wishes fieldset')?.disabled);
+		assert.equal(
+			await maths.getByRole('checkbox', { name: 'Salle B', exact: true }).isDisabled(),
+			true
+		);
+		branch = {
+			...branch,
+			status: 'completed',
+			revision: 'd'.repeat(32),
+			result: { merged: false, sessions: [], changes: [], quotas: [] }
+		};
+		await page.getByRole('heading', { name: 'Modifications proposées' }).waitFor();
+		const publish = page.getByRole('button', { name: 'Accepter et publier dans les agendas' });
+		assert.equal(await publish.isDisabled(), false);
+		await maths.getByRole('checkbox', { name: 'Salle B', exact: true }).uncheck();
+		assert.equal(
+			await page.getByRole('button', { name: 'Calculer la proposition' }).isDisabled(),
+			true
+		);
+		assert.equal(await publish.isDisabled(), true);
+		await maths.getByRole('checkbox', { name: 'Salle B', exact: true }).check();
+		assert.equal(await publish.isDisabled(), false);
+		assert.equal(actions.length, 2);
+		for (const width of [390, 1280]) {
+			await page.setViewportSize({ width, height: 850 });
+			assert.ok(
+				await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)
+			);
+		}
+		assert.deepEqual(errors, []);
+	} finally {
+		await browser?.close();
+		await server.close();
+	}
+});
 
 test('header navigation and colored account menu work on desktop, mobile and keyboard', async () => {
 	const server = await pickerServer();

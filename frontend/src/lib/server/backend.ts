@@ -121,7 +121,11 @@ export async function requestBackend<T>(
 			headers,
 			body: body === undefined ? undefined : JSON.stringify(body),
 			redirect: 'error',
-			signal: AbortSignal.timeout(15000),
+			signal: AbortSignal.timeout(
+				method === 'PUT' && /^\/timetable\/kholloscope\/[1-9]\d{3}\/groups$/.test(path)
+					? 45000
+					: 15000
+			),
 			cache: 'no-store'
 		});
 	} catch {

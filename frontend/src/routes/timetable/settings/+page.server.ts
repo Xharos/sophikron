@@ -13,7 +13,7 @@ export const load: PageServerLoad = async (event) => {
 				today: string;
 				preferences: { auto_archive: boolean; revision: string };
 				years: CommonTimetableYear[];
-				rooms: { id: number; name: string; revision: string }[];
+				rooms: { id: number; name: string; revision: string; kholle_capacity: number }[];
 			}>(event, '/timetable/configuration')
 		};
 	} catch (cause) {

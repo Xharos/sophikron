@@ -24,6 +24,7 @@ from app.services.api_monitoring import ApiMonitor, ApiMonitoringMiddleware
 from app.services.auth import AuthService
 from app.services.document_storage import DocumentStorage, document_maintenance
 from app.services.errors import INVALID_REQUEST, AuthError
+from app.services.kholloscope_worker import generation_maintenance
 from app.services.mail import DisabledMailer, InvitationMailer, SmtpMailer
 from app.services.search import NameSearchCache
 from app.services.timetable_lifecycle import timetable_maintenance
@@ -86,6 +87,7 @@ def create_app(
         maintenance = None
         timetable_task = None
         monitor_task = None
+        generation_task = None
         try:
             async with database.sessions() as session:
                 service = AuthService(session, authentication, cipher, passwords, delivery)
@@ -96,9 +98,15 @@ def create_app(
                 )
             timetable_task = asyncio.create_task(timetable_maintenance(database))
             if authentication.environment != "test":
+                generation_task = asyncio.create_task(generation_maintenance(database))
+            if authentication.environment != "test":
                 monitor_task = asyncio.create_task(application.state.api_monitor.run(database))
             yield
         finally:
+            if generation_task is not None:
+                generation_task.cancel()
+                with suppress(asyncio.CancelledError):
+                    await generation_task
             if monitor_task is not None:
                 monitor_task.cancel()
                 with suppress(asyncio.CancelledError):
@@ -119,7 +127,7 @@ def create_app(
     application = FastAPI(
         title="Sophikron API",
         description="API for the Sophikron educational platform.",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
     application.include_router(router)
@@ -133,7 +141,8 @@ def create_app(
         """Prevent caching of identity responses and apply configured credentialed CORS."""
         response = await call_next(request)
         if request.url.path.startswith("/api/"):
-            response.headers["Cache-Control"] = "no-store"
+            if response.headers.get("Cache-Control") != "private, no-store":
+                response.headers["Cache-Control"] = "no-store"
             response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 

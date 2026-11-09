@@ -1,4 +1,4 @@
-"""Early bounded authentication bodies and application-scoped browser CORS policy."""
+"""Early bounded API bodies and application-scoped browser CORS policy."""
 
 import logging
 
@@ -40,7 +40,7 @@ class SearchAccessLogFilter(logging.Filter):
 
 
 class AuthRequestMiddleware:
-    """Bound authentication request bytes and total body-read time before JSON parsing."""
+    """Bound API request bytes and total body-read time before JSON parsing."""
 
     def __init__(self, app: ASGIApp) -> None:
         """Wrap the application without loading configuration or secrets at import time."""
@@ -48,15 +48,7 @@ class AuthRequestMiddleware:
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Buffer at most the configured bytes, including requests without Content-Length."""
-        if scope["type"] != "http" or not scope["path"].startswith(
-            (
-                "/api/v1/auth/",
-                "/api/v1/admin/",
-                "/api/v1/teaching/",
-                "/api/v1/lessons",
-                "/api/v1/timetable/",
-            )
-        ):
+        if scope["type"] != "http" or not scope["path"].startswith("/api/"):
             await self.app(scope, receive, send)
             return
         settings = scope["app"].state.auth_settings

@@ -23,6 +23,7 @@ blocks showing the subject, Cours/TD/TP, recipients and teacher names. Overlappi
 parallel columns. Text shrinks to fit each block; densely overlapping or very short lessons may
 therefore have small text. Exact calendar dates and session time ranges are omitted.
 Khôlle sessions and sessions targeting khôlle groups are always excluded.
+Each lesson prints the teacher in embedded bold and the room, when assigned, in embedded italics.
 
 The only title is the promotion name (including its year), or the calendar name when unassigned;
 group and pupil selections append their display label. Group intersections and common lessons follow
@@ -43,6 +44,22 @@ Create labels such as 2026/2027 by entering their first year. A label has no sha
 Creating a calendar or saving staff availability permanently marks the label as used, even after
 archival or resetting that availability. Only a never-used label can be deleted.
 Room creation, renaming and retirement preserve existing session references and use revisions.
+Retirement is refused with HTTP 409 when an actual future or ongoing EDT session or khôlle
+uses the room, including detached exceptions and private/archived calendars. Ended and cancelled
+occurrences do not block retirement. Historical references remain intact after soft retirement.
+Capacity increases and decreases are allowed. If a decrease would overbook future/ongoing khôlles,
+the first PUT returns `confirmation_required`, a warning with date/time and an `impact_revision`,
+without changing the room, its revision or its name. Resubmit with `confirmed_capacity_reduction=true`
+and `expected_impact_revision` to save. Changed bookings require a new confirmation. A successful
+confirmed reduction returns `revision_required=true`; live sessions are preserved and Revision
+shows the current conflicts until repaired. The server rechecks administrator rights and both
+room/impact revisions under the lifecycle lock. Adjacent sessions do not overlap.
+Rooms also have an editable `kholle_capacity` (0–100), defaulting to one simultaneous khôlle.
+Zero means the room cannot be selected for khôlles. Migration `0008_kholloscope` supplies
+one for all existing rooms without changing their bookings. Capacity is included in configuration
+and kholloscope room responses. A legacy rename omitting capacity preserves its existing value.
+Generation and published-revision diagnostics enforce this capacity. Capacity never permits
+overlapping courses or teacher/pupil conflicts.
 Past labels cannot be created: the academic year changes on September 1 in Europe/Paris.
 New calendar and teacher availability selectors prefer the current label, then the nearest future
 label, independently of catalogue creation order or individual calendars' course dates.
@@ -67,14 +84,163 @@ reports the number of disappearing/appearing event segments before confirmation.
 never delete compact series or their exceptions: hidden sessions reappear if the exclusion is
 removed. Alternations and annual totals are recomputed from the effective settings.
 
+## Khôlle requirements
+
+The administrator-only `/timetable/kholloscope` page is always accessible. Its academic-year
+selector defaults to the last created label, using creation metadata added by migration
+`0008_kholloscope`. Existing labels share a backfill timestamp and use the highest
+year as a tie-breaker. The `school_year` URL query preserves explicit selection.
+Only active calendars belonging to that year contribute to prerequisites and statistics.
+Missing calendars, promotion assignments and khôlle settings appear as persistent warnings
+on this page, in that order; statistics appear only when that year's requirements are complete.
+An incomplete calendar in another year never blocks the selected year. Archives are excluded.
+The API returns HTTP 200 with either warnings or statistics, retaining administrator checks.
+The overall weekly figure is the sum of each calendar's average over its own period;
+it is not a dated weekly schedule. Zero available weeks display an undefined calendar average.
+
+On step 1 of `/timetable/kholloscope?tab=volumes`, administrators edit each active calendar
+of the selected year directly. The khôlle button is removed from `/timetable`.
+A promotion assignment is required; unassigned calendars link to agenda management and
+archived calendars are excluded. Each inline editor
+stores an inclusive Monday-to-Friday period and subject durations in exact clock minutes per
+khôlle group. Decimal hours accept comma or dot (`21,5` = 21 h 30), to whole-minute precision.
+These settings describe required volumes only; they do not create or modify sessions.
+Saved calendars open in display mode with dates, week/group counts and group size, followed by
+the same per-subject bars, durations and pupil averages as the editor, then the annual group total. Each calendar's
+Modifier button reopens its own editor. Equivalent dates and minute volumes (independently of
+decimal notation or subject order) do not trigger a write or alter preparation progress.
+A real change to dates or volumes clears the annual wishes and service validations atomically.
+Existing wishes, room selections and preferences remain available; administrators must review and
+revalidate wishes against the new requirements before the service page unlocks again.
+
+Week labels reuse the teaching-week numbering since rentrée. A week contributes to the khôlle
+denominator only when at least three Monday-to-Friday dates are inside the calendar's teaching
+bounds and outside its configured holidays. Saturdays never count. Holidays, public holidays
+and bridge days must be entered in the calendar; none are inferred. Boundary weeks show their
+full Monday/Friday dates but only days within the calendar count. A period must include an
+eligible week and at least one active subject. Zero subject hours are allowed.
+
+The subject table and bars reuse subject icons and colors. Bars show total hours per group
+and average minutes per pupil per available week, dividing by the promotion partition's
+configured khôlle group size (not by a fixed three pupils). Missing group size displays no average.
+Team weekly hours are `sum(subject minutes) × number of khôlle groups / 60 / eligible weeks`,
+displayed to two decimal places. Only groups containing at least one nonarchived pupil still in
+the promotion count; a promotion without active groups shows a warning and a zero team load. Configuration follows
+the calendar when its promotion changes; group counts and holidays are refreshed when reopening.
+
+`POST /api/v1/timetable/calendars/{id}/kholle/preview` reads administrator-only settings,
+week eligibility and current group count. `PUT /api/v1/timetable/calendars/{id}/kholle` validates
+active subject references and calendar/year revisions before saving. Concurrent agenda or
+holiday edits require reopening the editor. Apply migration `0008_kholloscope` before use;
+its downgrade removes all private kholloscope preparation and job data, preserving live series.
+
+## Annual khôlle service wishes
+
+The administrator workspace uses ordered pages at
+`/timetable/kholloscope?tab=volumes|wishes|service|generation|groups`.
+Its left sidebar always retains the selected academic year and displays saved valid steps in green,
+the current unfinished step, the next accessible unfinished step, or any saved step with a conflict
+in orange, and other unfinished/locked
+steps in red, with text labels. Previously unlocked pages remain accessible for corrections.
+The initial volumes page retains the calendar statistics. Explicit validation unlocks the wishes
+page; saved, complete and exactly balanced wishes must then be validated to unlock service.
+Finished years, calendars without khôlle requirements and missing groups/weeks block progression.
+Direct URLs to locked pages display an error without exposing their editor. Changing years retains
+the requested step and explains why it is unavailable, rather than mixing years' preparation.
+
+The service page selects at least one active catalogue room per allocated subject. Several subjects
+may share a room; these are eligibility sets, not reservations. The A/B split is automatic:
+odd commitments are balanced deterministically across staff and subjects, with at most one
+session's difference per subject and overall. Each person's exact cycle commitment is preserved.
+Service preparation does not itself generate slots. The following generation and group-assignment
+pages are described in [kholloscope generation](kholloscope-generation.md).
+Unsaved room changes warn before navigation.
+After validation, service rooms and promotion preferences become read-only, including after a
+reload. The service page's Modifier button explicitly enables editing again; saving locks them.
+Wishes without any entered commitment for an allocated subject open directly in edit mode;
+saved wishes open read-only. The wishes page saves and confirms its milestone through the single
+"Enregistrer et continuer" action. Invalid or unbalanced entries cannot confirm the step; failures
+retain the entered values. Service room changes have an explicit edit/cancel/save flow.
+Per-subject service tables show only staff with a strictly positive commitment for that subject;
+zero-hour wishes remain stored and editable on the wishes page.
+The service table saves one annual `prefer_own_promotion` switch per teacher or khôlleur, defaulting
+to true. The preference is shared across the person's subjects. It favors all assigned promotions
+participating in that year's kholloscope, and is effective when this is a nonempty proper subset
+of its promotions (including three assigned promotions out of four). Labels use singular or plural
+according to the participating assignment count. With no assignment or all promotions assigned,
+the switch is disabled without explanatory text. This remains a preference, not a hard restriction.
+Preferences are saved atomically with rooms and included in concurrency revisions. Selecting a room
+whose capacity becomes zero flags service for review and prevents a new generation.
+Room-set comparison ignores order and empty selections. Successful saves immediately reset the
+browser's saved baseline from the server response, independently of the subsequent page refresh.
+Milestone colors and navigation access also update immediately from that response, even when the
+background refresh is slow or fails; later successful loads replace the temporary local result.
+
+Migration `0008_kholloscope` adds annual JSON workflow storage. The administrator-only
+`GET/PUT /api/v1/timetable/kholloscope/{year}/workflow` reads progress or validates a milestone.
+Writes check the observed revision, previous milestones, current requirements, exact service totals
+and complete, active room selections atomically. Progress is checked against concrete conflicts:
+imbalanced or missing wishes flag the wishes page; missing or inactive selected rooms flag service.
+Changing hours alone preserves valid room assignments and updates A/B counts automatically. Adding
+a subject without rooms flags service for review. Room metadata changes are included in the service
+fingerprint and can require confirmation again; saved selections remain available for review.
+Conflicted saved steps remain open and return to green automatically once their data are consistent.
+Saved room choices remain available for review. Existing wishes and timetable sessions are preserved.
+
+On the wishes page, administrators consult and edit wishes for the selected school year.
+Only subjects with a strictly positive allocated weekly requirement appear in the editor, counters
+and per-person totals. Subjects absent from the promotion requirements or allocated zero hours
+(for example German) remain hidden. When requirements are unavailable, the editor shows an empty
+state. Saving preserves any previously stored wishes for hidden subjects unchanged.
+Each active-subject/eligible-staff pair has an exact
+integer number of pedagogical sessions per subject reference cycle (0–1000), with its weekly mean
+alongside. Weekly/fortnightly subjects use two weeks; sparse rates use the smallest exact rational
+period, such as six weeks for five sessions over thirty weeks. Recorded cycle units prevent silent
+reinterpretation of earlier wishes; noninteger conversions require a new entry.
+One session is one pedagogical khôlle hour, including a 55-minute session. Empty means unfilled;
+zero explicitly means no participation. A person with both teaching roles appears once per subject.
+Disabled/bootstrap accounts and inactive subjects are excluded; pending permanent staff can be
+prepared. Staff without an active subject are listed separately. Names, roles and subject colors
+reuse the existing directory. Subject totals and combined per-person totals never duplicate roles.
+Both tables list teachers first (including dual-role accounts), then khôlleurs, alphabetically by
+family and given name within each category. Subject headers display the requirement over the
+selected subject cycle beside the subject badge, and the cycle difference before the balance
+status. The expandable person recap includes colored subject badges, role badges and both cycle
+and weekly totals; its totals update during editing.
+
+The comparison reuses the promotion overview's configured-hour averages: one configured hour is
+interpreted as one pedagogical session for this service budget, rather than dividing by 55 clock
+minutes. No stored calendar requirement is changed. Missing calendar prerequisites or zero eligible
+weeks make the comparison unavailable. The balance is indicative, including its unrounded sign;
+rounding is for display only. Matching totals do not prove timetable or group-rotation feasibility.
+
+`GET/PUT /api/v1/timetable/kholloscope/{school_year}/wishes` require current administrator access.
+PUT submits all visible staff/subject pairs, an observed revision, and nullable session counts.
+Saving is atomic and scoped to the year. It marks the academic label as used. Stale wishes or roster
+changes return 409; invalid, duplicated, incomplete or unauthorized assignments return 422. A revision
+covers the current roster, subject metadata and wishes. Hidden wishes are retained when eligibility
+changes. Null removes only the submitted pair; zero is persisted. No previous year's wishes are copied.
+The same-origin timetable command relay handles writes. Unsaved edits warn before navigation;
+failed saves retain the editor contents. No appointments, availability or group memberships change.
+
 ## Dated sessions and recurrence
+
+The local demo entry point retains its current CONFIG and now also fills khôlle requirements through
+the preview/save API for every generated PTSI/PT calendar. PTSI uses teaching weeks numbered 1–30
+with 15 hours per group in maths, SI, physics and English; PT uses weeks 1–25 with 12.5 hours per
+group in those same subjects. Dates come from the API's week labels, not a fixed number of elapsed
+calendar weeks. Identical settings are reused; different pre-existing requirements or insufficient
+weeks produce a clear error without overwriting requirements. This adds requirements, not sessions,
+wishes, room assignments or automatic workflow validation. The script is not executed on live data
+as part of developing these changes.
 
 Dated grids show each holiday as a noninteractive red-tinted background covering the visible
 day, labelled with the configured holiday name. Recess and self backgrounds are hidden on those
 days. These backgrounds are not sessions and never contribute hours. Undated weekly availability
 patterns keep their usual backgrounds without applying dated holidays.
 
-There is no weekly-template editor, version activation, draft snapshot or publication operation.
+Manual timetable editing writes live compact series; it has no weekly-template version editor.
+Private generation snapshots and explicit publication belong to the separate kholloscope workflow.
 Create an event once, weekly, every two teaching weeks or every three teaching weeks, optionally
 bounded by an end date. Complete holiday weeks suspend recurrence cycles; partial teaching weeks
 count once. Local times retain Europe/Paris civil hours across daylight-saving changes.
@@ -125,6 +291,11 @@ Deletion retires the choice after confirmation, including a live-calendar acknow
 sessions and their saved memberships remain intact; retired groups cannot receive new sessions.
 Optional subject/teacher/room references remain supported; a subjectless session requires a title.
 Teacher choices retain subject specialists first and exclude kholleur-only accounts from courses.
+With a promotion assigned, its specialists precede other specialists, then other teachers.
+Without a selected subject, teacher choices blend their subjects' colors. With a subject selected,
+local specialists use its color, external specialists use a muted shade, and other teachers use
+gray. All remain selectable, including multiple teachers. Points to verify reports each assigned
+teacher missing from the promotion; this advisory warning never blocks saving.
 
 Saving, deleting, moving or resizing a recurring event opens a confirmation asking whether to
 change that occurrence alone or that occurrence and all following ones. A single edit creates an
@@ -169,24 +340,23 @@ no national curriculum target is assumed or hard-coded.
 ## Teacher workspace and conflicts
 
 The permanent /timetable/prof workspace keeps subject folders, teacher selection and overlays,
-availability editing, dated teaching consultation and weekly teacher-hour totals. Its year selector
+availability editing, dated teaching consultation and weekly/annual teacher-hour totals. Its year selector
 uses the explicit academic-year catalogue, independently of promotion calendars.
-The Hours panel uses a single table with one row per calendar/promotion and subject, separate
-course/TD/TP/kholle columns, subject totals across calendars and an overall weekly total.
-Each calendar's own session duration is respected.
+The Hours dialog shares the calendar view's stacked interactive chart and course/TD/TP/kholle colors.
+It switches between the displayed civil week and the complete selected school year, with an overall
+total and breakdown by subject or calendar/subject. Legend buttons hide chart series; searchable
+numeric data remain available in the chart's accessible table. The summary always reports all
+assigned sessions, independently of hidden chart series. Each calendar's own session duration is
+respected, including half-sessions and dated exceptions. The annual view uses the full authorized
+staff board, not just the displayed week's events; pupil audience weighting is never applied.
 Default availability is 08:00–19:00 Monday–Friday and 08:00–12:00 Saturday, without recess or lunch.
 An absent pattern means that entire grid is available; an explicit empty pattern means unavailable.
 Saving null restores the default. Patterns belong only to their chosen year and are never copied.
-Each teacher and kholleur also has annual minimum and maximum weekly kholle hours, defaulting to
-0 and 0. In the availability view, select one person and the academic-year tag to consult them;
-only administrators can save changes. Values must be whole hours with `0 <= min <= max`.
-The compact toolbar fields are read-only until entering availability editing. Hour bounds are saved
-when clicking "Terminer l’édition"; invalid bounds keep editing open. Availability ranges retain
-their immediate saving behavior, without discarding the hour bounds being edited.
-The existing availability PUT endpoint accepts paired `kholle_min_hours` and `kholle_max_hours`
-with `expected_revision`. Omitted `ranges` preserves availability; omitted hour bounds preserve
-the stored bounds. Resetting availability does not reset hours. Stale writes return 409 and invalid
-bounds return 422. This step stores capacity only; it does not allocate oral-examination sessions.
+Availability editing stores only weekly ranges. Khôlle commitments are managed exclusively
+in `/timetable/kholloscope`; migration `0008_kholloscope` removes the former min/max columns.
+Existing availability ranges and revisions are preserved. Legacy bounds are discarded without
+conversion because they do not define an exact commitment per subject; downgrade restores zero
+bounds and cannot recover their previous values. Earlier baseline migrations remain unchanged.
 Overlapping/touching ranges merge. Out-of-grid submissions, including Saturday afternoon, are refused.
 The Saturday column remains visible in the staff workspace regardless of promotion settings.
 
@@ -325,7 +495,7 @@ stored in the script. The administrator session is revoked on exit, including af
 `Settings` defaults: in particular it enables one weekly German-option hour, uses physics 4 h course
 + 2 h TD + 2 h TP, English 2 h course and computer science 1 h course + 1 h TP. Those overrides take
 precedence over the historical scenario description in `script/README.md`. PTSI and PT each contain
-45 pupils by default; only the PTSI calendar is filled, and diffusion starts disabled. Zone C holiday
+45 pupils by default; both calendars are filled, and diffusion starts disabled. Zone C holiday
 exclusions and the optional summer cutoff are explicit configuration; no other holidays are inferred.
 
 `--classes`, `--students` and `--namespace` override a copy of `CONFIG`. Change the namespace when
@@ -333,6 +503,28 @@ testing an incompatible roster or timetable. Compatible retries reuse the scenar
 the database, send invitations or overwrite foreign data. Previously completed API operations remain
 after an error. The script uses the local HTTP API and its authorization rules, without direct SQL.
 
+`--classes` now means classes **per academic level**: 1 creates PTSI and PT; 2 creates
+PTSI1/PT1/PTSI2/PT2. `--students` sets each promotion's pupil count. Each class has its own
+maths, physics and SI teacher; English, French and optional German each share one teacher across
+all classes. Subject identities remain generic. SI/maths also teach Informatique; all scientific
+teachers teach TIPE. Scientific teacher counts follow the number of classes automatically.
+All calendars are filled by default (`filled_calendar_indexes=None`). Planning uses only each
+class's assigned specialists, prioritizes double sessions (110 teaching minutes, with recess
+allowed but never lunch), and places odd 55-minute remainders late in the week when possible.
+TIPE defaults to two weekly hours; the executable enables one German-option hour.
+Existing incompatible shared staff assignments are rejected; use a new namespace for the new model.
+
+The demo also saves the volumes milestone when all annual prerequisites are complete, unlocking
+the wishes page without filling or validating wishes or rooms. Existing valid volumes are kept.
+An incomplete calendar elsewhere in the same year blocks validation and is reported; the script
+never overwrites its data. The entry point fills every requested PTSI/PT calendar by default,
+including when `--classes` increases their number. PTSI requirements cover weeks 1–30 with
+15 hours per group and subject; PT covers weeks 1–25 with 12.5 hours, in maths, SI, physics and English.
+
 The `script/demo_data/` modules separate transport (`client`), configuration, identities, catalogue,
 groups, pure weekly allocation (`planning`), calendar writes (`timetables`) and orchestration (`runner`).
 For validation commands, see [release verification](../CONTRIBUTING.md#verification-before-a-release).
+
+The Hours dialog on a calendar computes annual totals and weekly means for the selected tree audience, including shared lessons. Mixed memberships are averaged over only the selected pupils; empty groups retain their directly targeted planned sessions. The selection label is displayed in the dialog. Recurring diagnostic messages retain their first occurrence and a grouped count, keeping distinct causes and resources separate. Kholle blocks use the compact label Khôlle · 01.
+
+The administrator dashboard overview shows per-calendar diagnostics beside Maintenance, using the same count/color control as the calendar. Each link uses /timetable/{id}?checks=1 to open its diagnostics dialog after authorized data loading. Calendar access continues to use the existing protected catalog and board endpoints; errors are displayed rather than shown as zero alerts.

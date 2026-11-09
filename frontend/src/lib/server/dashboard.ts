@@ -56,6 +56,7 @@ export async function readDashboard(event: RequestEvent): Promise<unknown> {
 		if (value !== null && value !== '') query.set(key, value);
 	}
 	let path: string;
+	for (const value of event.url.searchParams.getAll('user_ids')) query.append('user_ids', value);
 	switch (resource) {
 		case 'calendarSubscription':
 			requireAccess(event, 'admin');

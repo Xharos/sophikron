@@ -1,9 +1,11 @@
 """Complete roster coverage, simultaneous calendars and weekly projection of dated sources."""
 
+from datetime import datetime
+
 from app.schemas.timetable import BlockFields, YearDocument
 from app.services.teacher_availability import effective_ranges
-from app.services.timetable_engine import occurrences
-from app.services.timetable_occupancy import fully_occupied_ranges
+from app.services.timetable_engine import PARIS, occurrences
+from app.services.timetable_occupancy import fully_occupied_ranges, room_capacity_conflicts
 from tests.test_timetable import series, settings
 
 
@@ -12,6 +14,36 @@ def event(
 ) -> dict:
     """Build a minimal local teaching segment with an optional specific audience."""
     return {"start": f"{day}T{start}+02:00", "end": f"{day}T{end}+02:00", **fields}
+
+
+def test_room_capacity_checks_actual_future_overlaps_across_calendars() -> None:
+    """Ignore ended and adjacent sessions, retaining ongoing and other-agenda conflicts."""
+    now = datetime(2026, 9, 7, 8, 30, tzinfo=PARIS)
+    first = event(room_id=3, calendar_id=1, kind="kholle")
+    second = event(start="08:30:00", room_id=3, calendar_id=2, kind="kholle")
+    assert room_capacity_conflicts([first, second], {3: 2}, now) == []
+    conflicts = room_capacity_conflicts([first, second], {3: 1}, now)
+    assert {c["calendar_id"] for c in conflicts} == {1, 2}
+    assert all(c["simultaneous"] == 2 for c in conflicts)
+    assert room_capacity_conflicts([second, first], {3: 1}, now) == conflicts
+    assert (
+        room_capacity_conflicts(
+            [
+                first,
+                {
+                    **second,
+                    "start": "2026-09-07T09:00:00+02:00",
+                    "end": "2026-09-07T10:00:00+02:00",
+                },
+            ],
+            {3: 1},
+            now,
+        )
+        == []
+    )
+    assert room_capacity_conflicts([first], {3: 0}, now)
+    assert room_capacity_conflicts([first], {3: 0}, datetime(2026, 9, 7, 9, tzinfo=PARIS)) == []
+    assert room_capacity_conflicts([{**first, "kind": "course"}], {3: 0}, now) == []
 
 
 def test_empty_calendars_never_prove_complete_occupancy() -> None:

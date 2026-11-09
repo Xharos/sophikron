@@ -383,12 +383,6 @@ class TeacherAvailabilityService:
                         else None,
                         "default": identifier not in patterns
                         or patterns[identifier].ranges is None,
-                        "kholle_min_hours": patterns[identifier].kholle_min_hours
-                        if identifier in patterns
-                        else 0,
-                        "kholle_max_hours": patterns[identifier].kholle_max_hours
-                        if identifier in patterns
-                        else 0,
                         "ranges": effective_ranges(
                             patterns[identifier].ranges if identifier in patterns else None,
                             settings,
@@ -477,7 +471,7 @@ class TeacherAvailabilityService:
     async def save(
         self, actor: UserContext, school_year: int, teacher_id: int, data: AvailabilitySave
     ) -> dict:
-        """Replace one admin-owned pattern atomically, rejecting stale revisions and invalid hours.
+        """Replace one admin-owned pattern atomically, rejecting stale revisions.
 
         Parameters
         ----------
@@ -486,12 +480,12 @@ class TeacherAvailabilityService:
         school_year, teacher_id
             Annual teaching pattern identity.
         data
-            Observed revision and optional ranges and paired weekly kholle hour bounds.
+            Observed revision and replacement availability ranges.
 
         Returns
         -------
         dict
-            New revision; null when both availability and kholle bounds use their defaults.
+            New revision; null when availability uses its defaults.
         """
         async with self.db.begin():
             await self.auth._lifecycle_lock()
@@ -522,21 +516,15 @@ class TeacherAvailabilityService:
                     user_id=teacher_id,
                     school_year=school_year,
                     ranges=None,
-                    kholle_min_hours=0,
-                    kholle_max_hours=0,
                     revision=uuid4().hex,
                 )
                 self.db.add(row)
-            if "ranges" in data.model_fields_set:
-                row.ranges = (
-                    effective_ranges([item.model_dump() for item in data.ranges], settings)
-                    if data.ranges is not None
-                    else None
-                )
-            if "kholle_min_hours" in data.model_fields_set:
-                row.kholle_min_hours = data.kholle_min_hours
-                row.kholle_max_hours = data.kholle_max_hours
-            if row.ranges is None and row.kholle_min_hours == row.kholle_max_hours == 0:
+            row.ranges = (
+                effective_ranges([item.model_dump() for item in data.ranges], settings)
+                if data.ranges is not None
+                else None
+            )
+            if row.ranges is None:
                 await record_event(
                     self.db,
                     "user.availability_updated",
@@ -546,8 +534,6 @@ class TeacherAvailabilityService:
                         "school_year": school_year,
                         "default_availability": True,
                         "range_count": 0,
-                        "kholle_min_hours": 0,
-                        "kholle_max_hours": 0,
                     },
                 )
                 await self.db.flush()
@@ -563,8 +549,6 @@ class TeacherAvailabilityService:
                     "school_year": school_year,
                     "default_availability": row.ranges is None,
                     "range_count": len(row.ranges or []),
-                    "kholle_min_hours": row.kholle_min_hours,
-                    "kholle_max_hours": row.kholle_max_hours,
                 },
             )
             return {"revision": row.revision}

@@ -1,16 +1,28 @@
 """Exact half-sessions, bounded school-week cycles and stable occurrence identities."""
 
 import logging
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import ValidationError
 
 from app.core.http import SearchAccessLogFilter
-from app.schemas.timetable import BlockFields, SeriesData, SeriesFields, YearDocument, YearSettings
+from app.schemas.timetable import (
+    BlockFields,
+    RoomSave,
+    SeriesData,
+    SeriesFields,
+    YearDocument,
+    YearSettings,
+)
 from app.services.errors import AuthError
 from app.services.teacher_availability import availability_warnings
+from app.services.timetable import TimetableService
+from app.services.timetable_configuration import TimetableConfigurationService
 from app.services.timetable_engine import (
+    PARIS,
     current_school_year,
     daily_slots,
     occurrences,
@@ -19,6 +31,17 @@ from app.services.timetable_engine import (
     teaching_weeks,
     validate_series,
 )
+
+
+@pytest.mark.asyncio
+async def test_published_kholloscope_blocks_direct_edits_but_unpublished_remains_editable() -> None:
+    """Require revisions for published years while permitting private preparation."""
+    service = object.__new__(TimetableService)
+    service.repo = SimpleNamespace(published_kholloscope=AsyncMock(return_value=None))
+    await service.require_unpublished_kholloscope(2026)
+    service.repo.published_kholloscope.return_value = SimpleNamespace(id="published")
+    with pytest.raises(AuthError, match="Révision"):
+        await service.require_unpublished_kholloscope(2026)
 
 
 def test_school_year_changes_at_september_first() -> None:
@@ -63,6 +86,138 @@ def series(**changes: object) -> SeriesData:
             **changes,
         }
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["course", "kholle"])
+async def test_room_removal_reports_usage_including_exceptions(kind: str) -> None:
+    """Protect room references stored solely in occurrence replacements."""
+    block = series(kind=kind, room_id=4)
+    block.exceptions[date(2026, 9, 7)] = BlockFields(
+        starts_on=date(2026, 9, 8), room_id=3, kind=kind, title="Replacement"
+    )
+    document = YearDocument(settings=settings(), series=[block])
+    service = object.__new__(TimetableConfigurationService)
+    service.db = SimpleNamespace(scalars=AsyncMock(return_value=[]))
+    service.auth = SimpleNamespace(clock=lambda: datetime(2026, 9, 6, tzinfo=PARIS))
+    service.core = SimpleNamespace(
+        future_events=AsyncMock(
+            return_value=[{**e, "calendar_id": 1} for e in occurrences(document)]
+        )
+    )
+    with pytest.raises(AuthError, match="khôlles" if kind == "kholle" else "EDT"):
+        await service._check_room_usage(SimpleNamespace(id=3, name="B208"), None)
+
+
+@pytest.mark.asyncio
+async def test_room_capacity_counts_overlap_and_honors_cancellations() -> None:
+    """Allow adjacent khôlles and reject overlaps across separate calendar documents."""
+    first = series(kind="kholle", interval=0, start_time=28800, end_time=32400)
+    second = series(kind="kholle", interval=0, start_time=32400, end_time=36000)
+    documents = {
+        1: (None, YearDocument(settings=settings(), series=[first])),
+        2: (None, YearDocument(settings=settings(), series=[second])),
+    }
+    service = object.__new__(TimetableConfigurationService)
+    service.db = SimpleNamespace(scalars=AsyncMock(return_value=[]))
+    service.auth = SimpleNamespace(clock=lambda: datetime(2026, 9, 6, tzinfo=PARIS))
+    service.core = SimpleNamespace(
+        future_events=AsyncMock(
+            side_effect=lambda: [
+                {**e, "calendar_id": identifier}
+                for identifier, (_, document) in documents.items()
+                for e in occurrences(document)
+            ]
+        )
+    )
+    room = SimpleNamespace(id=3, name="B208", revision="a" * 32)
+    assert await service._check_room_usage(room, 1) is None
+    second.start_time = 30600
+    impact = await service._check_room_usage(room, 1)
+    assert "2 khôlles simultanées" in impact["message"]
+    assert "révision" in impact["message"]
+    second.exceptions[date(2026, 9, 7)] = None
+    assert await service._check_room_usage(room, 1) is None
+    assert await service._check_room_usage(room, 0) is not None
+
+
+@pytest.mark.asyncio
+async def test_room_reduction_preview_and_confirmation_are_distinct_writes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leave room/audit unchanged until the administrator confirms the observed impact."""
+    room = SimpleNamespace(
+        id=3,
+        name="B208",
+        name_key="b208",
+        kholle_capacity=2,
+        revision="a" * 32,
+        is_active=True,
+    )
+    document = YearDocument(settings=settings(), series=[series(kind="kholle", interval=0)])
+    service = object.__new__(TimetableConfigurationService)
+    service.auth = SimpleNamespace(
+        clock=lambda: datetime(2026, 9, 6, tzinfo=PARIS), _lifecycle_lock=AsyncMock()
+    )
+    service.db = MagicMock()
+    service.db.get = AsyncMock(return_value=room)
+    service.db.scalar = AsyncMock(return_value=None)
+    service.core = SimpleNamespace(
+        authorize=AsyncMock(),
+        future_events=AsyncMock(
+            return_value=[{**e, "calendar_id": 1} for e in occurrences(document)]
+        ),
+    )
+    audit = AsyncMock()
+    monkeypatch.setattr("app.services.timetable_configuration.record_event", audit)
+    fields = {"name": "Renamed", "kholle_capacity": 0, "expected_revision": room.revision}
+    preview = await service.room(SimpleNamespace(id=1), room.id, RoomSave(**fields))
+    assert preview["confirmation_required"] is True
+    assert (room.name, room.kholle_capacity, room.revision) == ("B208", 2, "a" * 32)
+    audit.assert_not_awaited()
+    stale = await service.room(
+        SimpleNamespace(id=1),
+        room.id,
+        RoomSave(**fields, confirmed_capacity_reduction=True, expected_impact_revision="f" * 64),
+    )
+    assert stale["confirmation_required"] is True
+    audit.assert_not_awaited()
+    saved = await service.room(
+        SimpleNamespace(id=1),
+        room.id,
+        RoomSave(
+            **fields,
+            confirmed_capacity_reduction=True,
+            expected_impact_revision=preview["impact_revision"],
+        ),
+    )
+    assert saved["revision_required"] is True
+    assert (room.name, room.kholle_capacity) == ("Renamed", 0)
+    assert room.revision != "a" * 32
+    audit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_future_room_bookings_ignore_past_and_cancelled_occurrences() -> None:
+    """Keep ongoing/detached future bookings, ignoring old references and cancelled slots."""
+    block = series(interval=0)
+    block.exceptions[date(2026, 9, 7)] = BlockFields(
+        starts_on=date(2026, 9, 8), room_id=3, title="Detached", start_time=28800, end_time=32400
+    )
+    cancelled = series(id="b" * 32, starts_on=date(2026, 9, 9), interval=0)
+    cancelled.exceptions[date(2026, 9, 9)] = None
+    document = YearDocument(settings=settings(), series=[block, cancelled])
+    service = object.__new__(TimetableService)
+    service.auth = SimpleNamespace(clock=lambda: datetime(2026, 9, 8, 8, 30, tzinfo=PARIS))
+    service.db = SimpleNamespace(scalars=AsyncMock(return_value=[]))
+    service.repo = SimpleNamespace(
+        documents=AsyncMock(return_value={1: (SimpleNamespace(calendar_id=4), document)})
+    )
+    events = await service.future_events()
+    assert len(events) == 1
+    assert events[0]["calendar_id"] == 4
+    service.auth.clock = lambda: datetime(2026, 9, 8, 9, 0, tzinfo=PARIS)
+    assert await service.future_events() == []
 
 
 def test_exact_half_sessions_and_pause_splitting() -> None:

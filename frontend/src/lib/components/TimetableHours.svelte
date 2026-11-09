@@ -4,11 +4,13 @@
 	let {
 		hours,
 		weeks,
-		subjects
+		subjects,
+		audience
 	}: {
 		hours: AnnualSubjectHours[];
 		weeks: number;
 		subjects: { id: number; name: string }[];
+		audience?: string;
 	} = $props();
 	let average = $state(true);
 	const totals = $derived(
@@ -44,9 +46,10 @@
 	>
 </div>
 <p class="muted mb-4">
-	Heures prévues sur toute l’année, remplacements et rattrapages compris, du point de vue d’un
-	élève. Moyenne sur {weeks} semaines d’enseignement, semaines partielles comprises. Une séance de 55
-	à 65 minutes compte pour une heure ; pauses et vacances exclues.
+	{#if audience}<strong>{audience}.</strong>{/if}
+	Heures prévues sur toute l’année, remplacements et rattrapages compris, du point de vue d’un élève.
+	Moyenne sur {weeks} semaines d’enseignement, semaines partielles comprises. Une séance de 55 à 65 minutes
+	compte pour une heure ; pauses et vacances exclues.
 </p>
 {#if totals.length}
 	<StatisticChart
@@ -58,7 +61,7 @@
 	/>
 {:else}<p role="status">Aucune séance dans ce calendrier.</p>{/if}
 <p class="help mt-3">
-	Pour les matières réservées aux groupes personnalisés, la moyenne porte uniquement sur les élèves
-	de ces groupes. Pour les autres matières, elle porte sur la classe entière. Consultez « Points à
-	vérifier » pour repérer les écarts entre groupes.
+	{#if audience}Les heures correspondent aux élèves de la sélection, séances communes comprises. Si
+		leurs affectations diffèrent, la valeur est la moyenne par élève de cette sélection.
+	{:else}Les valeurs sont des moyennes par élève de la promotion.{/if}
 </p>

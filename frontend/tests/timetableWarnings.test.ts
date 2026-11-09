@@ -2,11 +2,13 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	warningEventTarget,
+	timetableWarningColor,
 	warningEventWhen,
 	warningTeachingRole,
 	uniqueWarningTargets,
 	diagnosticChanges,
 	timetableDiagnostics,
+	firstDiagnosticOccurrences,
 	type DiagnosticEntry
 } from '../src/lib/timetableWarnings.ts';
 import {
@@ -19,6 +21,40 @@ import {
 	type TimetableYear,
 	type TimetableBoard
 } from '../src/lib/timetable.ts';
+
+test('incomplete kholles produce one alert per cause and subject, with a useful count', () => {
+	const entries: DiagnosticEntry[] = [1, 2, 3].map((group) => ({
+		code: `kholle-volume-8-${group}-10`,
+		subject_id: 8,
+		severity: 'warning',
+		message: `Groupe ${group} : volume incorrect.`
+	}));
+	entries.push({
+		code: 'kholle-alternation-8-1-10',
+		severity: 'warning',
+		message: 'Alternance incorrecte.'
+	});
+	entries.push({ code: 'kholle-volume-9-1-10', severity: 'warning', message: 'Autre matière.' });
+	const grouped = firstDiagnosticOccurrences(entries);
+	assert.equal(grouped.length, 3);
+	assert.match(grouped[0].message, /3 alertes similaires/);
+	assert.match(grouped[0].message, /Groupe 1/);
+});
+
+test('diagnostic button is green without checks, orange with checks and red for any critical check', () => {
+	assert.equal(timetableWarningColor([]), 'is-success');
+	assert.equal(timetableWarningColor([{ severity: 'warning' }]), 'is-warning');
+	assert.equal(timetableWarningColor([{}]), 'is-warning');
+	assert.equal(timetableWarningColor([{ severity: 'info' }]), 'is-warning');
+	assert.equal(
+		timetableWarningColor([{ severity: 'warning' }, { severity: 'critical' }]),
+		'is-danger'
+	);
+	assert.equal(
+		timetableWarningColor([{ severity: 'critical' }, { severity: 'warning' }]),
+		'is-danger'
+	);
+});
 
 const event: TimetableEvent = {
 	id: 'event-1',

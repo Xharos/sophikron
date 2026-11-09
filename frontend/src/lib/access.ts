@@ -1,6 +1,6 @@
 import type { User } from './types';
 
-export type PageAccess = 'authenticated' | 'teacher' | 'admin' | 'staff';
+export type PageAccess = 'authenticated' | 'teacher' | 'admin' | 'staff' | 'kholloscope';
 
 export function hasPermission(user: User | null, permission: string): boolean {
 	return !!user && !user.is_bootstrap && user.permissions.includes(permission);
@@ -11,6 +11,8 @@ export function canAccess(user: User | null, access: PageAccess = 'authenticated
 	if (!user) return false;
 	if (access === 'authenticated') return true;
 	if (access === 'admin') return hasPermission(user, 'users.manage');
+	if (access === 'kholloscope')
+		return user.roles.includes('admin') && hasPermission(user, 'kholloscope.read');
 	if (access === 'staff')
 		return (
 			hasPermission(user, 'users.read') ||

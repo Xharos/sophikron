@@ -4,6 +4,7 @@
 	import '@event-calendar/core/index.css';
 	import {
 		clockSeconds,
+		compareTimetableDisplayEvents,
 		blockKinds,
 		timetableAudienceLabel,
 		resizedTimetableSlots,
@@ -407,6 +408,12 @@
 			editable,
 			eventResizableFromStart: true,
 			slotEventOverlap: false,
+			eventOrder: (a, b) => {
+				const left = a.extendedProps.timetable as TimetableEvent | undefined;
+				const right = b.extendedProps.timetable as TimetableEvent | undefined;
+				if (left && right) return compareTimetableDisplayEvents(left, right);
+				return a.start.getTime() - b.start.getTime() || String(a.id).localeCompare(String(b.id));
+			},
 			eventDidMount: (info) => {
 				info.el.dataset.timetableEventId = String(info.event.id);
 			},
@@ -431,7 +438,10 @@
 						}
 						const audience = document.createElement('span');
 						audience.className = 'timetable-event-audience';
-						audience.textContent = `${blockKinds[event.kind]} · ${timetableAudienceLabel(event)}`;
+						audience.textContent =
+							event.kind === 'kholle' && event.target_kind === 'kholles'
+								? `Khôlle · ${String(event.target_number ?? '').padStart(2, '0')}`
+								: `${blockKinds[event.kind]} · ${timetableAudienceLabel(event)}`;
 						title.append(audience);
 					}
 					if (event.teacher.trim()) {

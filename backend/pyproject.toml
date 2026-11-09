@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophikron-api"
-version = "0.1.0"
+version = "0.2.0"
 description = "Backend API for the Sophikron educational platform"
 requires-python = ">=3.12"
 dependencies = [
@@ -24,6 +24,7 @@ dependencies = [
     "reportlab>=4.4,<6",
     "defusedxml>=0.7,<1",
     "icalendar>=7.3,<8",
+    "ortools>=9.15,<10",
 ]
 
 [project.optional-dependencies]

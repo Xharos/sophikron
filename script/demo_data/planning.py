@@ -25,147 +25,106 @@ class Lesson:
 
 
 def build_plan(settings: Settings, staff: list[Person]) -> list[Lesson]:
-    """Spread weekly hours over five days and keep both halves' labs on identical dates."""
-    result: list[Lesson] = []
-    loads: dict[tuple, float] = {}
-    for calendar in settings.filled_calendar_indexes:
-        for subject, kinds in settings.weekly_hours.items():
+    """Place double sessions first, then odd remainders late in the week.
+
+    Parameters
+    ----------
+    settings
+        Per-year class counts, weekly pedagogical hours and shared rooms.
+    staff
+        Specialists with their explicit class assignment or shared teaching scope.
+
+    Returns
+    -------
+    list[Lesson]
+        Collision-free individual sessions, merged into double blocks when exported.
+    """
+    tasks = []
+    for calendar in settings.calendar_indexes():
+        cohort = settings.classes()[calendar].identifier
+        for subject, kinds in {
+            **settings.weekly_hours,
+            **(
+                {"german": {"course": settings.german_option_hours}}
+                if settings.german_option_hours
+                else {}
+            ),
+        }.items():
             pool = [
-                person.email
-                for person in staff
-                if person.role == "teacher" and subject in person.subjects
+                p.email
+                for p in staff
+                if p.role == "teacher" and subject in p.subjects and p.promotion in (None, cohort)
             ]
-            if sum(kinds.values()) and not pool:
-                raise SeedError(f"Aucun professeur pour {subject}.")
             for kind, hours in kinds.items():
-                for _ in range(hours):
-                    paired = kind == "tp" and subject in settings.half_group_tp_subjects
-                    placements = []
-                    for day in range(5):
-                        for period in range(len(PERIODS)):
-                            first = available(
-                                result,
-                                calendar,
-                                day,
-                                period,
-                                1 if paired else 3,
-                                pool,
-                                settings.rooms,
-                            )
-                            if first is None:
-                                continue
-                            teacher, room = first
-                            bundle = [
+                for length in [2] * (hours // 2) + [1] * (hours % 2):
+                    tasks.append((calendar, subject, kind, length, pool))
+    # Shared teachers have the tightest inter-class constraints.
+    tasks.sort(key=lambda t: (-t[3], t[1] not in {"english", "french", "german"}, t[0]))
+    result = []
+    for calendar, subject, kind, length, pool in tasks:
+        paired = kind == "tp" and subject in settings.half_group_tp_subjects
+        candidates = []
+        for day in range(5):
+            for period in range(len(PERIODS) - length + 1):
+                if length == 2 and period == 3:  # Never bridge the self window.
+                    continue
+                for teacher in pool:
+                    for room in settings.rooms:
+                        bundle = []
+                        targets = (1, 2) if paired else (None,)
+                        for target in targets:
+                            possible = []
+                            for first in (
+                                [period] if target != 2 else range(len(PERIODS) - length + 1)
+                            ):
+                                if length == 2 and first == 3:
+                                    continue
+                                if all(
+                                    available(
+                                        result + bundle,
+                                        calendar,
+                                        day,
+                                        first + offset,
+                                        target or 3,
+                                        [teacher],
+                                        (room,),
+                                    )
+                                    is not None
+                                    for offset in range(length)
+                                ):
+                                    possible.append(first)
+                            if not possible:
+                                break
+                            first = possible[0]
+                            bundle.extend(
                                 Lesson(
                                     calendar,
                                     subject,
                                     kind,
                                     day,
-                                    period,
+                                    first + offset,
                                     teacher,
                                     room,
-                                    "halves" if paired else "promotion",
-                                    1 if paired else None,
+                                    "halves"
+                                    if paired
+                                    else ("custom" if subject == "german" else "promotion"),
+                                    target,
                                 )
-                            ]
-                            if paired:
-                                second = available(
-                                    [*result, *bundle],
-                                    calendar,
-                                    day,
-                                    period,
-                                    2,
-                                    pool,
-                                    settings.rooms,
-                                )
-                                second_period = period
-                                if second is None:
-                                    second_period = next(
-                                        (
-                                            candidate
-                                            for candidate in range(len(PERIODS))
-                                            if available(
-                                                [*result, *bundle],
-                                                calendar,
-                                                day,
-                                                candidate,
-                                                2,
-                                                pool,
-                                                settings.rooms,
-                                            )
-                                            is not None
-                                        ),
-                                        -1,
-                                    )
-                                    second = (
-                                        available(
-                                            [*result, *bundle],
-                                            calendar,
-                                            day,
-                                            second_period,
-                                            2,
-                                            pool,
-                                            settings.rooms,
-                                        )
-                                        if second_period >= 0
-                                        else None
-                                    )
-                                if second is None:
-                                    continue
-                                bundle.append(
-                                    Lesson(
-                                        calendar,
-                                        subject,
-                                        kind,
-                                        day,
-                                        second_period,
-                                        *second,
-                                        "halves",
-                                        2,
-                                    )
-                                )
-                            score = (
-                                loads.get((calendar, subject, day), 0),
-                                loads.get((calendar, day), 0),
-                                period,
-                                day,
+                                for offset in range(length)
                             )
-                            placements.append((score, bundle))
-                    if not placements:
-                        raise SeedError(
-                            "Impossible de placer ces volumes sans conflit ; "
-                            "réduisez les volumes ou ajoutez des professeurs/salles."
-                        )
-                    _, chosen = min(placements, key=lambda item: item[0])
-                    result.extend(chosen)
-                    day = chosen[0].weekday
-                    loads[(calendar, subject, day)] = loads.get((calendar, subject, day), 0) + 1
-                    loads[(calendar, day)] = loads.get((calendar, day), 0) + 1
-        if settings.german_option_hours:
-            pool = [
-                person.email
-                for person in staff
-                if person.role == "teacher" and "german" in person.subjects
-            ]
-            for _ in range(settings.german_option_hours):
-                match = next(
-                    (
-                        (day, period, chosen)
-                        for day in range(5)
-                        for period in range(len(PERIODS))
-                        if (
-                            chosen := available(
-                                result, calendar, day, period, 3, pool, settings.rooms
+                        if len(bundle) == length * len(targets):
+                            load = sum(
+                                lesson.calendar_index == calendar and lesson.weekday == day
+                                for lesson in result
                             )
-                        )
-                        is not None
-                    ),
-                    None,
-                )
-                if match is None:
-                    raise SeedError("Impossible de placer l’option allemand.")
-                day, period, chosen = match
-                result.append(Lesson(calendar, "german", "course", day, period, *chosen, "custom"))
+                            score = (load, day, period) if length == 2 else (-day, -period, load)
+                            candidates.append((score, bundle))
+        if not candidates:
+            raise SeedError(
+                f"Impossible de placer {subject} pour {settings.classes()[calendar].identifier}. "
+                "Ajoutez des salles ou réduisez les volumes."
+            )
+        result.extend(min(candidates, key=lambda item: item[0])[1])
     return result
 
 

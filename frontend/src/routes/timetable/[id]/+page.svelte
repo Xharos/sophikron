@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import Modal from '#lib/components/Modal.svelte';
 	import Icon from '#lib/components/Icon.svelte';
@@ -9,8 +10,10 @@
 	import TimetableHours from '#lib/components/TimetableHours.svelte';
 	import TimetableSettingsEditor from '#lib/components/TimetableSettings.svelte';
 	import TimetableDiagnostics from '#lib/components/TimetableDiagnostics.svelte';
+	import TimetableChecksButton from '#lib/components/TimetableChecksButton.svelte';
 	import {
 		timetableDiagnostics,
+		timetableWarningColor,
 		diagnosticChanges,
 		type DiagnosticEntry,
 		type WarningEventTarget
@@ -19,6 +22,7 @@
 	import {
 		timetableTree,
 		nodeReceives,
+		selectedTimetableHours,
 		mondayOf,
 		shiftTimetableDate,
 		isoWeek,
@@ -45,6 +49,9 @@
 	let editorOpen = $state(false);
 	let editorMessage = $state('');
 	let warningsOpen = $state(false);
+	$effect(() => {
+		if (page.url.searchParams.get('checks') === '1') warningsOpen = true;
+	});
 	let hoursOpen = $state(false);
 	let settingsOpen = $state(false);
 	let editedSettings = $state<TimetableSettings | null>(null);
@@ -113,7 +120,8 @@
 		)
 	]);
 	const issues = $derived(board.issues ?? []);
-	const warningCount = $derived(warnings.length + issues.length);
+	const warningCount = $derived(timetableDiagnostics(board, data.catalog.today).length);
+	const warningColor = $derived(timetableWarningColor([...warnings, ...issues]));
 	$effect(() => {
 		const id = data.agenda.id;
 		void untrack(() => refresh(id));
@@ -501,13 +509,11 @@
 				disabled={busy}
 				onclick={() => create(date, 0)}>+</button
 			>{/if}
-		<button
-			class="button is-small"
-			class:is-light={warningCount === 0}
-			class:is-warning={warningCount > 0}
-			onclick={() => (warningsOpen = true)}
-			aria-label={'Points à vérifier (' + warningCount + ')'}>⚠ {warningCount}</button
-		>
+		<TimetableChecksButton
+			count={warningCount}
+			color={warningColor}
+			onopen={() => (warningsOpen = true)}
+		/>
 		{#if activeYear}<button class="button is-small is-light" onclick={() => (hoursOpen = true)}
 				>▥ Heures</button
 			>{/if}
@@ -648,7 +654,8 @@
 	>{/if}
 {#if hoursOpen && activeYear}<Modal title="Heures par matière" onclose={() => (hoursOpen = false)}
 		><TimetableHours
-			hours={activeYear.hours ?? []}
+			hours={selectedTimetableHours(board, activeYear, selected)}
+			audience={selected.label}
 			subjects={data.catalog.subjects}
 			weeks={Object.keys(activeYear.weeks).length}
 		/></Modal

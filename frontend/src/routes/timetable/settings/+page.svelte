@@ -32,10 +32,15 @@
 	}
 	let busy = $state(false);
 	let message = $state('');
-	let room = $state<{ id: number; name: string; revision: string } | null>(null);
+	let room = $state<{ id: number; name: string; revision: string; kholle_capacity: number } | null>(
+		null
+	);
+	let roomCapacity = $state<number | undefined>(1);
 	let roomOpen = $state(false);
 	let roomName = $state('');
 	let deleting = $state(false);
+	let capacityImpact = $state<{ message: string; impact_revision: string } | null>(null);
+	let roomNotice = $state('');
 	let deletingYear = $state<CommonTimetableYear | null>(null);
 	async function saveYear(): Promise<void> {
 		busy = true;
@@ -65,17 +70,36 @@
 			busy = false;
 		}
 	}
-	async function saveRoom(): Promise<void> {
+	async function saveRoom(confirmed = false): Promise<void> {
 		busy = true;
 		message = '';
 		try {
-			await timetableCommand(
+			const result = await timetableCommand<{
+				confirmation_required?: boolean;
+				message: string;
+				impact_revision: string;
+				revision_required?: boolean;
+			}>(
 				room ? `rooms/${room.id}` : 'rooms',
 				deleting ? 'DELETE' : room ? 'PUT' : 'POST',
 				deleting
 					? { expected_revision: room?.revision }
-					: { name: roomName, expected_revision: room?.revision ?? null }
+					: {
+							name: roomName,
+							kholle_capacity: roomCapacity,
+							expected_revision: room?.revision ?? null,
+							confirmed_capacity_reduction: confirmed,
+							expected_impact_revision: confirmed ? capacityImpact?.impact_revision : null
+						}
 			);
+			if (result.confirmation_required) {
+				capacityImpact = result;
+				return;
+			}
+			roomNotice = result.revision_required
+				? 'Capacité modifiée. Les kholloscopes concernés nécessitent une révision et un recalcul.'
+				: '';
+			capacityImpact = null;
 			roomOpen = false;
 			await invalidateAll();
 		} catch (cause) {
@@ -85,8 +109,11 @@
 		}
 	}
 	function editRoom(value: typeof room, remove = false): void {
+		capacityImpact = null;
+		roomNotice = '';
 		room = value;
 		roomName = value?.name ?? '';
+		roomCapacity = value?.kholle_capacity ?? 1;
 		deleting = remove;
 		roomOpen = true;
 		message = '';
@@ -102,6 +129,7 @@
 <section class="section container common-settings">
 	<a class="back-link" href={resolve('/timetable')}>← Agendas</a>
 	<h1 class="title is-3 mt-4">Salles et années scolaires</h1>
+	{#if roomNotice}<p class="notification is-warning is-light" role="status">{roomNotice}</p>{/if}
 	<div class="tabs mt-5">
 		<ul>
 			<li class:is-active={tab === 'archive'}>
@@ -183,7 +211,14 @@
 				<button class="button is-primary" onclick={() => editRoom(null)}>Ajouter une salle</button>
 			</div>
 			{#each data.configuration.rooms as item (item.id)}<div class="room-row">
-					<strong>{item.name}</strong>
+					<div>
+						<strong>{item.name}</strong>
+						<p class="help">
+							{item.kholle_capacity === 0
+								? 'Khôlles non autorisées'
+								: `${item.kholle_capacity} khôlle(s) simultanée(s)`}
+						</p>
+					</div>
 					<div class="buttons mb-0">
 						<button class="button is-small is-light" onclick={() => editRoom(item)}>Modifier</button
 						><button class="button is-small is-light" onclick={() => editRoom(item, true)}
@@ -216,27 +251,56 @@
 		onclose={() => (roomOpen = false)}
 	>
 		{#if message}<p class="notification is-danger is-light" role="alert">{message}</p>{/if}
-		<form
-			onsubmit={(event) => {
-				event.preventDefault();
-				void saveRoom();
-			}}
-		>
-			{#if deleting}<p>
-					Retirer « {room?.name} » du catalogue ? Les séances existantes conserveront leur salle.
-				</p>{:else}<label class="label" for="room-name">Nom de la salle</label><input
-					class="input"
-					id="room-name"
-					bind:value={roomName}
-					required
-					maxlength="80"
-				/>{/if}<button
-				class="button mt-5"
-				class:is-danger={deleting}
-				class:is-primary={!deleting}
-				disabled={busy}>{deleting ? 'Supprimer la salle' : 'Enregistrer'}</button
+		{#if capacityImpact}
+			<p class="notification is-warning is-light" role="alert">{capacityImpact.message}</p>
+			<div class="buttons">
+				<button class="button is-warning" disabled={busy} onclick={() => saveRoom(true)}
+					>Confirmer la diminution</button
+				>
+				<button class="button is-light" disabled={busy} onclick={() => (capacityImpact = null)}
+					>Annuler</button
+				>
+			</div>
+		{:else}
+			<form
+				onsubmit={(event) => {
+					event.preventDefault();
+					void saveRoom();
+				}}
 			>
-		</form>
+				{#if deleting}<p>
+						Supprimer « {room?.name} » du catalogue ? Une salle utilisée par une séance ou une khôlle
+						à venir ou en cours ne peut pas être supprimée. Les événements passés conserveront leur salle.
+					</p>{:else}<label class="label" for="room-name">Nom de la salle</label><input
+						class="input"
+						id="room-name"
+						bind:value={roomName}
+						required
+						maxlength="80"
+					/><label class="label mt-4" for="room-kholle-capacity"
+						>Khôlles simultanées autorisées</label
+					><input
+						id="room-kholle-capacity"
+						class="input"
+						type="number"
+						min="0"
+						max="100"
+						step="1"
+						required
+						bind:value={roomCapacity}
+						disabled={busy}
+					/>
+					<p class="help">
+						Nombre de khôlles pouvant partager la salle au même moment. 0 interdit les khôlles dans
+						cette salle.
+					</p>{/if}<button
+					class="button mt-5"
+					class:is-danger={deleting}
+					class:is-primary={!deleting}
+					disabled={busy}>{deleting ? 'Supprimer la salle' : 'Enregistrer'}</button
+				>
+			</form>
+		{/if}
 	</Modal>{/if}
 
 {#if deletingYear}<Modal

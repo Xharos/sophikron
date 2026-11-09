@@ -19,7 +19,13 @@ from sqlalchemy.exc import TimeoutError as PoolTimeoutError
 from app.core.config import DatabaseSettings
 from app.core.database import Database, get_db
 from app.main import create_app
-from app.models import Promotion, PromotionGroup, PromotionPartition, TimetablePreferences
+from app.models import (
+    Promotion,
+    PromotionGroup,
+    PromotionPartition,
+    TimetablePreferences,
+    TimetableSchoolYear,
+)
 from tests.postgres import run_alembic
 
 pytestmark = [
@@ -82,6 +88,53 @@ def test_migration_roundtrip(migrated_database: None) -> None:
     """Smoke-test migration rollback, reapplication and final metadata consistency."""
     run_alembic("downgrade", "base")
     run_alembic("upgrade", "head")
+    run_alembic("check")
+
+
+@pytest.mark.asyncio
+async def test_kholloscope_migration_roundtrip(databases: tuple[Database, Database]) -> None:
+    """Restore 0007's contract and reapply 0008 without deleting academic labels."""
+    _, migration = databases
+    async with migration.sessions.begin() as session:
+        session.add(TimetableSchoolYear(school_year=8999, revision="a" * 32))
+    try:
+        run_alembic("downgrade", "0007_timetable")
+        async with migration.sessions() as session:
+            tables = set(
+                await session.scalars(
+                    text(
+                        "SELECT tablename FROM pg_catalog.pg_tables WHERE schemaname = 'sophikron'"
+                    )
+                )
+            )
+            assert {"kholle_wishes", "kholloscope_workflows", "kholloscope_runs"}.isdisjoint(tables)
+            columns = set(
+                await session.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'sophikron' AND table_name = 'teacher_availability'"
+                    )
+                )
+            )
+            assert {"kholle_min_hours", "kholle_max_hours"} <= columns
+            assert (
+                await session.scalar(
+                    text(
+                        "SELECT school_year FROM sophikron.timetable_school_years "
+                        "WHERE school_year = 8999"
+                    )
+                )
+                == 8999
+            )
+            assert not await session.scalar(
+                text("SELECT count(*) FROM sophikron.permissions WHERE code LIKE 'kholloscope.%'")
+            )
+    finally:
+        run_alembic("upgrade", "head")
+        async with migration.sessions.begin() as session:
+            year = await session.get(TimetableSchoolYear, 8999)
+            assert year is not None and year.created_at is not None
+            await session.delete(year)
     run_alembic("check")
 
 
@@ -384,9 +437,12 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
         run_alembic("upgrade", "0002_configuration")
         async with migration.sessions() as session:
             assert await session.scalar(text("SELECT id FROM sophikron.release_check")) == 1
-            assert await session.scalar(
-                text("SELECT attempted_at FROM sophikron.release_check WHERE id = 1")
-            ) is None
+            assert (
+                await session.scalar(
+                    text("SELECT attempted_at FROM sophikron.release_check WHERE id = 1")
+                )
+                is None
+            )
             assert await session.scalar(text("SELECT to_regclass('sophikron.api_metrics')"))
             assert (
                 await session.scalar(text("SELECT to_regclass('sophikron.calendar_usage_totals')"))

@@ -256,7 +256,7 @@ Connections use `search_path=pg_catalog`; qualify application tables explicitly 
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
 Most autonomous IDs are bigint identities; singleton and token-keyed tables have dedicated keys; associations use composite keys.
 
-The release baseline contains seven feature migrations:
+The release baseline contains eight feature migrations:
 
 | Revision | Schema responsibility |
 | --- | --- |
@@ -266,15 +266,38 @@ The release baseline contains seven feature migrations:
 | `0004_subjects` | Subjects and teacher assignments |
 | `0005_lessons` | Course content, documents, permissions and statistics |
 | `0006_promotion_groups` | Standard promotion partitions and pupil group assignments |
-| `0007_timetable` | Annual calendars, rooms, availability and kholle bounds, compact series, custom audiences, archive policy, encrypted revocable ICS links and lifetime ICS usage totals |
+| `0007_timetable` | Annual calendars, rooms, availability, compact series, custom audiences, archive policy, encrypted revocable ICS links and lifetime ICS usage totals |
+| `0008_kholloscope` | Kholle requirements, academic label creation order, subject commitments, preparation workflow, room capacity, durable generation/revision jobs and explicit read/write capabilities; removal of legacy availability hour bounds |
 
 The release-check cache belongs to `0002_configuration`.
-There is no revision 0008 in this fresh baseline; an old installation at that revision needs a reviewed
-transition, never an artificial stamp. The final head is `0007_timetable`.
+The final head is `0008_kholloscope`. It consolidates the unreleased former revisions 0008–0014
+with explicit authorization to rewrite this feature's history. It supports fresh databases and
+databases still at `0007_timetable`. An installation stamped with one of the replaced revisions
+needs a reviewed transition; deleting application records does not reset its Alembic revision.
+Never artificially stamp it to bypass a schema mismatch.
+
+The kholloscope schema uses the following integrity rules:
+
+- `kholle_wishes`: one row per academic year, staff account and subject; sessions between 0 and
+  1000 in the subject's recorded reference cycle. Account/year deletion cascades, while a referenced
+  subject cannot be deleted. The primary key also supports annual roster reads.
+- `kholloscope_workflows`: one JSONB preparation document and concurrency revision per academic year.
+- `kholloscope_runs`: one durable job per ID, a checked status catalogue, a partial unique index
+  allowing only one queued/running job per year, and a composite `(school_year, created_at)` index
+  for latest-generation and revision-history queries. Terminal history remains available.
+- Room capacity is bounded to 0–100, with a default of one. Zero forbids new kholle placements.
+- Requirements, workflow details and solver payloads remain validated JSONB documents. Real
+  teacher/subject/room references in published events use existing timetable foreign keys.
+
+All application tables have runtime references; retained job snapshots and rollback metadata are
+used by stale-source detection, dated revisions and publication rollback. They are not redundant
+copies to remove. No speculative JSONB indexes or duplicate event tables are introduced.
+See [ADR 0010](decisions/0010-kholloscope-drafts-and-revisions.md).
 
 API monitoring has no foreign keys to pedagogical tables, so it can be created in configuration.
 ICS usage belongs to the timetable feature. The timetable migration creates the final schema directly,
-including nullable availability ranges, ordered nonnegative kholle bounds and encrypted token metadata.
+including nullable availability ranges and encrypted token metadata. The final 0008 schema removes
+the old min/max kholle hour bounds in favor of exact subject commitments.
 Recurrences and exceptions remain compact JSON documents; shared teachers require no separate table.
 
 This baseline is intended for fresh databases (`alembic upgrade head`), not for upgrading databases

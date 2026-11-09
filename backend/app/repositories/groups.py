@@ -2,6 +2,7 @@
 
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.models import (
     PromotionGroup,
@@ -13,6 +14,38 @@ from app.models import (
     UserRole,
 )
 from app.schemas.groups import GroupAssignment, GroupDraft
+
+
+def active_kholle_group() -> ColumnElement[bool]:
+    """Select groups with at least one nonarchived pupil still belonging to the promotion.
+
+    Returns
+    -------
+    ColumnElement[bool]
+        Correlated EXISTS predicate; mixed groups count once and empty/departed groups do not.
+    """
+    return (
+        select(PromotionGroupMember.user_id)
+        .join(User, User.id == PromotionGroupMember.user_id)
+        .where(
+            PromotionGroupMember.promotion_id == PromotionGroup.promotion_id,
+            PromotionGroupMember.kind == PromotionGroup.kind,
+            PromotionGroupMember.group_number == PromotionGroup.number,
+            User.status != "disabled",
+            select(UserPromotion.user_id)
+            .where(
+                UserPromotion.user_id == User.id,
+                UserPromotion.promotion_id == PromotionGroupMember.promotion_id,
+            )
+            .exists(),
+            select(UserRole.user_id)
+            .join(Role)
+            .where(UserRole.user_id == User.id, Role.code == "user")
+            .exists(),
+        )
+        .correlate(PromotionGroup)
+        .exists()
+    )
 
 
 class GroupsRepository:

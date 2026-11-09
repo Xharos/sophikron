@@ -38,6 +38,7 @@ class TimetableCalendar(Base):
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(100))
     name_key: Mapped[str] = mapped_column(String(300), unique=True)
+    kholle_settings: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
     promotion_id: Mapped[int | None] = mapped_column(
         ForeignKey("sophikron.promotions.id", ondelete="RESTRICT"), index=True
     )
@@ -50,9 +51,11 @@ class TimetableRoom(Base):
     """Provide canonical room identities for cross-agenda conflict warnings."""
 
     __tablename__ = "timetable_rooms"
+    __table_args__ = (CheckConstraint("kholle_capacity BETWEEN 0 AND 100", name="kholle_capacity"),)
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
     name: Mapped[str] = mapped_column(String(80))
     name_key: Mapped[str] = mapped_column(String(80), unique=True)
+    kholle_capacity: Mapped[int] = mapped_column(Integer, server_default=text("1"))
     is_active: Mapped[bool] = mapped_column(Boolean, server_default=text("true"))
     revision: Mapped[str] = mapped_column(String(32))
 
@@ -62,7 +65,22 @@ class TimetableSchoolYear(Base):
 
     __tablename__ = "timetable_school_years"
     school_year: Mapped[int] = mapped_column(Integer, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("clock_timestamp()")
+    )
     used: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+    revision: Mapped[str] = mapped_column(String(32))
+
+
+class KholloscopeWorkflow(Base):
+    """Keep annual validation fingerprints and subject room selections."""
+
+    __tablename__ = "kholloscope_workflows"
+    school_year: Mapped[int] = mapped_column(
+        ForeignKey("sophikron.timetable_school_years.school_year", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    data: Mapped[dict] = mapped_column(JSONB)
     revision: Mapped[str] = mapped_column(String(32))
 
 
@@ -70,10 +88,6 @@ class TeacherAvailability(Base):
     """Store an explicit weekly availability pattern for one teacher and school year."""
 
     __tablename__ = "teacher_availability"
-    __table_args__ = (
-        CheckConstraint("kholle_min_hours >= 0", name="kholle_min_hours"),
-        CheckConstraint("kholle_max_hours >= kholle_min_hours", name="kholle_max_hours"),
-    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("sophikron.users.id", ondelete="CASCADE"), primary_key=True
     )
@@ -82,9 +96,28 @@ class TeacherAvailability(Base):
         primary_key=True,
     )
     ranges: Mapped[list | None] = mapped_column(JSONB(none_as_null=True))
-    kholle_min_hours: Mapped[int] = mapped_column(Integer, server_default=text("0"))
-    kholle_max_hours: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     revision: Mapped[str] = mapped_column(String(32))
+
+
+class KholleWish(Base):
+    """Store exact pedagogical session commitments per recorded subject reference cycle."""
+
+    __tablename__ = "kholle_wishes"
+    __table_args__ = (CheckConstraint("sessions BETWEEN 0 AND 1000", name="sessions"),)
+
+    school_year: Mapped[int] = mapped_column(
+        ForeignKey("sophikron.timetable_school_years.school_year", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("sophikron.users.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    subject_id: Mapped[int] = mapped_column(
+        ForeignKey("sophikron.subjects.id", ondelete="RESTRICT"),
+        primary_key=True,
+    )
+    sessions: Mapped[int] = mapped_column(Integer)
 
 
 class TimetableYear(Base):
@@ -142,6 +175,39 @@ class TimetableSubscription(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class KholloscopeRun(Base):
+    """Persist bounded solver jobs, private progress and editable annual draft proposals."""
+
+    __tablename__ = "kholloscope_runs"
+    __table_args__ = (
+        Index("ix_kholloscope_runs_year_created", "school_year", "created_at"),
+        CheckConstraint(
+            "status IN ('queued','running','completed','infeasible',"
+            "'timeout','failed','cancelled')",
+            name="run_status",
+        ),
+        Index(
+            "uq_kholloscope_active_run",
+            "school_year",
+            unique=True,
+            postgresql_where=text("status IN ('queued','running')"),
+        ),
+    )
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    school_year: Mapped[int] = mapped_column(
+        ForeignKey("sophikron.timetable_school_years.school_year", ondelete="CASCADE")
+    )
+    status: Mapped[str] = mapped_column(String(20))
+    source_revision: Mapped[str] = mapped_column(String(64))
+    revision: Mapped[str] = mapped_column(String(32))
+    options: Mapped[dict] = mapped_column(JSONB)
+    snapshot: Mapped[dict] = mapped_column(JSONB)
+    logs: Mapped[list] = mapped_column(JSONB)
+    result: Mapped[dict | None] = mapped_column(JSONB(none_as_null=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class TimetablePreferences(Base):

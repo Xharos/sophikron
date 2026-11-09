@@ -37,6 +37,9 @@ from app.models.site import (
 )
 from app.models.statistics import ApiMetric, CalendarUsageTotal, LoginStatistic
 from app.models.timetable import (
+    KholleWish,
+    KholloscopeRun,
+    KholloscopeWorkflow,
     TeacherAvailability,
     TimetableCalendar,
     TimetablePreferences,
@@ -48,6 +51,9 @@ from app.models.timetable import (
 )
 
 __all__ = [
+    "KholloscopeRun",
+    "KholloscopeWorkflow",
+    "KholleWish",
     "ReleaseCheck",
     "ApiMetric",
     "CalendarUsageTotal",

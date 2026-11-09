@@ -2,7 +2,7 @@
 
 from .catalog import preflight, seed_catalog
 from .client import Client
-from .configuration import SUBJECTS, Settings
+from .configuration import SUBJECTS, SeedError, Settings
 from .groups import seed_groups
 from .identities import build_people
 from .planning import build_plan
@@ -21,7 +21,7 @@ def describe(settings: Settings) -> None:
     """Print a reviewable scenario summary without credentials or personal account links."""
     pupils, staff, plan = prepare(settings)
     print(
-        f"{settings.class_count} promotions ; {len(pupils)} élèves distincts ; "
+        f"{len(settings.classes())} promotions ; {len(pupils)} élèves distincts ; "
         f"{sum(person.role == 'teacher' for person in staff)} professeurs ; "
         f"{sum(person.role == 'kholleur' for person in staff)} khôlleurs."
     )
@@ -33,12 +33,16 @@ def describe(settings: Settings) -> None:
     for key, kinds in settings.weekly_hours.items():
         print(f"  {SUBJECTS[key][0]} : {sum(kinds.values())} h/élève/semaine ({kinds}).")
     print(
-        f"{len(plan)} séries hebdomadaires ; TP A/B sur les mêmes jours ; "
+        f"{len(plan)} séances hebdomadaires avant regroupement ; TP A/B sur les mêmes jours ; "
         "aucun cours pendant le self."
     )
     print(
         "Les semaines écourtées par les vacances ont un volume réel réduit ; "
         "les totaux annuels suivent les dates effectives."
+    )
+    print(
+        "Khôlles par groupe : PTSI, semaines 1–30, 15 h par matière ; "
+        "PT, semaines 1–25, 12,5 h par matière (maths, SI, physique, anglais)."
     )
 
 
@@ -49,5 +53,29 @@ def seed(client: Client, settings: Settings) -> dict:
     catalogue = seed_catalog(client, settings, pupils, staff, state)
     groups = seed_groups(client, settings, catalogue)
     calendars = seed_timetables(client, settings, catalogue, groups, plan)
+    validate_volumes(client, settings.school_year)
     print("Scénario prêt. Comptes en attente d’activation ; aucun courriel envoyé.")
     return {**catalogue, "groups": groups, "calendars": calendars}
+
+
+def validate_volumes(client: Client, school_year: int) -> None:
+    """Validate the annual volumes milestone without changing wishes or room selections.
+
+    Parameters
+    ----------
+    client, school_year
+        Authenticated API client and academic year prepared by the scenario.
+
+    Returns
+    -------
+    None
+        Already valid milestones are preserved; incomplete prerequisites stop the run.
+    """
+    path = f"/timetable/kholloscope/{school_year}/workflow"
+    state = client.request("GET", path)
+    if state["errors"]:
+        raise SeedError("Volumes non validés : " + " ; ".join(state["errors"]))
+    if not state["validated"]["volumes"]:
+        client.request(
+            "PUT", path, {"step": "volumes", "expected_revision": state["revision"]}
+        )

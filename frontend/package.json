@@ -1,7 +1,7 @@
 {
 	"name": "frontend",
 	"private": true,
-	"version": "0.1.0",
+	"version": "0.2.0",
 	"type": "module",
 	"scripts": {
 		"dev": "vite dev",
@@ -38,6 +38,9 @@
 		"svelte-check": "^4.6.0",
 		"typescript": "^6.0.3",
 		"typescript-eslint": "^8.72.1"
+	},
+	"overrides": {
+		"minimatch": "^11.0.1"
 	},
 	"imports": {
 		"#lib": "./src/lib/index.js",

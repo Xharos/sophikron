@@ -32,3 +32,7 @@ operations, tested only against disposable PostgreSQL databases.
 
 See [timetable behavior and feeds](../timetable.md), authorization integration tests and the
 frontend recurrence/occupancy tests.
+
+[ADR 0010](0010-kholloscope-drafts-and-revisions.md) extends this design with private kholloscope
+generation and dated revisions. Its consolidated 0008 migration replaces the legacy availability
+hour bounds with exact subject commitments; the final schema no longer retains those bounds.

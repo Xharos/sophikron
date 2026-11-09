@@ -112,6 +112,41 @@ async def test_participant_family_filters_archives_and_cursor_scope(auth_case: H
         "/api/v1/admin/events", params={"user_id": user_id, "since": stamp.isoformat(), "limit": 5}
     )
     assert len(all_families.json()["items"]) == 4
+    multiple = await case.client.get(
+        "/api/v1/admin/events",
+        params={"user_ids": [user_id, other_id], "since": stamp.isoformat(), "limit": 2},
+    )
+    assert multiple.status_code == 200, multiple.text
+    first_page = multiple.json()
+    assert len(first_page["items"]) == 2
+    remaining = await case.client.get(
+        "/api/v1/admin/events",
+        params={
+            "user_ids": [other_id, user_id, user_id],
+            "since": stamp.isoformat(),
+            "limit": 5,
+            "cursor": first_page["next_cursor"],
+        },
+    )
+    assert remaining.status_code == 200, remaining.text
+    combined = first_page["items"] + remaining.json()["items"]
+    assert len(combined) == len({row["id"] for row in combined}) == 5
+    assert (
+        await case.client.get(
+            "/api/v1/admin/events",
+            params={
+                "user_ids": [user_id],
+                "since": stamp.isoformat(),
+                "cursor": first_page["next_cursor"],
+            },
+        )
+    ).status_code == 422
+    assert (
+        await case.client.get("/api/v1/admin/events", params={"user_ids": [0]})
+    ).status_code == 422
+    assert (
+        await case.client.get("/api/v1/admin/events", params={"user_ids": [user_id] * 101})
+    ).status_code == 422
     for invalid in ({"family": "unknown"}, {"user_id": 0}):
         assert (await case.client.get("/api/v1/admin/events", params=invalid)).status_code == 422
     for role in ("teacher", "user"):
@@ -121,6 +156,9 @@ async def test_participant_family_filters_archives_and_cursor_scope(auth_case: H
         )
         assert (
             await case.client.get("/api/v1/admin/events", params={"user_id": user_id})
+        ).status_code == 403
+        assert (
+            await case.client.get("/api/v1/admin/events", params={"user_ids": [user_id, other_id]})
         ).status_code == 403
         case.as_admin()
 
@@ -341,3 +379,12 @@ async def test_snapshot_constraints(auth_case: Harness) -> None:
                         data={},
                     )
                 )
+
+
+def test_journal_messages_are_sentences_without_final_periods() -> None:
+    """Keep catalogue messages verbal and avoid punctuation after participant tags."""
+    for definition in EVENTS.values():
+        assert " · " not in definition.message
+        assert not definition.message.endswith(".")
+    assert EVENTS["timetable.series_created"].message == "{actor} a ajouté des séances"
+    assert EVENTS["timetable.room_saved"].message == "{actor} a enregistré une salle"

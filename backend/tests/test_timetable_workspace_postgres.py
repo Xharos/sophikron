@@ -3,7 +3,7 @@
 import os
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from io import BytesIO
 
 import pytest
@@ -15,13 +15,23 @@ from sqlalchemy import event as sqlalchemy_event
 from sqlalchemy.exc import IntegrityError
 
 from app.models import (
+    KholleWish,
+    KholloscopeRun,
+    KholloscopeWorkflow,
+    PromotionGroup,
+    PromotionGroupMember,
+    PromotionPartition,
     Subject,
     TeacherAvailability,
+    TeacherSubject,
     TimetableCalendar,
     TimetablePreferences,
+    TimetableRoom,
     TimetableSchoolYear,
     TimetableSeries,
     TimetableYear,
+    User,
+    UserPromotion,
 )
 from app.services.timetable_engine import PARIS
 from app.services.timetable_lifecycle import rollover
@@ -34,6 +44,75 @@ pytestmark = [
         os.environ.get("DB_INTEGRATION") != "1", reason="Dedicated PostgreSQL required"
     ),
 ]
+
+
+@pytest.mark.asyncio
+async def test_kholloscope_database_constraints(workspace: "Workspace") -> None:
+    """Enforce commitments, workflow uniqueness, room bounds and queue exclusivity in PostgreSQL."""
+    w = workspace
+    now = datetime.now(timezone.utc)
+    async with w.case.database.sessions() as session, session.begin():
+        subject_id = await session.scalar(
+            Subject.__table__.insert()
+            .values(
+                name=w.case.prefix + "-constraints",
+                name_key=w.case.prefix + "-constraints",
+                color="#123456",
+                icon="book",
+            )
+            .returning(Subject.id)
+        )
+        wish = dict(
+            school_year=w.school_year, user_id=w.teacher_id, subject_id=subject_id, sessions=1
+        )
+        await session.execute(KholleWish.__table__.insert().values(**wish))
+        workflow = dict(school_year=w.school_year, data={}, revision="a" * 32)
+        await session.execute(KholloscopeWorkflow.__table__.insert().values(**workflow))
+        run = dict(
+            id="a" * 32,
+            school_year=w.school_year,
+            status="queued",
+            source_revision="b" * 64,
+            revision="c" * 32,
+            options={},
+            snapshot={},
+            logs=[],
+            created_at=now,
+            updated_at=now,
+        )
+        await session.execute(KholloscopeRun.__table__.insert().values(**run))
+        rejected = [
+            (KholleWish.__table__, wish),
+            (KholleWish.__table__, {**wish, "user_id": w.pupil_id, "sessions": -1}),
+            (KholleWish.__table__, {**wish, "user_id": w.pupil_id, "sessions": 1001}),
+            (KholleWish.__table__, {**wish, "subject_id": 9223372036854775807}),
+            (KholloscopeWorkflow.__table__, workflow),
+            (KholloscopeRun.__table__, {**run, "id": "d" * 32, "status": "running"}),
+            (KholloscopeRun.__table__, {**run, "id": "d" * 32, "status": "unknown"}),
+            *[
+                (
+                    TimetableRoom.__table__,
+                    dict(
+                        name=w.case.prefix,
+                        name_key=w.case.prefix,
+                        revision="e" * 32,
+                        kholle_capacity=capacity,
+                    ),
+                )
+                for capacity in (-1, 101)
+            ],
+        ]
+        for table, values in rejected:
+            with pytest.raises(IntegrityError):
+                async with session.begin_nested():
+                    await session.execute(table.insert().values(**values))
+        # Terminal history may coexist with the active job for the same year.
+        await session.execute(
+            KholloscopeRun.__table__.insert().values(
+                **{**run, "id": "f" * 32, "status": "completed"}
+            )
+        )
+        await session.rollback()
 
 
 @dataclass
@@ -183,6 +262,679 @@ async def workspace(auth_case: Harness) -> AsyncIterator[Workspace]:
 
 
 @pytest.mark.asyncio
+async def test_kholle_counts_exclude_archived_only_groups_and_retain_mixed_groups(
+    workspace: Workspace,
+) -> None:
+    """Count mixed groups once and exclude empty/archived groups with the shared SQL rule."""
+    from app.repositories.groups import active_kholle_group
+
+    w = workspace
+    archived = [(await w.case.create())[0] for _ in range(2)]
+    w.case.as_admin()
+    response = await w.case.client.post(
+        f"/api/v1/admin/promotions/{w.promotion_id}/users", json={"user_ids": archived}
+    )
+    assert response.status_code == 204, response.text
+    async with w.case.database.sessions.begin() as db:
+        for identifier in archived:
+            (await db.get(User, identifier)).status = "disabled"
+        db.add(
+            PromotionPartition(
+                promotion_id=w.promotion_id, kind="kholles", target_size=3, revision="a" * 32
+            )
+        )
+        await db.flush()
+        db.add_all(
+            [
+                PromotionGroup(promotion_id=w.promotion_id, kind="kholles", number=n, x=0, y=0)
+                for n in (2, 7, 9)
+            ]
+        )
+        await db.flush()
+        db.add_all(
+            [
+                PromotionGroupMember(
+                    promotion_id=w.promotion_id, kind="kholles", group_number=n, user_id=p
+                )
+                for n, p in ((2, w.pupil_id), (2, archived[0]), (7, archived[1]))
+            ]
+        )
+    path = f"/api/v1/timetable/calendars/{w.calendar_id}/kholle/preview"
+    preview = (await w.case.client.post(path)).json()
+    assert preview["group_count"] == 1
+    async with w.case.database.sessions.begin() as db:
+        numbers = list(
+            await db.scalars(
+                select(PromotionGroup.number).where(
+                    PromotionGroup.promotion_id == w.promotion_id,
+                    PromotionGroup.kind == "kholles",
+                    active_kholle_group(),
+                )
+            )
+        )
+        assert numbers == [2]  # Keep original numbering, including gaps.
+        (await db.get(User, w.pupil_id)).status = "disabled"
+    assert (await w.case.client.post(path)).json()["group_count"] == 0
+    async with w.case.database.sessions.begin() as db:
+        (await db.get(User, archived[1])).status = "active"
+    assert (await w.case.client.post(path)).json()["group_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_room_capacity_create_edit_preserve_and_permissions(workspace: Workspace) -> None:
+    """Persist capacity edits, preserve omitted values and enforce revisions and staff access."""
+    w = workspace
+    w.case.as_admin()
+    created = await w.case.client.post(
+        "/api/v1/timetable/rooms", json={"name": f"{w.case.prefix}-cap", "kholle_capacity": 3}
+    )
+    assert created.status_code == 201, created.text
+    room = created.json()
+    assert room["kholle_capacity"] == 3
+    path = f"/api/v1/timetable/rooms/{room['id']}"
+    try:
+        for fields in (
+            {"name": f"{w.case.prefix}-renamed"},
+            {"name": f"{w.case.prefix}-renamed", "kholle_capacity": 0},
+        ):
+            response = await w.case.client.put(
+                path, json={**fields, "expected_revision": room["revision"]}
+            )
+            assert response.status_code == 200, response.text
+            room["revision"] = response.json()["revision"]
+            config = (await w.case.client.get("/api/v1/timetable/configuration")).json()
+            actual = next(item for item in config["rooms"] if item["id"] == room["id"])
+            assert actual["kholle_capacity"] == fields.get("kholle_capacity", 3)
+        assert (
+            await w.case.client.put(
+                path,
+                json={"name": "C105", "kholle_capacity": -1, "expected_revision": room["revision"]},
+            )
+        ).status_code == 422
+        assert (
+            await w.case.client.put(path, json={"name": "C105", "expected_revision": "f" * 32})
+        ).status_code == 409
+        await w.login(w.teacher_name)
+        assert (
+            await w.case.client.put(
+                path, json={"name": "C105", "expected_revision": room["revision"]}
+            )
+        ).status_code == 403
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(delete(TimetableRoom).where(TimetableRoom.id == room["id"]))
+
+
+@pytest.mark.asyncio
+async def test_room_capacity_cut_requires_fresh_confirmation_and_preserves_bookings(
+    workspace: Workspace,
+) -> None:
+    """Preview cuts without writes, recheck changed bookings and authorize confirmation."""
+    w = workspace
+    w.case.as_admin()
+    room = (
+        await w.case.client.post(
+            "/api/v1/timetable/rooms",
+            json={"name": f"{w.case.prefix}-confirm", "kholle_capacity": 2},
+        )
+    ).json()
+    path = f"/api/v1/timetable/rooms/{room['id']}"
+    payload = {
+        "name": f"{w.case.prefix}-renamed",
+        "kholle_capacity": 0,
+        "expected_revision": room["revision"],
+    }
+    try:
+        await w.add(kind="kholle", room_id=room["id"])
+        preview = await w.case.client.put(path, json=payload)
+        assert preview.status_code == 200, preview.text
+        assert preview.json()["confirmation_required"] is True
+        async with w.case.database.sessions.begin() as session:
+            actual = await session.get(TimetableRoom, room["id"])
+            assert actual.kholle_capacity == 2
+            assert actual.name == room["name"]
+            assert actual.revision == room["revision"]
+        assert (
+            await w.case.client.request(
+                "DELETE", path, json={"expected_revision": room["revision"]}
+            )
+        ).status_code == 409
+        await w.add(kind="kholle", room_id=room["id"], start_slot=2)
+        confirmed = {
+            **payload,
+            "confirmed_capacity_reduction": True,
+            "expected_impact_revision": preview.json()["impact_revision"],
+        }
+        changed = await w.case.client.put(path, json=confirmed)
+        assert changed.json()["confirmation_required"] is True
+        assert changed.json()["impact_revision"] != confirmed["expected_impact_revision"]
+        confirmed["expected_impact_revision"] = changed.json()["impact_revision"]
+        await w.login(w.teacher_name)
+        assert (await w.case.client.put(path, json=confirmed)).status_code == 403
+        w.case.as_admin()
+        response = await w.case.client.put(path, json=confirmed)
+        assert response.status_code == 200, response.text
+        assert response.json()["revision_required"] is True
+        async with w.case.database.sessions.begin() as session:
+            actual = await session.get(TimetableRoom, room["id"])
+            assert actual.kholle_capacity == 0
+        assert any(e["room_id"] == room["id"] for e in (await w.board())["events"])
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(
+                delete(TimetableSeries).where(TimetableSeries.room_id == room["id"])
+            )
+        response = await w.case.client.request(
+            "DELETE", path, json={"expected_revision": response.json()["revision"]}
+        )
+        assert response.status_code == 200, response.text
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(
+                delete(TimetableSeries).where(TimetableSeries.room_id == room["id"])
+            )
+            await session.execute(delete(TimetableRoom).where(TimetableRoom.id == room["id"]))
+
+
+@pytest.mark.asyncio
+async def test_kholloscope_workflow_order_rooms_and_invalidation(workspace: Workspace) -> None:
+    """Enforce saved milestone ordering, room eligibility, year scope and stale inputs."""
+    w = workspace
+    kholleur_id, _ = await w.case.create("kholleur")
+    w.case.as_admin()
+    initial = (
+        await w.case.client.post(f"/api/v1/timetable/calendars/{w.calendar_id}/kholle/preview")
+    ).json()
+    weeks = [week for week in initial["weeks"] if week["eligible"]][:2]
+    async with w.case.database.sessions.begin() as session:
+        subject = Subject(
+            name=f"{w.case.prefix}-flow",
+            name_key=f"{w.case.prefix}-flow",
+            icon="book",
+            color="#334455",
+        )
+        room = TimetableRoom(
+            name=f"{w.case.prefix}-room", name_key=f"{w.case.prefix}-room", revision="a" * 32
+        )
+        session.add_all([subject, room])
+        await session.flush()
+        subject_id, room_id = subject.id, room.id
+        session.add(TeacherSubject(user_id=w.teacher_id, subject_id=subject_id))
+        session.add(TeacherSubject(user_id=kholleur_id, subject_id=subject_id))
+        session.add(UserPromotion(user_id=kholleur_id, promotion_id=w.promotion_id))
+        session.add(
+            KholleWish(
+                school_year=w.school_year, user_id=kholleur_id, subject_id=subject_id, sessions=0
+            )
+        )
+        session.add(
+            PromotionPartition(
+                promotion_id=w.promotion_id, kind="kholles", target_size=3, revision="a" * 32
+            )
+        )
+        await session.flush()
+        session.add(PromotionGroup(promotion_id=w.promotion_id, kind="kholles", number=1, x=0, y=0))
+        await session.flush()
+        session.add(
+            PromotionGroupMember(
+                promotion_id=w.promotion_id, kind="kholles", group_number=1, user_id=w.pupil_id
+            )
+        )
+        calendar = await session.get(TimetableCalendar, w.calendar_id)
+        calendar.kholle_settings = {
+            "start": weeks[0]["start"],
+            "end": weeks[1]["end"],
+            "subjects": [{"subject_id": subject_id, "minutes": 540}],
+        }
+        session.add(
+            KholleWish(
+                school_year=w.school_year, user_id=w.teacher_id, subject_id=subject_id, sessions=9
+            )
+        )
+    path = f"/api/v1/timetable/kholloscope/{w.school_year}/workflow"
+    other_years = [w.school_year - 1, w.school_year + 1]
+    other_promotion = await make_promotion(w.case, "PREFERENCE")
+    other_calendar = await w.create(promotion=other_promotion)
+    async with w.case.database.sessions.begin() as session:
+        original = await session.get(TimetableCalendar, w.calendar_id)
+        second = await session.get(TimetableCalendar, other_calendar)
+        second.kholle_settings = {
+            **original.kholle_settings,
+            "subjects": [{"subject_id": subject_id, "minutes": 0}],
+        }
+        session.add(
+            PromotionPartition(
+                promotion_id=other_promotion, kind="kholles", target_size=3, revision="a" * 32
+            )
+        )
+        await session.flush()
+        session.add(
+            PromotionGroup(promotion_id=other_promotion, kind="kholles", number=1, x=0, y=0)
+        )
+        await session.flush()
+        session.add(UserPromotion(user_id=w.pupil_id, promotion_id=other_promotion))
+        await session.flush()
+        session.add(
+            PromotionGroupMember(
+                promotion_id=other_promotion, kind="kholles", group_number=1, user_id=w.pupil_id
+            )
+        )
+    try:
+        response = await w.case.client.get(path)
+        assert response.status_code == 200, response.text
+        state = response.json()
+        assert state["errors"] == state["wish_errors"] == []
+        assert state["teacher_preferences"] == [
+            {
+                "user_id": w.teacher_id,
+                "prefer_own_promotion": True,
+                "effective": True,
+                "promotion_ids": [w.promotion_id],
+            },
+            {
+                "user_id": kholleur_id,
+                "prefer_own_promotion": True,
+                "effective": True,
+                "promotion_ids": [w.promotion_id],
+            },
+        ]
+        assert not any(state["validated"].values())
+        assert (
+            await w.case.client.put(
+                path, json={"step": "service", "expected_revision": state["revision"]}
+            )
+        ).status_code == 409
+        for step in ("volumes", "wishes"):
+            response = await w.case.client.put(
+                path, json={"step": step, "expected_revision": state["revision"]}
+            )
+            assert response.status_code == 200, response.text
+            state = response.json()
+            assert state["validated"][step]
+        payload = {
+            "step": "service",
+            "expected_revision": state["revision"],
+            "rooms": [{"subject_id": subject_id, "room_ids": [room_id]}],
+            "teacher_preferences": [
+                {"user_id": w.teacher_id, "prefer_own_promotion": False},
+                {"user_id": kholleur_id, "prefer_own_promotion": False},
+            ],
+        }
+        assert (await w.case.client.put(path, json={**payload, "rooms": []})).status_code == 422
+        invalid = [{"subject_id": subject_id, "room_ids": [9223372036854775807]}]
+        assert (
+            await w.case.client.put(path, json={**payload, "rooms": invalid})
+        ).status_code == 422
+        response = await w.case.client.put(path, json=payload)
+        assert response.status_code == 200, response.text
+        assert all(response.json()["validated"].values())
+        assert response.json()["teacher_preferences"][0]["prefer_own_promotion"] is False
+        assert response.json()["teacher_preferences"][1]["prefer_own_promotion"] is False
+        async with w.case.database.sessions.begin() as session:
+            session.add(UserPromotion(user_id=w.teacher_id, promotion_id=other_promotion))
+        shared = (await w.case.client.get(path)).json()
+        assert not shared["teacher_preferences"][0]["effective"]
+        assert not shared["teacher_preferences"][0]["prefer_own_promotion"]
+        assert shared["validated"] == {"volumes": True, "wishes": True, "service": False}
+        reconfirmed = await w.case.client.put(
+            path, json={**payload, "expected_revision": shared["revision"]}
+        )
+        assert reconfirmed.status_code == 200, reconfirmed.text
+        async with w.case.database.sessions.begin() as session:
+            session.add_all(
+                [TimetableSchoolYear(school_year=year, revision="c" * 32) for year in other_years]
+            )
+        for year in other_years:
+            other_path = f"/api/v1/timetable/kholloscope/{year}/workflow"
+            other = (await w.case.client.get(other_path)).json()
+            assert other["errors"] and not any(other["validated"].values())
+            assert (
+                await w.case.client.put(
+                    other_path, json={"step": "volumes", "expected_revision": other["revision"]}
+                )
+            ).status_code == 422
+        assert all((await w.case.client.get(path)).json()["validated"].values())
+        assert (await w.case.client.put(path, json=payload)).status_code == 409
+        async with w.case.database.sessions.begin() as session:
+            wish = await session.get(KholleWish, (w.school_year, w.teacher_id, subject_id))
+            wish.sessions = 8
+        changed = (await w.case.client.get(path)).json()
+        assert changed["validated"] == {"volumes": True, "wishes": False, "service": False}
+        assert changed["available"] == {"volumes": True, "wishes": True, "service": False}
+        assert changed["review"] == {"volumes": False, "wishes": True, "service": True}
+        assert changed["wish_errors"]
+        async with w.case.database.sessions.begin() as session:
+            room = await session.get(TimetableRoom, room_id)
+            room.is_active = False
+        changed = (await w.case.client.get(path)).json()
+        assert changed["review"]["service"] and not changed["available"]["service"]
+        assert "inactive" in changed["conflicts"]["service"][0]
+        async with w.case.database.sessions.begin() as session:
+            room = await session.get(TimetableRoom, room_id)
+            room.is_active, room.revision = True, "d" * 32
+            wish = await session.get(KholleWish, (w.school_year, w.teacher_id, subject_id))
+            wish.sessions = 9
+        before = (await w.case.client.get(path)).json()
+        assert before["validated"] == {"volumes": True, "wishes": True, "service": False}
+        reconfirmed = await w.case.client.put(
+            path, json={**payload, "expected_revision": before["revision"]}
+        )
+        assert reconfirmed.status_code == 200, reconfirmed.text
+        before = reconfirmed.json()
+        assert all(before["validated"].values())
+        settings_path = f"/api/v1/timetable/calendars/{w.calendar_id}/kholle"
+        current = (await w.case.client.post(settings_path + "/preview")).json()
+        save_payload = {
+            "expected_revision": current["revision"],
+            "expected_year_revision": current["year_revision"],
+            "settings": current["settings"],
+        }
+        unchanged = await w.case.client.put(settings_path, json=save_payload)
+        assert unchanged.status_code == 200, unchanged.text
+        assert unchanged.json()["revision"] == current["revision"]
+        assert (await w.case.client.get(path)).json() == before
+        save_payload["settings"]["subjects"][0]["minutes"] += 60
+        changed = await w.case.client.put(settings_path, json=save_payload)
+        assert changed.status_code == 200, changed.text
+        after = (await w.case.client.get(path)).json()
+        assert after["validated"] == {"volumes": False, "wishes": False, "service": False}
+        assert not after["available"]["wishes"] and not after["available"]["service"]
+        assert after["selected_rooms"] == before["selected_rooms"]
+        assert after["subjects"] == before["subjects"]
+        assert after["wish_errors"]
+        assert (
+            await w.case.client.put(
+                path,
+                json={
+                    "step": "service",
+                    "expected_revision": after["revision"],
+                    "rooms": after["selected_rooms"],
+                },
+            )
+        ).status_code == 409
+        await w.login(w.teacher_name)
+        assert (await w.case.client.get(path)).status_code == 403
+        assert (await w.case.client.put(path, json=payload)).status_code == 403
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            calendar = await session.get(TimetableCalendar, w.calendar_id)
+            calendar.kholle_settings = None
+            await session.execute(
+                delete(KholloscopeWorkflow).where(KholloscopeWorkflow.school_year == w.school_year)
+            )
+            await session.execute(delete(KholleWish).where(KholleWish.subject_id == subject_id))
+            await session.execute(
+                delete(TeacherSubject).where(TeacherSubject.subject_id == subject_id)
+            )
+            await session.execute(delete(Subject).where(Subject.id == subject_id))
+            await session.execute(delete(TimetableRoom).where(TimetableRoom.id == room_id))
+            await session.execute(
+                delete(TimetableSchoolYear).where(TimetableSchoolYear.school_year.in_(other_years))
+            )
+            await session.execute(
+                delete(TimetableCalendar).where(TimetableCalendar.id == other_calendar)
+            )
+        await clear_promotions([other_promotion])
+
+
+@pytest.mark.asyncio
+async def test_kholle_wishes_roundtrip_atomicity_years_and_permissions(
+    workspace: Workspace,
+) -> None:
+    """Persist exact subject wishes, isolate years and reject stale or unauthorized writes."""
+    w = workspace
+    kholleur, kholleur_name = await w.case.create("kholleur")
+    async with w.case.database.sessions.begin() as session:
+        subject = Subject(
+            name=f"{w.case.prefix}-wishes",
+            name_key=f"{w.case.prefix}-wishes",
+            icon="book",
+            color="#334455",
+        )
+        session.add(subject)
+        await session.flush()
+        subject_id = subject.id
+        session.add_all(
+            [
+                TeacherSubject(user_id=user_id, subject_id=subject_id)
+                for user_id in (w.teacher_id, kholleur)
+            ]
+        )
+    path = f"/api/v1/timetable/kholloscope/{w.school_year}/wishes"
+    future_year = w.school_year + 1
+    try:
+        w.case.as_admin()
+        response = await w.case.client.get(path)
+        assert response.status_code == 200, response.text
+        initial = response.json()
+        people = next(s for s in initial["subjects"] if s["id"] == subject_id)["staff"]
+        assert {p["id"] for p in people} == {w.teacher_id, kholleur}
+        assert all(p["first_name"] and p["last_name"] and p["sessions"] is None for p in people)
+        assert next(p for p in people if p["id"] == kholleur)["roles"] == ["kholleur"]
+        entries = [
+            {
+                "user_id": p["id"],
+                "subject_id": s["id"],
+                "sessions": 15 if p["id"] == w.teacher_id else 0,
+            }
+            for s in initial["subjects"]
+            for p in s["staff"]
+        ]
+        payload = {"expected_revision": initial["revision"], "entries": entries}
+        response = await w.case.client.put(path, json=payload)
+        assert response.status_code == 200, response.text
+        saved = response.json()
+        assert saved["revision"] != initial["revision"]
+        assert (await w.case.client.put(path, json=payload)).status_code == 409
+        payload["expected_revision"] = saved["revision"]
+        invalid = [*entries, {"user_id": w.pupil_id, "subject_id": subject_id, "sessions": 10}]
+        assert (
+            await w.case.client.put(path, json={**payload, "entries": invalid})
+        ).status_code == 422
+        assert (await w.case.client.get(path)).json() == saved
+        assert (
+            await w.case.client.put(path, json={**payload, "entries": entries[:-1]})
+        ).status_code == 422
+        async with w.case.database.sessions.begin() as session:
+            session.add(TimetableSchoolYear(school_year=future_year, revision="b" * 32))
+        future = await w.case.client.get(f"/api/v1/timetable/kholloscope/{future_year}/wishes")
+        assert future.status_code == 200
+        assert all(p["sessions"] is None for s in future.json()["subjects"] for p in s["staff"])
+        payload["entries"] = [{**entry, "sessions": None} for entry in entries]
+        response = await w.case.client.put(path, json=payload)
+        assert response.status_code == 200
+        assert all(p["sessions"] is None for s in response.json()["subjects"] for p in s["staff"])
+        async with w.case.database.sessions.begin() as session:
+            assignment = await session.get(TeacherSubject, (kholleur, subject_id))
+            await session.delete(assignment)
+        payload["expected_revision"] = response.json()["revision"]
+        assert (await w.case.client.put(path, json=payload)).status_code == 409
+        for username in (w.teacher_name, kholleur_name, w.pupil_name):
+            await w.login(username)
+            assert (await w.case.client.get(path)).status_code == 403
+            assert (await w.case.client.put(path, json=payload)).status_code == 403
+        w.case.client.cookies.clear()
+        assert (await w.case.client.get(path)).status_code == 401
+        w.case.as_admin()
+        assert (
+            await w.case.client.get("/api/v1/timetable/kholloscope/1900/wishes")
+        ).status_code == 404
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(delete(KholleWish).where(KholleWish.subject_id == subject_id))
+            await session.execute(
+                delete(TeacherSubject).where(TeacherSubject.subject_id == subject_id)
+            )
+            await session.execute(delete(Subject).where(Subject.id == subject_id))
+            await session.execute(
+                delete(TimetableSchoolYear).where(TimetableSchoolYear.school_year == future_year)
+            )
+
+
+@pytest.mark.asyncio
+async def test_kholloscope_requires_an_active_calendar(workspace: Workspace) -> None:
+    """Exclude archives and explain an empty workspace before all other prerequisites."""
+    w = workspace
+    async with w.case.database.sessions.begin() as session:
+        calendar = await session.get(TimetableCalendar, w.calendar_id)
+        calendar.is_archived = True
+    w.case.as_admin()
+    path = "/api/v1/timetable/kholloscope"
+    result = await w.case.client.get(path)
+    assert result.status_code == 200
+    assert result.json()["errors"] == ["Créer un calendrier en premier."]
+    assert (await w.case.client.get(path)).status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_kholle_configuration_roundtrip_and_permissions(workspace: Workspace) -> None:
+    """Persist exact group volumes, recalculate groups and enforce rights and revisions."""
+    w = workspace
+    path = f"/api/v1/timetable/calendars/{w.calendar_id}/kholle"
+    w.case.as_admin()
+    response = await w.case.client.post(path + "/preview")
+    assert response.status_code == 200, response.text
+    initial = response.json()
+    assert initial["settings"] is None
+    overview_path = "/api/v1/timetable/kholloscope"
+    assert (await w.case.client.get(overview_path)).status_code == 200
+    blocked = (await w.case.client.get(overview_path)).json()
+    assert blocked["errors"] == [f"Saisir les khôlles du calendrier {w.calendar_id}."]
+    async with w.case.database.sessions.begin() as session:
+        subject = Subject(
+            name=f"{w.case.prefix}-kholle",
+            name_key=f"{w.case.prefix}-kholle",
+            icon="book",
+            color="#334455",
+        )
+        session.add(subject)
+        await session.flush()
+        subject_id = subject.id
+        session.add(
+            PromotionPartition(
+                promotion_id=w.promotion_id,
+                kind="kholles",
+                target_size=3,
+                revision="a" * 32,
+            )
+        )
+        await session.flush()
+        session.add_all(
+            [
+                PromotionGroup(promotion_id=w.promotion_id, kind="kholles", number=i, x=0, y=0)
+                for i in range(1, 16)
+            ]
+        )
+        await session.flush()
+        session.add(
+            PromotionGroupMember(
+                promotion_id=w.promotion_id, kind="kholles", group_number=1, user_id=w.pupil_id
+            )
+        )
+    try:
+        eligible = [week for week in initial["weeks"] if week["eligible"]]
+        payload = {
+            "expected_revision": initial["revision"],
+            "expected_year_revision": initial["year_revision"],
+            "settings": {
+                "start": eligible[0]["start"],
+                "end": eligible[-1]["end"],
+                "subjects": [{"subject_id": subject_id, "minutes": 1290}],
+            },
+        }
+        response = await w.case.client.put(path, json=payload)
+        assert response.status_code == 200, response.text
+        state = (await w.case.client.post(path + "/preview")).json()
+        assert state["settings"] == payload["settings"]
+        assert state["group_count"] == 1  # The fourteen empty groups are excluded.
+        assert state["group_size"] == 3
+        overview = await w.case.client.get(overview_path)
+        assert overview.status_code == 200, overview.text
+        assert overview.json()["calendars"][0]["group_count"] == 1
+        assert overview.json()["calendars"][0]["settings"]["subjects"][0]["minutes"] == 1290
+        future_year = w.school_year + 1
+        async with w.case.database.sessions.begin() as session:
+            session.add(TimetableSchoolYear(school_year=future_year, revision="b" * 32))
+        previous_settings = w.settings
+        try:
+            w.settings = {
+                **w.settings,
+                "start": f"{future_year}-09-01",
+                "end": f"{future_year + 1}-08-31",
+            }
+            draft = await w.create(school_year=future_year)
+            newest = (await w.case.client.get(overview_path)).json()
+            assert newest["school_year"] == future_year
+            assert newest["errors"][0] == f"Affecter le calendrier {draft} à une promo."
+            older = (
+                await w.case.client.get(overview_path, params={"school_year": w.school_year})
+            ).json()
+            assert older["errors"] == []
+            assert [c["id"] for c in older["calendars"]] == [w.calendar_id]
+            assert (
+                await w.case.client.get(overview_path, params={"school_year": 1900})
+            ).status_code == 422
+        finally:
+            w.settings = previous_settings
+            async with w.case.database.sessions.begin() as session:
+                await session.execute(
+                    delete(TimetableCalendar).where(TimetableCalendar.id.in_(w.calendar_ids[1:]))
+                )
+                await session.execute(
+                    delete(TimetableSchoolYear).where(
+                        TimetableSchoolYear.school_year == future_year
+                    )
+                )
+        assert (await w.case.client.put(path, json=payload)).status_code == 409
+        payload["expected_revision"] = state["revision"]
+        payload["settings"]["subjects"][0]["subject_id"] = 9223372036854775807
+        assert (await w.case.client.put(path, json=payload)).status_code == 422
+        unassigned = await w.create()
+        blocked = (await w.case.client.get(overview_path)).json()
+        assert blocked["errors"] == [
+            f"Affecter le calendrier {unassigned} à une promo.",
+            f"Saisir les khôlles du calendrier {unassigned}.",
+        ]
+        assert (await w.case.client.get(overview_path)).status_code == 200
+        assert (
+            await w.case.client.post(f"/api/v1/timetable/calendars/{unassigned}/kholle/preview")
+        ).status_code == 422
+        for username in (w.teacher_name, w.pupil_name):
+            await w.login(username)
+            assert (await w.case.client.get(overview_path)).status_code == 403
+            assert (await w.case.client.post(path + "/preview")).status_code == 403
+            assert (await w.case.client.put(path, json=payload)).status_code == 403
+    finally:
+        async with w.case.database.sessions.begin() as session:
+            await session.execute(delete(Subject).where(Subject.id == subject_id))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind", ["course", "td", "tp", "kholle"])
+async def test_teacher_promotion_warning_is_nonblocking(workspace: Workspace, kind: str) -> None:
+    """Warn for external co-teachers only outside kholles, until promotion assignment."""
+    w = workspace
+    foreign, _ = await w.case.create("teacher")
+    state = await w.add(kind=kind, teacher_ids=[w.teacher_id, foreign])
+    code = f"teacher-promotion-{state['years'][0]['id']}-{foreign}"
+    assert any(issue["code"] == code for issue in state["issues"]) == (kind != "kholle")
+    if kind == "kholle":
+        state = await w.add(kind="course", teacher_ids=[w.teacher_id, foreign])
+        assert any(issue["code"] == code for issue in state["issues"])
+    w.case.as_admin()
+    response = await w.case.client.post(
+        f"/api/v1/admin/promotions/{w.promotion_id}/users", json={"user_ids": [foreign]}
+    )
+    assert response.status_code == 204, response.text
+    state = await w.board()
+    assert not any(issue["code"] == code for issue in state["issues"])
+    catalog = (await w.case.client.get("/api/v1/timetable/catalog")).json()
+    assert (
+        w.promotion_id
+        in next(t for t in catalog["teachers"] if t["id"] == foreign)["promotion_ids"]
+    )
+
+
+@pytest.mark.asyncio
 async def test_week_pdf_scope_and_private_unpublished_calendar(workspace: Workspace) -> None:
     """Allow authorized unpublished exports and deny unrelated calendars, pupils and bad nodes."""
     w = workspace
@@ -210,89 +962,6 @@ async def test_week_pdf_scope_and_private_unpublished_calendar(workspace: Worksp
     assert (await w.case.client.get(path, params=params)).status_code == 403
     w.case.client.cookies.clear()
     assert (await w.case.client.get(path, params=params)).status_code == 401
-
-
-@pytest.mark.asyncio
-async def test_annual_kholle_bounds_permissions_and_availability_preservation(
-    workspace: Workspace,
-) -> None:
-    """Keep annual bounds independent from ranges and enforce admin writes and stale revisions."""
-    w = workspace
-    endpoint = f"/api/v1/timetable/staff/{w.school_year}/{w.teacher_id}/availability"
-    board_endpoint = "/api/v1/timetable/staff/board"
-    params = {"school_year": w.school_year, "teacher_ids": w.teacher_id}
-    initial = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
-    assert initial["kholle_min_hours"] == initial["kholle_max_hours"] == 0
-    response = await w.case.client.put(
-        endpoint, json={"kholle_min_hours": 1, "kholle_max_hours": 4}
-    )
-    assert response.status_code == 200, response.text
-    revision = response.json()["revision"]
-    pattern = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
-    assert pattern["default"] and pattern["ranges"] == initial["ranges"]
-    assert (pattern["kholle_min_hours"], pattern["kholle_max_hours"]) == (1, 4)
-    assert (
-        await w.case.client.put(endpoint, json={"kholle_min_hours": 2, "kholle_max_hours": 5})
-    ).status_code == 409
-    for ranges in ([], None):
-        response = await w.case.client.put(
-            endpoint, json={"expected_revision": revision, "ranges": ranges}
-        )
-        assert response.status_code == 200, response.text
-        revision = response.json()["revision"]
-        pattern = (await w.case.client.get(board_endpoint, params=params)).json()["availability"][0]
-        assert (pattern["kholle_min_hours"], pattern["kholle_max_hours"]) == (1, 4)
-        assert pattern["default"] == (ranges is None)
-    for role in ("teacher", "kholleur"):
-        _, username = await w.case.create(role)
-        await w.login(username)
-        assert (
-            await w.case.client.put(
-                endpoint,
-                json={
-                    "expected_revision": revision,
-                    "kholle_min_hours": 2,
-                    "kholle_max_hours": 5,
-                },
-            )
-        ).status_code == 403
-        assert (await w.case.client.get(board_endpoint, params=params)).status_code == 200
-    w.case.as_admin()
-    future_year = w.school_year + 1
-    response = await w.case.client.post(
-        "/api/v1/timetable/school-years", json={"school_year": future_year}
-    )
-    assert response.status_code == 201, response.text
-    try:
-        future = (
-            await w.case.client.get(board_endpoint, params={**params, "school_year": future_year})
-        ).json()["availability"][0]
-        assert future["kholle_min_hours"] == future["kholle_max_hours"] == 0
-        response = await w.case.client.put(
-            endpoint,
-            json={"expected_revision": revision, "kholle_min_hours": 0, "kholle_max_hours": 0},
-        )
-        assert response.status_code == 200 and response.json()["revision"] is None
-        async with w.case.database.sessions.begin() as session:
-            for minimum, maximum in ((-1, 0), (2, 1)):
-                with pytest.raises(IntegrityError):
-                    async with session.begin_nested():
-                        session.add(
-                            TeacherAvailability(
-                                user_id=w.teacher_id,
-                                school_year=future_year,
-                                ranges=None,
-                                revision="a" * 32,
-                                kholle_min_hours=minimum,
-                                kholle_max_hours=maximum,
-                            )
-                        )
-                        await session.flush()
-    finally:
-        async with w.case.database.sessions.begin() as session:
-            await session.execute(
-                delete(TimetableSchoolYear).where(TimetableSchoolYear.school_year == future_year)
-            )
 
 
 @pytest.mark.asyncio

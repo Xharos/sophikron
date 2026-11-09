@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
 	clockSeconds,
+	compareTimetableDisplayEvents,
 	currentSchoolYear,
 	preferredSchoolYear,
 	defaultTimetableSettings,
@@ -14,16 +15,196 @@ import {
 	timetableHolidayLabel,
 	timetableTree,
 	nodeReceives,
+	selectedTimetableHours,
 	teachingHours,
 	nearestTimetableSlot,
 	resizedTimetableSlots,
 	orderedTimetableTeachers,
+	teacherSubjectGradient,
 	timetableAudienceLabel,
 	timetableConflictDetails,
 	type TimetableMember,
 	type TimetableGroup,
 	type TimetableEvent
 } from '../src/lib/timetable.ts';
+
+for (const family of ['halves', 'thirds', 'kholles'] as const)
+	test('annual hours follow ' + family + ' and include common lessons', () => {
+		const members = [1, 2, 3].map((id) => ({
+			id,
+			name: String(id),
+			roles: ['user'],
+			promotion_ids: [1],
+			assignments: [{ promotion_id: 1, kind: family, number: id === 3 ? 2 : 1 }]
+		}));
+		const groups: TimetableGroup[] = [
+			{ promotion_id: 1, kind: family, number: 1, student_ids: [1, 2] },
+			{ promotion_id: 1, kind: family, number: 2, student_ids: [3] }
+		];
+		const root = timetableTree('PT', 1, members, groups);
+		const year = {
+			id: 1,
+			calendar_id: 1,
+			school_year: 2026,
+			revision: null,
+			settings: defaultTimetableSettings(2026),
+			slots: [],
+			series: [],
+			weeks: { '2026-11-02': 1, '2026-11-09': 2 }
+		};
+		const events = [
+			conflictEvent({
+				year_id: 1,
+				promotion_id: 1,
+				target_kind: 'promotion',
+				subject_id: 1,
+				start: '2026-11-02T08:00:00+01:00',
+				end: '2026-11-02T08:55:00+01:00'
+			}),
+			conflictEvent({
+				year_id: 1,
+				promotion_id: 1,
+				target_kind: family,
+				target_number: 1,
+				subject_id: 1,
+				kind: 'td',
+				start: '2026-11-02T09:00:00+01:00',
+				end: '2026-11-02T09:55:00+01:00'
+			})
+		];
+		const board = { years: [year], events, members, groups, warnings: [] };
+		const a = root.children.find((n) => n.kind === family && n.number === 1)!;
+		const b = root.children.find((n) => n.kind === family && n.number === 2)!;
+		assert.equal(selectedTimetableHours(board, year, a)[0].total, 2);
+		assert.equal(selectedTimetableHours(board, year, a)[0].weekly.total, 1);
+		assert.equal(selectedTimetableHours(board, year, b)[0].total, 1);
+		assert.equal(selectedTimetableHours(board, year, root)[0].total, 1 + 2 / 3);
+	});
+
+test('odd PT cycles give a group 12 or 13 sessions, while even PTSI cycles give 15', () => {
+	const members = [1, 2].map((id) => ({
+		id,
+		name: String(id),
+		roles: ['user'],
+		promotion_ids: [1],
+		assignments: [{ promotion_id: 1, kind: 'kholles', number: id }]
+	}));
+	const groups: TimetableGroup[] = [1, 2].map((number) => ({
+		promotion_id: 1,
+		kind: 'kholles',
+		number,
+		student_ids: [number]
+	}));
+	const root = timetableTree('PT', 1, members, groups);
+	const year = {
+		id: 1,
+		calendar_id: 1,
+		school_year: 2026,
+		revision: null,
+		settings: defaultTimetableSettings(2026),
+		slots: [],
+		series: [],
+		weeks: { '2026-09-07': 1 }
+	};
+	for (const counts of [
+		[13, 12],
+		[15, 15]
+	]) {
+		const events = counts.flatMap((count, group) =>
+			Array.from({ length: count }, (_, index) => {
+				const day = new Date(Date.UTC(2026, 8, 7 + 14 * index)).toISOString().slice(0, 10);
+				return conflictEvent({
+					id: group + '-' + index,
+					kind: 'kholle',
+					target_kind: 'kholles',
+					target_number: group + 1,
+					start: day + 'T08:00:00+02:00',
+					end: day + 'T08:55:00+02:00'
+				});
+			})
+		);
+		const board = { years: [year], events, members, groups, warnings: [] };
+		assert.equal(selectedTimetableHours(board, year, root.children[0])[0].kholle, counts[0]);
+		assert.equal(selectedTimetableHours(board, year, root.children[1])[0].kholle, counts[1]);
+		assert.equal(selectedTimetableHours(board, year, root)[0].kholle, (counts[0] + counts[1]) / 2);
+	}
+});
+
+test('simultaneous blocks retain subject and teacher order across weeks and database order', () => {
+	const blocks = [
+		conflictEvent({ id: '1', title: 'Physique', teacher: 'Albert' }),
+		conflictEvent({ id: '2', title: 'Mathématiques', teacher: 'Zoé' }),
+		conflictEvent({ id: '3', title: 'Mathématiques', teacher: 'Émile' })
+	];
+	const labels = (events: TimetableEvent[]): string[] =>
+		events
+			.toSorted(compareTimetableDisplayEvents)
+			.map((event) => `${event.title}/${event.teacher}`);
+	assert.deepEqual(labels(blocks), ['Mathématiques/Émile', 'Mathématiques/Zoé', 'Physique/Albert']);
+	const nextWeek = blocks.toReversed().map((event, index) => ({
+		...event,
+		id: `new-${index}`,
+		series_id: `new-${index}`,
+		start: event.start.replace('2026-09-07', '2026-09-14'),
+		end: event.end.replace('2026-09-07', '2026-09-14')
+	}));
+	assert.deepEqual(labels(nextWeek), labels(blocks));
+});
+
+test('calendar ordering uses the first assigned teacher then room and numeric group', () => {
+	const base = conflictEvent({ title: 'Mathématiques', teacher: 'Combined display' });
+	const alpha = {
+		...base,
+		teacher_ids: [7, 8],
+		teachers: [
+			{ id: 8, name: 'Zoé', available: true },
+			{ id: 7, name: 'Alice', available: true }
+		]
+	};
+	assert.ok(compareTimetableDisplayEvents(alpha, { ...base, teacher: 'Bernard' }) < 0);
+	assert.ok(compareTimetableDisplayEvents({ ...base, room: 'B2' }, { ...base, room: 'B10' }) < 0);
+	assert.ok(
+		compareTimetableDisplayEvents({ ...base, target_number: 2 }, { ...base, target_number: 10 }) < 0
+	);
+	assert.ok(
+		compareTimetableDisplayEvents({ ...base, series_id: 'a' }, { ...base, series_id: 'b' }) < 0
+	);
+	assert.equal(compareTimetableDisplayEvents(base, base), 0);
+});
+
+test('calendar display preserves chronology even when subject names sort differently', () => {
+	const early = conflictEvent({ start: '2026-09-07T08:00:00', title: 'Physique' });
+	const late = conflictEvent({ start: '2026-09-07T09:00:00', title: 'Anglais' });
+	assert.ok(compareTimetableDisplayEvents(early, late) < 0);
+});
+
+test('local specialists precede external specialists and retain all selectable teachers', () => {
+	const teachers = [
+		{ id: 1, name: 'A', subject_ids: [1], promotion_ids: [20] },
+		{ id: 2, name: 'Z', subject_ids: [1, 2], promotion_ids: [10] },
+		{ id: 3, name: 'B', subject_ids: [2] }
+	];
+	assert.deepEqual(
+		orderedTimetableTeachers(teachers, 1, undefined, 10).map((t) => t.id),
+		[2, 1, 3]
+	);
+	assert.deepEqual(
+		orderedTimetableTeachers(teachers, 1).map((t) => t.id),
+		[1, 2, 3]
+	);
+	const subjects = [
+		{ id: 1, name: 'Maths', color: '#123456' },
+		{ id: 2, name: 'TIPE', color: '#abcdef' }
+	];
+	assert.equal(
+		teacherSubjectGradient(teachers[1], subjects),
+		'linear-gradient(120deg, #123456, #abcdef)'
+	);
+	assert.equal(
+		teacherSubjectGradient(teachers[0], subjects),
+		'linear-gradient(120deg, #123456, #123456)'
+	);
+});
 
 test('session text identifies whole classes, half groups, thirds and kholle groups', () => {
 	assert.equal(timetableAudienceLabel({}), 'Classe entière');

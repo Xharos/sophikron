@@ -215,7 +215,7 @@ async def save_calendar(
 @router.post("/rooms", status_code=201)
 async def create_room(actor: AuthenticatedUser, service: Service, data: RoomSave) -> dict:
     """Create or reuse a canonical room for timetable blocks."""
-    return await service.add_room(actor, data.name)
+    return await service.add_room(actor, data.name, data.kholle_capacity)
 
 
 @router.put("/years/{identifier}/settings")

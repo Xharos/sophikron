@@ -240,4 +240,7 @@ class RoomSave(InputModel):
     """Create a shared room identified independently of its display name."""
 
     name: str = Field(min_length=1, max_length=80)
+    kholle_capacity: int = Field(default=1, ge=0, le=100, strict=True)
     expected_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    confirmed_capacity_reduction: bool = Field(default=False, strict=True)
+    expected_impact_revision: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")

@@ -1,77 +1,153 @@
-<script lang="ts">
-	import { blockKinds, formatTeachingHours, type TimetableEvent } from '#lib/timetable';
+﻿<script lang="ts">
+	import {
+		blockKinds,
+		formatTeachingHours,
+		mondayOf,
+		shiftTimetableDate,
+		type TimetableEvent
+	} from '#lib/timetable';
 	import { teacherSubjectHours, teacherCalendarHours } from '#lib/teacherTimetable';
+	import StatisticChart from './statistics/StatisticChart.svelte';
 	let {
 		events,
 		sessionMinutes,
-		subjects
+		subjects,
+		weekStart,
+		schoolYear,
+		selection
 	}: {
 		events: TimetableEvent[];
 		sessionMinutes: number;
 		subjects: { id: number; name: string }[];
+		weekStart: string;
+		schoolYear: number;
+		selection: string;
 	} = $props();
-	const totals = $derived(teacherSubjectHours(events, sessionMinutes));
-	const rows = $derived(teacherCalendarHours(events, sessionMinutes));
-	const kinds = ['course', 'td', 'tp', 'kholle'] as const;
-	const totalKinds = [...kinds, 'total'] as const;
+	let period = $state<'week' | 'year'>('week');
+	let breakdown = $state<'subject' | 'calendar'>('subject');
+	const monday = $derived(mondayOf(weekStart));
+	const periodEvents = $derived(
+		period === 'year'
+			? events
+			: events.filter(
+					(event) =>
+						event.start.slice(0, 10) >= monday &&
+						event.start.slice(0, 10) < shiftTimetableDate(monday, 7)
+				)
+	);
+	const totals = $derived(teacherSubjectHours(periodEvents, sessionMinutes));
+	const rows = $derived(teacherCalendarHours(periodEvents, sessionMinutes));
+	const grandTotal = $derived(totals.reduce((sum, row) => sum + row.total, 0));
 	function subjectName(id: number | null): string {
 		return subjects.find((subject) => subject.id === id)?.name ?? 'Sans matière';
 	}
+	const chartRows = $derived(
+		breakdown === 'subject'
+			? totals.map((row) => ({ ...row, label: subjectName(row.subjectId) }))
+			: rows.map((row) => ({ ...row, label: row.label + ' · ' + subjectName(row.subjectId) }))
+	);
+	const series = $derived(
+		(['course', 'td', 'tp', 'kholle'] as const).map((kind, index) => ({
+			key: kind,
+			label: blockKinds[kind],
+			color: ['#244BC1', '#2E8B57', '#A34E18', '#9747BB'][index],
+			values: chartRows.map((row) => row[kind])
+		}))
+	);
 </script>
 
-{#if rows.length}
-	<div class="table-container">
-		<table class="table is-fullwidth is-narrow is-striped hours-table">
-			<caption class="has-text-left mb-2">Répartition par calendrier et matière</caption>
-			<thead
-				><tr>
-					<th scope="col">Calendrier / promotion</th><th scope="col">Matière</th>
-					{#each kinds as kind (kind)}<th scope="col">{blockKinds[kind]}</th>{/each}
-					<th scope="col">Total</th>
-				</tr></thead
-			>
-			<tbody>
-				{#each rows as row (`${row.calendarId}-${row.subjectId}`)}<tr>
-						<th scope="row">{row.label}</th><td>{subjectName(row.subjectId)}</td>
-						{#each totalKinds as kind (kind)}<td class:has-text-weight-semibold={kind === 'total'}
-								>{formatTeachingHours(row[kind])}</td
-							>{/each}
-					</tr>{/each}
-			</tbody>
-			<tfoot>
-				{#each totals as row (row.subjectId)}<tr class="subject-total">
-						<th scope="row" colspan="2">Total · {subjectName(row.subjectId)}</th>
-						{#each totalKinds as kind (kind)}<td>{formatTeachingHours(row[kind])}</td>{/each}
-					</tr>{/each}
-				<tr class="grand-total"
-					><th scope="row" colspan="2">Total général</th>
-					{#each totalKinds as kind (kind)}<td
-							>{formatTeachingHours(totals.reduce((sum, row) => sum + row[kind], 0))}</td
-						>{/each}
-				</tr>
-			</tfoot>
-		</table>
+<section aria-label="Heures des enseignants">
+	<div class="buttons mb-4" role="group" aria-label="Période des heures">
+		<button
+			class="button"
+			class:is-primary={period === 'week'}
+			aria-pressed={period === 'week'}
+			onclick={() => (period = 'week')}>Semaine affichée</button
+		>
+		<button
+			class="button"
+			class:is-primary={period === 'year'}
+			aria-pressed={period === 'year'}
+			onclick={() => (period = 'year')}>Total sur l’année</button
+		>
 	</div>
-{:else}<p role="status">Aucune séance affectée pendant cette semaine.</p>{/if}
+	<div class="hours-summary mb-4">
+		<div>
+			<strong>{selection}</strong>
+			<p class="muted">
+				{period === 'week'
+					? 'Semaine du ' + monday
+					: 'Année scolaire ' + schoolYear + '/' + (schoolYear + 1)}
+			</p>
+		</div>
+		<div class="hours-total">
+			<span>Total des séances affectées</span><strong>{formatTeachingHours(grandTotal)}</strong>
+		</div>
+	</div>
+	<p class="muted mb-4">
+		Cours, TD, TP et khôlles, remplacements compris. Les heures sont comptées une fois par séance,
+		sans pondération par les groupes d’élèves.
+	</p>
+	{#if totals.length}
+		<div class="buttons has-addons mb-4" role="group" aria-label="Répartition des heures">
+			<button
+				class="button is-small"
+				class:is-primary={breakdown === 'subject'}
+				aria-pressed={breakdown === 'subject'}
+				onclick={() => (breakdown = 'subject')}>Par matière</button
+			>
+			<button
+				class="button is-small"
+				class:is-primary={breakdown === 'calendar'}
+				aria-pressed={breakdown === 'calendar'}
+				onclick={() => (breakdown = 'calendar')}>Par calendrier</button
+			>
+		</div>
+		<StatisticChart
+			title={breakdown === 'subject' ? 'Heures par matière' : 'Heures par calendrier et matière'}
+			kind="stacked"
+			{series}
+			labels={chartRows.map((row) => row.label)}
+			format={formatTeachingHours}
+		/>
+	{:else}
+		<p class="notification is-light" role="status">
+			Aucune séance affectée à la sélection {period === 'week'
+				? 'pendant cette semaine'
+				: 'sur cette année scolaire'}.
+		</p>
+	{/if}
+</section>
 
 <style>
-	.hours-table td,
-	.hours-table th {
-		vertical-align: middle;
+	section {
+		min-width: 0;
 	}
-	.hours-table td {
-		white-space: nowrap;
+	.hours-summary {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		flex-wrap: wrap;
+		gap: 1rem;
+		padding: 1rem;
+		border: var(--border-thin);
+		border-radius: var(--radius-panel);
+		background: var(--color-paper);
 	}
-	.subject-total {
-		font-size: 0.9rem;
+	.hours-total {
+		display: flex;
+		flex-direction: column;
+		gap: 0.2rem;
 	}
-	.grand-total {
-		background: var(--color-primary-soft);
-		font-weight: 700;
+	.hours-total span {
+		font-size: 0.8rem;
+		color: var(--color-muted);
 	}
-	.grand-total th,
-	.grand-total td {
-		border-top: 2px solid var(--color-primary);
-		color: var(--color-text);
+	.hours-total strong {
+		font-size: 1.5rem;
+		color: var(--color-primary);
+	}
+	p {
+		font-size: 0.85rem;
 	}
 </style>

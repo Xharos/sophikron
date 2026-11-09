@@ -131,16 +131,11 @@
 		</div>
 	</aside>
 	<div class="workspace-content">
-		<header class="workspace-greeting">
-			<p class="eyebrow">Votre espace</p>
-			<h1>Bonjour {data.user?.first_name ?? data.user?.username}<span class="accent">.</span></h1>
-			<p class="muted">
-				{data.administrator
-					? 'Gardez une vue claire sur la vie de votre établissement.'
-					: 'Retrouvez vos élèves et accompagnez leurs progrès.'}
-			</p>
-		</header>
-		{#if section === 'overview' && data.administrator}<Overview />
+		<h1 class="is-sr-only">{tabs.find((tab) => tab.id === section)?.name ?? 'Administration'}</h1>
+		{#if section === 'overview' && data.administrator}<Overview
+				calendarCatalog={data.calendarCatalog}
+				calendarError={data.calendarError}
+			/>
 		{:else if section === 'statistics' && (data.administrator || canReadStudents)}<StatisticsPanel
 			/>
 		{:else if section === 'subjects' && data.administrator}<SubjectsPanel {initialSubject} />

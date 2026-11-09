@@ -279,6 +279,11 @@ def build_people(settings: Settings) -> tuple[list[Person], list[Person]]:
         ("teacher", settings.teacher_counts),
         ("kholleur", settings.kholleur_counts),
     ):
+        if role == "teacher":
+            counts = {
+                **counts,
+                **dict.fromkeys(("si", "maths", "physics"), len(settings.classes())),
+            }
         for subject, count in counts.items():
             for ordinal in range(count):
                 choices = names.get((role, subject), ())
@@ -303,6 +308,11 @@ def build_people(settings: Settings) -> tuple[list[Person], list[Person]]:
                         f"{settings.namespace}.{role}.{subject}.{ordinal + 1}"
                         f"@{settings.email_domain}",
                         role,
+                        promotion=(
+                            settings.classes()[ordinal].identifier
+                            if role == "teacher" and subject in {"si", "maths", "physics"}
+                            else None
+                        ),
                         subjects=tuple(subjects),
                     )
                 )

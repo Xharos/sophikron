@@ -30,6 +30,24 @@ def event(identifier: str, **changes: object) -> dict:
     }
 
 
+def test_export_styles_teacher_and_room() -> None:
+    """Embed bold teachers and italic room names while preserving searchable accented text."""
+    from tests.test_timetable import settings
+
+    data = render_timetable_pdf(
+        "Planning", settings().model_dump(mode="json"), [event("styled", room="B208")]
+    )
+    page = PdfReader(BytesIO(data)).pages[0]
+    fragments = []
+    page.extract_text(
+        visitor_text=lambda text, _cm, _tm, font, _size: fragments.append(
+            (text, str((font or {}).get("/BaseFont", "")))
+        )
+    )
+    assert any("DUPONT" in text and "Bold" in font for text, font in fragments)
+    assert any("B208" in text and "Oblique" in font for text, font in fragments)
+
+
 def board() -> dict:
     """Build intersecting partitions and a custom audience with a single shared pupil."""
     return {
@@ -96,8 +114,13 @@ def test_overlap_columns_reuse_space_after_each_cluster() -> None:
 
 def test_holiday_label_replaces_pauses_and_empty_week_stays_one_page() -> None:
     """Match closed-day backgrounds without printing holiday dates."""
-    settings = {"day_start": 28800, "day_end": 64800, "saturday": False, "breaks": [],
-                "holidays": [{"name": "Vacances", "start": "2026-11-02", "end": "2026-11-06"}]}
+    settings = {
+        "day_start": 28800,
+        "day_end": 64800,
+        "saturday": False,
+        "breaks": [],
+        "holidays": [{"name": "Vacances", "start": "2026-11-02", "end": "2026-11-06"}],
+    }
     pdf = PdfReader(BytesIO(render_timetable_pdf("Agenda", settings, [], date(2026, 11, 4))))
     text = pdf.pages[0].extract_text()
     assert len(pdf.pages) == 1
