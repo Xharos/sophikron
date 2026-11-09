@@ -127,7 +127,7 @@ def create_app(
     application = FastAPI(
         title="Sophikron API",
         description="API for the Sophikron educational platform.",
-        version="0.1.0",
+        version="0.2.0",
         lifespan=lifespan,
     )
     application.include_router(router)
