@@ -7,6 +7,7 @@ from app.api.v1 import (
     auth,
     dashboard,
     groups,
+    kholloscope,
     lesson_documents,
     lessons,
     profiles,
@@ -23,6 +24,7 @@ v1.include_router(admin.router)
 v1.include_router(dashboard.router)
 v1.include_router(groups.router)
 v1.include_router(timetable.router)
+v1.include_router(kholloscope.router)
 v1.include_router(statistics.router)
 v1.include_router(teaching.router)
 v1.include_router(profiles.router)

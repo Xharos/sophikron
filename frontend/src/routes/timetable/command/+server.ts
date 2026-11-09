@@ -1,4 +1,5 @@
 import { requirePageAccess } from '#lib/server/forms';
+import { hasPermission } from '#lib/access';
 import { api } from '#lib/server/api';
 import { BackendError, type BackendMethod } from '#lib/server/backend';
 import type { RequestHandler } from './$types';
@@ -11,12 +12,18 @@ export const POST: RequestHandler = async (event) => {
 	const command = body as { path?: unknown; method?: unknown; data?: unknown };
 	if (
 		typeof command.path !== 'string' ||
-		!/^(?:preferences|school-years(?:\/[1-9]\d{3})?|calendars(?:\/[1-9]\d*(?:\/(?:archive|restore))?)?|rooms(?:\/[1-9]\d*)?|years\/[1-9]\d*\/(?:preview|settings(?:\/preview)?|series(?:\/[a-f0-9]{32})?))$/.test(
+		!/^(?:kholloscope\/[1-9]\d{3}\/(?:wishes|workflow|groups|revision(?:\/(?:calculate|merge|discard|rollback|room))?|generation(?:\/(?:cancel|session|save|apply|remove))?)|preferences|school-years(?:\/[1-9]\d{3})?|calendars(?:\/[1-9]\d*(?:\/(?:archive|restore|kholle(?:\/preview)?))?)?|rooms(?:\/[1-9]\d*)?|years\/[1-9]\d*\/(?:preview|settings(?:\/preview)?|series(?:\/[a-f0-9]{32})?))$/.test(
 			command.path
 		) ||
 		!['POST', 'PUT', 'DELETE'].includes(String(command.method))
 	) {
 		return Response.json({ message: 'Action invalide.' }, { status: 422 });
+	}
+	if (command.path.startsWith('kholloscope/') || /\/kholle(?:\/preview)?$/.test(command.path)) {
+		requirePageAccess(event, 'kholloscope');
+		const permission = command.path.endsWith('/preview') ? 'kholloscope.read' : 'kholloscope.write';
+		if (!hasPermission(event.locals.user, permission))
+			return Response.json({ message: 'Permission kholloscope insuffisante.' }, { status: 403 });
 	}
 	try {
 		return Response.json(

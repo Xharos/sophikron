@@ -69,6 +69,36 @@ class TimetableService:
         """Use the application's injectable clock in the school's Europe/Paris timezone."""
         return self.auth.clock().astimezone(PARIS).date()
 
+    async def require_unpublished_kholloscope(self, school_year: int) -> None:
+        """Reject direct preparation edits after annual publication; use a revision instead."""
+        if await self.repo.published_kholloscope(school_year):
+            raise AuthError(
+                409,
+                "Le kholloscope est publié dans les agendas. "
+                "Utilisez l’onglet Révision pour toute modification.",
+            )
+
+    async def future_events(self) -> list[dict]:
+        """Expand upcoming and ongoing events across agendas, retaining room/calendar identities.
+
+        Returns
+        -------
+        list[dict]
+            Actual occurrences, including archived/private agendas and detached exceptions.
+        """
+        now = self.auth.clock()
+        years = list(
+            await self.db.scalars(
+                select(TimetableYear).where(TimetableYear.ends_on >= now.astimezone(PARIS).date())
+            )
+        )
+        return [
+            {**event, "calendar_id": year.calendar_id}
+            for year, document in (await self.repo.documents(years)).values()
+            for event in occurrences(document)
+            if datetime.fromisoformat(event["end"]) > now
+        ]
+
     async def authorize(self, actor: UserContext, *, write: bool = False) -> bool:
         """Deny student web access and return whether the active actor is an administrator."""
         current = await self.auth._actor(actor)
@@ -335,10 +365,18 @@ class TimetableService:
                     )
                 ):
                     subject_map.setdefault(user_id, []).append(subject_id)
+                promotion_map: dict[int, list[int]] = {}
+                for user_id, promotion_id in await self.db.execute(
+                    select(UserPromotion.user_id, UserPromotion.promotion_id).where(
+                        UserPromotion.user_id.in_({user.id for user in users})
+                    )
+                ):
+                    promotion_map.setdefault(user_id, []).append(promotion_id)
                 teachers = [
                     {
                         **self._identity(user),
                         "subject_ids": sorted(subject_map.get(user.id, [])),
+                        "promotion_ids": sorted(promotion_map.get(user.id, [])),
                         "roles": sorted(role_map.get(user.id, [])),
                     }
                     for user in users
@@ -354,7 +392,7 @@ class TimetableService:
                 "teachers": teachers,
                 "common_years": await self.common_years() if admin else [],
                 "subjects": [
-                    {"id": item.id, "name": item.name, "color": item.color}
+                    {"id": item.id, "name": item.name, "color": item.color, "icon": item.icon}
                     for item in await self.db.scalars(
                         select(Subject).where(Subject.is_active.is_(True))
                     )
@@ -492,7 +530,7 @@ class TimetableService:
         if not daily_slots(settings):
             raise AuthError(422, "Aucun demi-créneau complet dans cette grille.")
 
-    async def add_room(self, actor: UserContext, name: str) -> dict:
+    async def add_room(self, actor: UserContext, name: str, kholle_capacity: int = 1) -> dict:
         """Create or reuse a canonical room without duplicating case or whitespace variants."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
@@ -506,14 +544,24 @@ class TimetableService:
                 select(TimetableRoom).where(TimetableRoom.name_key == name.casefold())
             )
             if row is None:
-                row = TimetableRoom(name=name, name_key=name.casefold(), revision=uuid4().hex)
+                row = TimetableRoom(
+                    name=name,
+                    name_key=name.casefold(),
+                    revision=uuid4().hex,
+                    kholle_capacity=kholle_capacity,
+                )
                 self.db.add(row)
                 await self.db.flush()
             if not row.is_active:
                 row.is_active = True
                 row.revision = uuid4().hex
             await record_event(self.db, "timetable.room_saved", actor.id, data={"title": row.name})
-            return {"id": row.id, "name": row.name, "revision": row.revision}
+            return {
+                "id": row.id,
+                "name": row.name,
+                "revision": row.revision,
+                "kholle_capacity": row.kholle_capacity,
+            }
 
     async def save_settings(
         self, actor: UserContext, identifier: int, version: Version, settings: YearSettings
@@ -587,10 +635,27 @@ class TimetableService:
             year = await self._year(identifier, actor, version)
             calendar = await self.db.get(TimetableCalendar, year.calendar_id)
             document = await self.repo.document(year)
+            if block.kind == "kholle":
+                await self.require_unpublished_kholloscope(year.school_year)
             await self._references(block, calendar)
             changed = apply_event_change(document, None, None, "one", block)
             await self.persist_document(year.id, document, changed)
-            return await self._changed(actor, year, "series_created", title=block.title)
+            subject = await self.db.get(Subject, block.subject_id) if block.subject_id else None
+            slots = daily_slots(document.settings)
+            return await self._changed(
+                actor,
+                year,
+                "series_created",
+                title=block.title,
+                subject_name=subject.name if subject else None,
+                occurrence=block.starts_on,
+                start_time=block.start_time
+                if block.start_time is not None
+                else slots[block.start_slot][0],
+                end_time=block.end_time
+                if block.end_time is not None
+                else slots[block.start_slot + block.duration_slots - 1][1],
+            )
 
     async def persist_document(
         self, year_id: int, before: YearDocument, after: YearDocument
@@ -612,6 +677,16 @@ class TimetableService:
         async with self.db.begin():
             year = await self._year(identifier, actor, data)
             document = await self.repo.document(year)
+            source = next((item for item in document.series if item.id == series_id), None)
+            if (
+                data.block is not None and data.block.kind == "kholle"
+                or source is not None
+                and any(
+                    block is not None and block.kind == "kholle"
+                    for block in [source, *source.exceptions.values()]
+                )
+            ):
+                await self.require_unpublished_kholloscope(year.school_year)
             if data.block:
                 calendar = await self.db.get(TimetableCalendar, year.calendar_id)
                 await self._references(data.block, calendar)
@@ -619,7 +694,6 @@ class TimetableService:
                 document, series_id, data.occurrence, data.scope, data.block
             )
             await self.persist_document(year.id, document, changed)
-            source = next((item for item in document.series if item.id == series_id), None)
             return await self._changed(
                 actor,
                 year,
@@ -816,6 +890,7 @@ class TimetableService:
                     )
 
             members: dict[int, dict] = {}
+            roster_memberships: set[tuple[int, int]] = set()
             groups = []
             promotion_ids = {row.promotion_id for row in selected if row.promotion_id}
             if promotion_ids:
@@ -840,6 +915,7 @@ class TimetableService:
                 ):
                     role_map.setdefault(user_id, []).append(code)
                 for user, promotion_id in roster:
+                    roster_memberships.add((user.id, promotion_id))
                     if "user" not in role_map.get(user.id, []):
                         continue
                     if user.id not in members:
@@ -1032,7 +1108,7 @@ class TimetableService:
                 if years
                 else []
             )
-            from app.services.timetable_diagnostics import annual_diagnostics
+            from app.services.timetable_diagnostics import annual_diagnostics, kholle_diagnostics
 
             for item in years:
                 related = [event for event in events if event["year_id"] == item["id"]]
@@ -1050,6 +1126,38 @@ class TimetableService:
                     documents[item["id"]].series,
                 )
                 issues.extend(diagnostics)
+                calendar = next(c for c in selected if c.id == item["calendar_id"])
+                issues.extend(
+                    {**warning, "code": f"{warning['code']}-{item['id']}"}
+                    for warning in kholle_diagnostics(
+                        related,
+                        documents[item["id"]].settings,
+                        calendar.kholle_settings,
+                        groups,
+                        calendar.promotion_id,
+                        item["school_year"],
+                    )
+                )
+                checked = set()
+                for event in individual_assignments(related):
+                    promotion_id = event.get("promotion_id")
+                    teacher_id = event["teacher_id"]
+                    if (
+                        event["kind"] != "kholle"
+                        and promotion_id is not None
+                        and teacher_id not in checked
+                        and (teacher_id, promotion_id) not in roster_memberships
+                    ):
+                        checked.add(teacher_id)
+                        issues.append(
+                            {
+                                "code": f"teacher-promotion-{item['id']}-{teacher_id}",
+                                "severity": "warning",
+                                "teacher_id": teacher_id,
+                                "message": f"{event.get('teacher') or 'Cet enseignant'} intervient "
+                                "dans une promotion dont il ne fait pas partie.",
+                            }
+                        )
             return {
                 "teacher_commitments": commitments,
                 "years": years,

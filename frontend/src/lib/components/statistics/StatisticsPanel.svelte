@@ -1,6 +1,6 @@
 <script lang="ts">
 	import VersionsPanel from '../dashboard/VersionsPanel.svelte';
-	import { onMount } from 'svelte';
+	import { onMount, type Snippet } from 'svelte';
 	import { SvelteURLSearchParams } from 'svelte/reactivity';
 	import { resolve } from '$app/paths';
 	import {
@@ -20,7 +20,17 @@
 	import { page } from '$app/state';
 	import { hasPermission } from '#lib/access';
 	import ApiMonitoringPanel from './ApiMonitoringPanel.svelte';
-	let { lessonId, onrefresh = () => {} }: { lessonId?: number; onrefresh?: () => void } = $props();
+	let {
+		lessonId,
+		onrefresh = () => {},
+		showIntro = true,
+		maintenanceExtras
+	}: {
+		lessonId?: number;
+		onrefresh?: () => void;
+		showIntro?: boolean;
+		maintenanceExtras?: Snippet;
+	} = $props();
 	let period = $state<StatisticsPeriod>('week');
 	let statistics = $state<Statistics | null>(null);
 	let loading = $state(true);
@@ -87,22 +97,22 @@
 
 <div class="statistics-panel" aria-busy={loading}>
 	<div class="statistics-toolbar">
-		<div>
-			<p class="mini-label">
-				{lessonId
-					? 'Activité du cours'
-					: statistics?.scope === 'author'
-						? 'Mes cours créés'
-						: 'Pilotage de la plateforme'}
-			</p>
-			<p class="muted text-small">
-				{period === 'day'
-					? 'Aujourd’hui, heure par heure'
-					: period === 'week'
-						? 'Les 7 derniers jours, aujourd’hui inclus'
-						: 'Les 30 derniers jours, aujourd’hui inclus'} · heure de Paris
-			</p>
-		</div>
+		{#if showIntro}<div>
+				<p class="mini-label">
+					{lessonId
+						? 'Activité du cours'
+						: statistics?.scope === 'author'
+							? 'Mes cours créés'
+							: 'Pilotage de la plateforme'}
+				</p>
+				<p class="muted text-small">
+					{period === 'day'
+						? 'Aujourd’hui, heure par heure'
+						: period === 'week'
+							? 'Les 7 derniers jours, aujourd’hui inclus'
+							: 'Les 30 derniers jours, aujourd’hui inclus'} · heure de Paris
+				</p>
+			</div>{/if}
 		<div class="statistics-controls">
 			<div class="stat-switch" role="group" aria-label="Période des statistiques">
 				{#each [['day', 'Jour'], ['week', 'Semaine'], ['month', 'Mois']] as [key, label] (key)}<button
@@ -368,6 +378,7 @@
 						>{/if}
 				</StatCard>
 				<VersionsPanel />
+				{@render maintenanceExtras?.()}
 			{/if}
 		</div>
 		{#if statistics.scope === 'author'}<section class="workspace-panel author-course-list">

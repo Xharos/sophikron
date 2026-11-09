@@ -2,18 +2,27 @@
 
 from datetime import date, datetime, timedelta
 from io import BytesIO
+from pathlib import Path
 from xml.sax.saxutils import escape
 
+import reportlab
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 from reportlab.platypus import Paragraph
 
 from app.services.attendance_pdf import FONT, group_label
 from app.services.errors import AuthError
 from app.services.timetable import student_receives
+
+for variant, filename in (("Bold", "VeraBd.ttf"), ("Italic", "VeraIt.ttf")):
+    pdfmetrics.registerFont(
+        TTFont(f"{FONT}-{variant}", str(Path(reportlab.__file__).parent / "fonts" / filename))
+    )
+pdfmetrics.registerFontFamily(FONT, normal=FONT, bold=f"{FONT}-Bold", italic=f"{FONT}-Italic")
 
 
 def select_view(board: dict, year_id: int, day: date, node: str) -> tuple[dict, str, list[dict]]:
@@ -114,12 +123,15 @@ def fitted_text(
     width: float,
     height: float,
     maximum: float = 9,
+    *,
+    bold_lines: tuple[int, ...] = (),
+    italic_lines: tuple[int, ...] = (),
 ) -> None:
     """Fit escaped text in a block by shrinking both line spacing and font size.
 
     Parameters
     ----------
-    canvas, lines, x, y, width, height, maximum
+    canvas, lines, x, y, width, height, maximum, bold_lines, italic_lines
         Drawing surface, text lines, bottom-left bounds and preferred font size.
 
     Returns
@@ -132,9 +144,19 @@ def fitted_text(
         default=1,
     )
     size = min(maximum, width / max(1, longest))
+    formatted = []
+    for index, line in enumerate(lines):
+        if not line:
+            continue
+        value = escape(line).replace("\n", "<br/>")
+        if index in bold_lines:
+            value = f"<b>{value}</b>"
+        if index in italic_lines:
+            value = f"<i>{value}</i>"
+        formatted.append(value)
     while True:
         paragraph = Paragraph(
-            "<br/>".join(escape(line).replace("\n", "<br/>") for line in lines if line),
+            "<br/>".join(formatted),
             ParagraphStyle(
                 "Timetable",
                 fontName=FONT,
@@ -277,11 +299,18 @@ def render_timetable_pdf(
             kind = {"course": "Cours", "td": "TD", "tp": "TP"}[event["kind"]]
             fitted_text(
                 canvas,
-                [f"{subject} · {kind}", audience_label(event), event["teacher"]],
+                [
+                    f"{subject} · {kind}",
+                    audience_label(event),
+                    event["teacher"],
+                    event.get("room", ""),
+                ],
                 x + 6,
                 low + 3,
                 max(1, block_width - 10),
                 max(1, high - low - 6),
+                bold_lines=(2,),
+                italic_lines=(3,),
             )
     canvas.showPage()
     canvas.save()

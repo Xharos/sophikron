@@ -23,7 +23,7 @@
 			eventMenu.querySelector('summary')?.focus();
 		}
 	}
-	let selectedUser = $state<DirectoryUser | null>(null);
+	let selectedUsers = $state<DirectoryUser[]>([]);
 	const families = [
 		{ code: 'accounts', label: 'Comptes' },
 		{ code: 'promotions', label: 'Promos et groupes' },
@@ -52,7 +52,7 @@
 		void order;
 		void pageSize;
 		void family;
-		void selectedUser;
+		void selectedUsers;
 		void userId;
 		if (!ready) return;
 		untrack(() => {
@@ -84,7 +84,8 @@
 					limit: compact ? 5 : pageSize,
 					event_type: selectedType || undefined,
 					family: family || undefined,
-					user_id: userId ?? selectedUser?.id,
+					user_id: userId,
+					user_ids: userId === undefined ? selectedUsers.map((user) => user.id) : undefined,
 					order
 				},
 				request.signal
@@ -168,8 +169,8 @@
 				</div>
 			</details>
 			<button class="button is-light is-small account-filter" onclick={() => (picking = true)}
-				><Icon name="profile" />{selectedUser
-					? selectedUser.first_name + ' ' + selectedUser.last_name
+				><Icon name="profile" />{selectedUsers.length
+					? selectedUsers.map((user) => user.first_name + ' ' + user.last_name).join(', ')
 					: 'Tous les membres'}</button
 			>
 			<div
@@ -235,10 +236,10 @@
 </section>
 
 {#if picking}<EventAccountPicker
-		selected={selectedUser}
+		selected={selectedUsers}
 		onclose={() => (picking = false)}
 		onapply={(user) => {
-			selectedUser = user;
+			selectedUsers = user;
 			picking = false;
 		}}
 	/>{/if}

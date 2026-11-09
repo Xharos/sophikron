@@ -47,8 +47,6 @@
 	let rangeMessage = $state('');
 	let detail = $state<TimetableEvent | null>(null);
 	let requestNumber = 0;
-	let kholleMinHours = $state<number | undefined>(0);
-	let kholleMaxHours = $state<number | undefined>(0);
 	const administrator = $derived(data.catalog.administrator);
 	const annual = $derived(data.catalog.years.find((year) => year.school_year === yearNumber));
 	const single = $derived(selectedIds.length === 1 ? selectedIds[0] : null);
@@ -171,11 +169,7 @@
 			loading = false;
 		}
 	});
-	async function refresh(
-		year = yearNumber,
-		ids = selectedIds,
-		preserveHours = editing
-	): Promise<void> {
+	async function refresh(year = yearNumber, ids = selectedIds): Promise<void> {
 		const request = ++requestNumber;
 		loading = true;
 		message = '';
@@ -190,11 +184,6 @@
 			if (request !== requestNumber) return;
 			if (!response.ok) throw new Error(result.message ?? 'Chargement impossible.');
 			board = result;
-			if (!preserveHours) {
-				const saved = result.availability.find((item) => item.teacher_id === single);
-				kholleMinHours = saved?.kholle_min_hours ?? 0;
-				kholleMaxHours = saved?.kholle_max_hours ?? 0;
-			}
 		} catch (cause) {
 			if (request === requestNumber) {
 				message = cause instanceof Error ? cause.message : 'Chargement impossible.';
@@ -238,10 +227,7 @@
 					? annual.settings.end
 					: value;
 	}
-	async function save(
-		ranges: AvailabilityRange[] | null | undefined,
-		hours?: { kholle_min_hours: number; kholle_max_hours: number }
-	): Promise<boolean> {
+	async function save(ranges: AvailabilityRange[] | null): Promise<boolean> {
 		if (!canEdit || !pattern || single === null) return false;
 		busy = true;
 		message = rangeMessage = '';
@@ -253,12 +239,12 @@
 			const response = await fetch(`${resolve('/timetable/prof/data')}?${query}`, {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ expected_revision: pattern.revision, ranges, ...hours })
+				body: JSON.stringify({ expected_revision: pattern.revision, ranges })
 			});
 			const result = (await response.json()) as { message?: string };
 			if (!response.ok) throw new Error(result.message ?? 'Enregistrement impossible.');
-			await refresh(yearNumber, selectedIds, !hours && editing);
-			notice = hours ? 'Bornes de khôlles enregistrées.' : 'Disponibilités enregistrées.';
+			await refresh(yearNumber, selectedIds);
+			notice = 'Disponibilités enregistrées.';
 			return true;
 		} catch (cause) {
 			message = rangeMessage =
@@ -268,28 +254,8 @@
 			busy = false;
 		}
 	}
-	async function toggleEditing(): Promise<void> {
-		if (!canEdit) return;
-		if (!editing) {
-			editing = true;
-			return;
-		}
-		if (
-			kholleMinHours === undefined ||
-			kholleMaxHours === undefined ||
-			!Number.isInteger(kholleMinHours) ||
-			!Number.isInteger(kholleMaxHours) ||
-			kholleMinHours < 0 ||
-			kholleMaxHours > 2147483647 ||
-			kholleMaxHours < kholleMinHours
-		) {
-			message = 'Saisissez des heures entières avec 0 ≤ minimum ≤ maximum.';
-			return;
-		}
-		if (
-			await save(undefined, { kholle_min_hours: kholleMinHours, kholle_max_hours: kholleMaxHours })
-		)
-			editing = false;
+	function toggleEditing(): void {
+		if (canEdit) editing = !editing;
 	}
 	function openRange(index: number | null, day = 0, start?: number, end?: number): void {
 		if (!editing || !canEdit || !annual) return;
@@ -395,50 +361,6 @@
 				onclick={toggleEditing}
 				>{editing ? 'Terminer l’édition' : 'Éditer les disponibilités'}</button
 			>{/if}
-		{#if mode === 'availability' && single !== null && pattern && !loading}
-			{#if administrator}
-				<div
-					class="kholle-hours"
-					role="group"
-					aria-label="Heures de khôlles par semaine"
-					aria-busy={busy}
-				>
-					<span>Khôlles h/sem.</span>
-					<label for="kholle-min-hours">Min</label>
-					<input
-						id="kholle-min-hours"
-						class="input is-small"
-						aria-label="Minimum (h/semaine)"
-						type="number"
-						min="0"
-						max="2147483647"
-						step="1"
-						required
-						readonly={!editing}
-						disabled={!canEdit}
-						bind:value={kholleMinHours}
-					/>
-					<label for="kholle-max-hours">Max</label>
-					<input
-						id="kholle-max-hours"
-						class="input is-small"
-						aria-label="Maximum (h/semaine)"
-						type="number"
-						min={kholleMinHours ?? 0}
-						max="2147483647"
-						step="1"
-						required
-						readonly={!editing}
-						disabled={!canEdit}
-						bind:value={kholleMaxHours}
-					/>
-				</div>
-			{:else}
-				<p class="kholle-hours">
-					Khôlles h/sem. : {pattern.kholle_min_hours}–{pattern.kholle_max_hours}
-				</p>
-			{/if}
-		{/if}
 		<div class="toolbar-spacer"></div>
 		{#if annual && mode === 'timetable'}<div class="week-navigation">
 				<button
@@ -646,11 +568,12 @@
 			</div>
 		</form>
 	</Modal>{/if}
-{#if hoursOpen && annual}<Modal
-		title={`Heures — semaine du ${monday}`}
-		onclose={() => (hoursOpen = false)}
+{#if hoursOpen && annual}<Modal title="Heures des enseignants" onclose={() => (hoursOpen = false)}
 		><TeacherHours
-			events={weekEvents}
+			events={board.events}
+			weekStart={monday}
+			schoolYear={yearNumber}
+			selection={selectedName}
 			sessionMinutes={annual.settings.session_minutes}
 			subjects={data.catalog.subjects}
 		/></Modal
@@ -717,24 +640,6 @@
 	}
 	.mode-buttons {
 		margin: 0;
-	}
-	.kholle-hours {
-		display: flex;
-		align-items: center;
-		gap: 0.35rem;
-		margin: 0;
-		font-size: 0.75rem;
-		white-space: nowrap;
-		border-left: var(--border-thin);
-		padding-left: 0.75rem;
-		margin-left: 0.25rem;
-	}
-	.kholle-hours input {
-		width: 3.5rem;
-		height: 2.5em;
-		min-height: 0;
-		padding: 0.25em 0.5em;
-		font-size: 0.75rem;
 	}
 	.week-navigation {
 		display: flex;

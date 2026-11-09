@@ -7,6 +7,7 @@
 		clockSeconds,
 		nearestTimetableSlot,
 		orderedTimetableTeachers,
+		teacherSubjectGradient,
 		eventTeacherIds,
 		timetableClock,
 		type TimetableBlock,
@@ -127,7 +128,7 @@
 		eventTeacherIds(block).some((id) => !catalog.teachers.some((teacher) => teacher.id === id))
 	);
 	const teachers = $derived(
-		orderedTimetableTeachers(catalog.teachers, block.subject_id, block.kind)
+		orderedTimetableTeachers(catalog.teachers, block.subject_id, block.kind, promotionId)
 	);
 	function chooseKind(kind: TimetableBlock['kind']): void {
 		block.teacher_ids = eventTeacherIds(block).filter(
@@ -203,7 +204,20 @@
 			options={teachers.map((teacher) => ({
 				value: teacher.id,
 				label: teacher.name,
-				color: '#244BC1'
+				color:
+					catalog.subjects.find((subject) => subject.id === block.subject_id)?.color ??
+					catalog.subjects.find((subject) => teacher.subject_ids?.includes(subject.id))?.color ??
+					'#64748b',
+				background:
+					block.subject_id === null ? teacherSubjectGradient(teacher, catalog.subjects) : undefined,
+				tone:
+					block.subject_id === null
+						? 'full'
+						: !teacher.subject_ids?.includes(block.subject_id)
+							? 'other'
+							: promotionId !== null && !teacher.promotion_ids?.includes(promotionId)
+								? 'external'
+								: 'full'
 			}))}
 			bind:selected={() => selectedTeacherIds, setTeachers}
 			disabled={busy}

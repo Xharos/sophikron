@@ -5,6 +5,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import (
+    KholloscopeRun,
     Promotion,
     TimetableCalendar,
     TimetableSeries,
@@ -20,6 +21,19 @@ class TimetableRepository:
     def __init__(self, db: AsyncSession) -> None:
         """Use the request's existing transaction-bound session."""
         self.db = db
+
+    async def published_kholloscope(self, school_year: int) -> KholloscopeRun | None:
+        """Return a published annual run, excluding private revision branches."""
+        return await self.db.scalar(
+            select(KholloscopeRun)
+            .where(
+                KholloscopeRun.school_year == school_year,
+                ~KholloscopeRun.snapshot.has_key("revision_branch"),
+                KholloscopeRun.result["applied"].as_boolean().is_(True),
+            )
+            .order_by(KholloscopeRun.created_at.desc())
+            .limit(1)
+        )
 
     async def calendars(
         self,

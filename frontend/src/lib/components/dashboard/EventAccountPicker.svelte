@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { read, roleLabels, statusLabels } from '#lib/dashboard';
+	import { read, roleLabels } from '#lib/dashboard';
 	import type { DirectoryUser, Page } from '#lib/types';
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
@@ -10,11 +10,11 @@
 		onclose,
 		onapply
 	}: {
-		selected: DirectoryUser | null;
+		selected: DirectoryUser[];
 		onclose: () => void;
-		onapply: (user: DirectoryUser | null) => void;
+		onapply: (user: DirectoryUser[]) => void;
 	} = $props();
-	let choice = $state<DirectoryUser | null>(null);
+	let choice = $state<DirectoryUser[]>([]);
 	let query = $state('');
 	let role = $state('');
 	let users = $state<DirectoryUser[]>([]);
@@ -22,7 +22,7 @@
 	let loading = $state(true);
 	let error = $state('');
 	onMount(() => {
-		choice = selected;
+		choice = [...selected];
 		ready = true;
 	});
 	$effect(() => {
@@ -59,8 +59,8 @@
 </script>
 
 <Modal
-	title="Filtrer par compte"
-	description="Recherchez un compte actif ou archivé, auteur ou cible des événements."
+	title="Filtrer par comptes"
+	description="Sélectionnez les comptes actifs ou archivés, auteurs ou cibles des événements. Recliquez sur un compte pour le retirer."
 	{onclose}
 >
 	<div class="account-picker-toolbar">
@@ -82,21 +82,37 @@
 			>
 		</div>
 	</div>
-	{#if choice}<p class="help">
-			Compte sélectionné : {choice.first_name}
-			{choice.last_name} · {statusLabels[choice.status]}
+	{#if choice.length}<div class="help">
+			{#each choice as user (user.id)}
+				<button
+					class="button is-small is-light"
+					onclick={() => (choice = choice.filter((item) => item.id !== user.id))}
+					aria-label={'Retirer ' + user.first_name + ' ' + user.last_name + ' de la sélection'}
+				>
+					{user.first_name}
+					{user.last_name}
+					<Icon name="remove" size={12} />
+				</button>
+			{/each}
+		</div>{/if}
+	{#if choice.length >= 100}<p class="help" role="status">
+			Vous pouvez sélectionner jusqu’à 100 comptes.
 		</p>{/if}
 	{#if error}<p class="notification is-danger is-light" role="alert">{error}</p>{/if}
 	<div class="member-picker" aria-busy={loading}>
 		{#if loading}<p class="loading-state" role="status">Recherche…</p>{:else if !error}
 			{#each users as user (user.id)}<label
 					class="member-choice"
-					class:selected={choice?.id === user.id}
+					class:selected={choice.some((item) => item.id === user.id)}
 					><input
-						type="radio"
+						type="checkbox"
+						disabled={choice.length >= 100 && !choice.some((item) => item.id === user.id)}
 						name="event-account"
-						checked={choice?.id === user.id}
-						onchange={() => (choice = user)}
+						checked={choice.some((item) => item.id === user.id)}
+						onchange={() =>
+							(choice = choice.some((item) => item.id === user.id)
+								? choice.filter((item) => item.id !== user.id)
+								: [...choice, user])}
 					/><AccountIdentity {user} /></label
 				>{:else}<p class="empty-state">
 					{query.trim().length === 1
@@ -106,7 +122,7 @@
 		{/if}
 	</div>
 	<div class="dialog-actions">
-		{#if choice}<button class="button is-text" onclick={() => (choice = null)}
+		{#if choice.length}<button class="button is-text" onclick={() => (choice = [])}
 				>Effacer la sélection</button
 			>{/if}
 		<button class="button is-light" onclick={onclose}>Annuler</button><button

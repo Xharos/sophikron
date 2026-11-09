@@ -89,6 +89,38 @@ export interface TimetableYear {
 	series: TimetableSeries[];
 	hours?: AnnualSubjectHours[];
 }
+
+const timetableDisplayCollator = new Intl.Collator('fr', { numeric: true, sensitivity: 'base' });
+
+/** Keep simultaneous blocks in a stable semantic order across recurring weeks. */
+export function compareTimetableDisplayEvents(a: TimetableEvent, b: TimetableEvent): number {
+	const firstTeacher = (event: TimetableEvent): string =>
+		event.teachers?.find((teacher) => teacher.id === (event.teacher_ids?.[0] ?? event.teacher_id))
+			?.name ??
+		event.teachers?.[0]?.name ??
+		event.teacher;
+	const compare = (left: string, right: string): number =>
+		timetableDisplayCollator.compare(left, right);
+	return (
+		a.start.slice(0, 19).localeCompare(b.start.slice(0, 19)) ||
+		compare(a.title, b.title) ||
+		compare(firstTeacher(a), firstTeacher(b)) ||
+		compare(a.room, b.room) ||
+		compare(a.calendar_label ?? '', b.calendar_label ?? '') ||
+		compare(a.kind, b.kind) ||
+		compare(a.target_kind ?? '', b.target_kind ?? '') ||
+		(a.target_number ?? 0) - (b.target_number ?? 0) ||
+		compare(a.audience_label ?? '', b.audience_label ?? '') ||
+		(a.target_user_id ?? 0) - (b.target_user_id ?? 0) ||
+		a.calendar_id - b.calendar_id ||
+		(a.subject_id ?? 0) - (b.subject_id ?? 0) ||
+		(a.teacher_ids?.[0] ?? a.teacher_id ?? 0) - (b.teacher_ids?.[0] ?? b.teacher_id ?? 0) ||
+		(a.room_id ?? 0) - (b.room_id ?? 0) ||
+		a.end.slice(0, 19).localeCompare(b.end.slice(0, 19)) ||
+		a.series_id.localeCompare(b.series_id) ||
+		a.id.localeCompare(b.id)
+	);
+}
 export interface TimetableAgenda {
 	id: number;
 	name: string;
@@ -105,12 +137,13 @@ export interface TimetableCatalog {
 	calendars: TimetableAgenda[];
 	promotions: { id: number; name: string }[];
 	teachers: TimetableTeacher[];
-	subjects: { id: number; name: string; color: string }[];
+	subjects: { id: number; name: string; color: string; icon?: import('#lib/lessons').LessonIcon }[];
 	rooms: { id: number; name: string; revision?: string }[];
 	common_years?: CommonTimetableYear[];
 }
 
 export interface TimetableTeacher {
+	promotion_ids?: number[];
 	id: number;
 	name: string;
 	subject_ids?: number[];
@@ -336,11 +369,79 @@ export function teachingHours(durationSlots: number, sessionMinutes: number): nu
 	);
 }
 
-/** Keep subject specialists first and French alphabetical ordering within both groups. */
+/** Count dated pedagogical hours per pupil within the selected audience, over the full year. */
+export function selectedTimetableHours(
+	board: TimetableBoard,
+	year: TimetableYear,
+	node: TimetableNode
+): AnnualSubjectHours[] {
+	const pupils = board.members.filter(
+		(m) => node.studentIds.includes(m.id) && m.roles.includes('user')
+	);
+	if (!pupils.length && node.key === 'promotion') return year.hours ?? [];
+	const totals = new Map<number | null, AnnualSubjectHours>();
+	const weeks = Object.keys(year.weeks).length;
+	for (const event of board.events) {
+		if (event.year_id !== year.id) continue;
+		const recipients = pupils.filter((p) =>
+			nodeReceives(event, { ...node, key: 'student-' + p.id, studentIds: [p.id] }, [p])
+		);
+		const factor = pupils.length
+			? recipients.length / pupils.length
+			: !event.target_kind ||
+				  event.target_kind === 'promotion' ||
+				  (event.target_kind === node.kind && event.target_number === node.number)
+				? 1
+				: 0;
+		if (!factor) continue;
+		const minutes = event.session_minutes ?? year.settings.session_minutes;
+		const divisor = minutes >= 55 && minutes <= 65 ? minutes : 60;
+		const duration =
+			((Date.parse(event.end) - Date.parse(event.start)) / (60000 * divisor)) * factor;
+		const row = totals.get(event.subject_id) ?? {
+			subject_id: event.subject_id,
+			course: 0,
+			td: 0,
+			tp: 0,
+			kholle: 0,
+			total: 0,
+			weekly: { course: 0, td: 0, tp: 0, kholle: 0, total: 0 }
+		};
+		row[event.kind] += duration;
+		row.total += duration;
+		totals.set(event.subject_id, row);
+	}
+	return [...totals.values()].map((row) => ({
+		...row,
+		weekly: {
+			course: weeks ? row.course / weeks : 0,
+			td: weeks ? row.td / weeks : 0,
+			tp: weeks ? row.tp / weeks : 0,
+			kholle: weeks ? row.kholle / weeks : 0,
+			total: weeks ? row.total / weeks : 0
+		}
+	}));
+}
+
+/** Blend only the teacher's assigned subject colors, including single-subject teachers. */
+export function teacherSubjectGradient(
+	teacher: TimetableTeacher,
+	subjects: TimetableCatalog['subjects']
+): string {
+	const colors = subjects
+		.filter((subject) => teacher.subject_ids?.includes(subject.id))
+		.map((subject) => subject.color);
+	if (!colors.length) colors.push('#64748b');
+	if (colors.length === 1) colors.push(colors[0]);
+	return `linear-gradient(120deg, ${colors.join(', ')})`;
+}
+
+/** Rank local specialists, external specialists, then other teachers alphabetically. */
 export function orderedTimetableTeachers(
 	teachers: TimetableTeacher[],
 	subjectId: number | null,
-	kind?: TimetableBlock['kind']
+	kind?: TimetableBlock['kind'],
+	promotionId: number | null = null
 ): TimetableTeacher[] {
 	return teachers
 		.filter(
@@ -348,6 +449,16 @@ export function orderedTimetableTeachers(
 		)
 		.sort(
 			(left, right) =>
+				Number(
+					subjectId !== null &&
+						right.subject_ids?.includes(subjectId) &&
+						(promotionId === null || (right.promotion_ids?.includes(promotionId) ?? false))
+				) -
+					Number(
+						subjectId !== null &&
+							left.subject_ids?.includes(subjectId) &&
+							(promotionId === null || (left.promotion_ids?.includes(promotionId) ?? false))
+					) ||
 				Number(subjectId !== null && (right.subject_ids?.includes(subjectId) ?? false)) -
 					Number(subjectId !== null && (left.subject_ids?.includes(subjectId) ?? false)) ||
 				left.name.localeCompare(right.name, 'fr', { sensitivity: 'base' }) ||

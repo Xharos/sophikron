@@ -110,6 +110,12 @@ export function eventDetails(event: ActivityEvent): string[] {
 		if (typeof data.school_year === 'number')
 			details.push(`Année : ${data.school_year}–${data.school_year + 1}`);
 		if (typeof data.title === 'string' && data.title) details.push(data.title);
+		if (typeof data.subject_name === 'string') details.push(`Matière : ${data.subject_name}`);
+		if (typeof data.start_time === 'number' && typeof data.end_time === 'number') {
+			const clock = (seconds: number): string =>
+				`${String(Math.floor(seconds / 3600)).padStart(2, '0')}:${String(Math.floor((seconds % 3600) / 60)).padStart(2, '0')}`;
+			details.push(`Horaire : ${clock(data.start_time)}–${clock(data.end_time)}`);
+		}
 		if (typeof data.occurrence === 'string') details.push(`Date : ${data.occurrence}`);
 		if (data.scope === 'one') details.push('Cette occurrence uniquement');
 		if (data.scope === 'future') details.push('Cette occurrence et les suivantes');
@@ -123,8 +129,6 @@ export function eventDetails(event: ActivityEvent): string[] {
 					? 'Disponibilités par défaut'
 					: `${data.range_count} plages de disponibilité`
 			);
-		if (typeof data.kholle_min_hours === 'number' && typeof data.kholle_max_hours === 'number')
-			details.push(`Khôlles : ${data.kholle_min_hours} à ${data.kholle_max_hours} h par semaine`);
 		return details;
 	}
 	if (event.event_type.startsWith('promotion.custom_group_'))

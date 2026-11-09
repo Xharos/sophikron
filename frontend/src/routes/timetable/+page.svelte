@@ -1,7 +1,9 @@
-<script lang="ts">
+﻿<script lang="ts">
 	import { resolve } from '$app/paths';
 	import { invalidateAll } from '$app/navigation';
+
 	import Modal from '#lib/components/Modal.svelte';
+
 	import TimetableSettingsEditor from '#lib/components/TimetableSettings.svelte';
 	import { timetableCommand } from '#lib/timetableClient';
 	import {
@@ -131,6 +133,7 @@
 			<h1 class="title is-2">Agendas</h1>
 		</div>
 		{#if data.catalog.administrator}<div class="buttons">
+				<a class="button is-light" href={resolve('/timetable/kholloscope')}>Kholloscope</a>
 				<a class="button is-light" href={resolve('/timetable/settings')}
 					>Salles et années scolaires</a
 				><button class="button is-primary" disabled={busy} onclick={() => edit(null)}
@@ -138,6 +141,7 @@
 				>
 			</div>{/if}
 	</header>
+
 	{#if data.catalog.can_read_archives ?? data.catalog.administrator}<div class="buttons mb-5">
 			<button class="button" class:is-primary={!archives} onclick={() => (archives = false)}
 				>Actifs</button

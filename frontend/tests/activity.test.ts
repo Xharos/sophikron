@@ -224,3 +224,18 @@ test('activity counts use singular only for one, including adjective agreements'
 		}
 	}
 });
+
+test('new sessions display subject and local wall-clock times while legacy entries still work', () => {
+	assert.deepEqual(
+		eventDetails(
+			event('timetable.series_created', {
+				subject_name: 'Mathématiques',
+				start_time: 28800,
+				end_time: 34200,
+				occurrence: '2026-11-04'
+			})
+		),
+		['Matière : Mathématiques', 'Horaire : 08:00–09:30', 'Date : 2026-11-04']
+	);
+	assert.deepEqual(eventDetails(event('timetable.series_created', { title: 'Maths' })), ['Maths']);
+});

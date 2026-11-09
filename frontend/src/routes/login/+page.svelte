@@ -6,6 +6,7 @@
 	import type { PageProps } from './$types';
 	let { data, form }: PageProps = $props();
 	let busy = $state(false);
+	let passwordInput: HTMLInputElement;
 	const notices: Record<string, string> = {
 		setup: 'Votre compte administrateur est prêt. Connectez-vous avec vos nouveaux identifiants.',
 		password: 'Mot de passe modifié. Toutes vos sessions ont été fermées. Reconnectez-vous.',
@@ -31,9 +32,13 @@
 		method="POST"
 		use:enhance={() => {
 			busy = true;
-			return async ({ update }) => {
+			return async ({ result, update }) => {
 				try {
 					await update();
+					if (result.type === 'failure') {
+						passwordInput.value = '';
+						passwordInput.focus();
+					}
 				} finally {
 					busy = false;
 				}
@@ -60,6 +65,7 @@
 				<input
 					class="input"
 					id="password"
+					bind:this={passwordInput}
 					name="password"
 					type="password"
 					autocomplete="current-password"

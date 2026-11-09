@@ -17,6 +17,61 @@ export interface DiagnosticEntry extends TimetableIssue {
 	previous?: DiagnosticEntry;
 }
 
+/** Retain the earliest instance of each recurring cause without mixing distinct resources. */
+export function firstDiagnosticOccurrences(entries: DiagnosticEntry[]): DiagnosticEntry[] {
+	const groups = new Map<string, { first: DiagnosticEntry; count: number }>();
+	const signature = (e: TimetableEvent): unknown => [
+		e.year_id,
+		e.calendar_id,
+		e.subject_id,
+		e.kind,
+		e.teacher_ids ?? [e.teacher_id],
+		e.room_id,
+		e.target_kind,
+		e.target_number,
+		e.target_user_id,
+		new Date(e.start.slice(0, 10) + 'T00:00:00Z').getUTCDay(),
+		e.start.slice(11, 19),
+		e.end.slice(11, 19)
+	];
+	for (const entry of [...entries].sort((a, b) =>
+		(a.events?.[0]?.start ?? '').localeCompare(b.events?.[0]?.start ?? '')
+	)) {
+		let key = entry.code;
+		const quota = /^(kholle-(?:volume|alternation)-\d+)-\d+(-\d+)?$/.exec(key);
+		if (quota) key = quota[1] + (quota[2] ?? '');
+		else if (entry.events?.length)
+			key = JSON.stringify([
+				/^conflict-\["([^"]+)"/.exec(entry.code)?.[1] ?? entry.code.split('-')[0],
+				entry.severity,
+				entry.events
+					.map(signature)
+					.map((s) => JSON.stringify(s))
+					.sort()
+			]);
+		else if (key.startsWith('lunch-')) key = key.replace(/\d{4}-\d{2}-\d{2}/g, 'recurring');
+		const previous = groups.get(key);
+		if (previous) previous.count++;
+		else groups.set(key, { first: { ...entry, identity: entry.identity ?? key }, count: 1 });
+	}
+	return [...groups.values()].map(({ first, count }) =>
+		count > 1
+			? {
+					...first,
+					message: first.message + ` (${count} alertes similaires ; première occurrence affichée.)`
+				}
+			: first
+	);
+}
+
+/** Choose the button color using the highest severity across all displayed checks. */
+export function timetableWarningColor(
+	entries: { severity?: TimetableIssue['severity'] }[]
+): 'is-success' | 'is-warning' | 'is-danger' {
+	if (entries.some((entry) => entry.severity === 'critical')) return 'is-danger';
+	return entries.length ? 'is-warning' : 'is-success';
+}
+
 /** Compose the same structured checks for the board and for an unsaved proposal. */
 export function timetableDiagnostics(
 	board: TimetableBoard,
@@ -75,7 +130,7 @@ export function timetableDiagnostics(
 		aliases.add(focus.event.series_id);
 		if (focus.event.conflict_key) aliases.add(focus.event.conflict_key);
 	}
-	return [
+	return firstDiagnosticOccurrences([
 		...(board.issues ?? []),
 		...warnings.map((warning) => ({
 			...warning,
@@ -84,7 +139,7 @@ export function timetableDiagnostics(
 				aliases.has(value) ? 'edited' : value
 			)
 		}))
-	];
+	]);
 }
 
 /** Compare logical checks independently of newly generated recurrence node identifiers. */

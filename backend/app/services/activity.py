@@ -77,14 +77,15 @@ class TimetableActivity(InputModel):
     calendar_name: str | None = Field(default=None, max_length=300)
     school_year: int | None = Field(default=None, ge=2000, le=9999)
     title: str | None = Field(default=None, max_length=300)
+    subject_name: str | None = Field(default=None, max_length=100)
+    start_time: int | None = Field(default=None, ge=0, lt=86400)
+    end_time: int | None = Field(default=None, gt=0, le=86400)
     occurrence: date | None = None
     scope: Literal["one", "future", "all"] | None = None
     is_paused: bool | None = None
     promotion_id: int | None = Field(default=None, gt=0)
     auto_archive: bool | None = None
     range_count: int | None = Field(default=None, ge=0)
-    kholle_min_hours: float | None = Field(default=None, ge=0)
-    kholle_max_hours: float | None = Field(default=None, ge=0)
     default_availability: bool | None = None
 
 
@@ -240,7 +241,7 @@ class EventDefinition:
             for _, field, spec, conversion in Formatter().parse(message)
         ):
             raise ValueError("Invalid event message")
-        self.label, self.icon, self.message = label, icon, message
+        self.label, self.icon, self.message = label, icon, message.removesuffix(".")
 
 
 EVENTS = {
@@ -486,37 +487,45 @@ for _code, _label in (
     )
 
 
-for _code, _label in (
-    ("created", "Calendriers créés"),
-    ("updated", "Calendriers modifiés"),
-    ("archived", "Calendriers archivés"),
-    ("restored", "Calendriers réactivés"),
-    ("settings_updated", "Périodes et vacances modifiées"),
-    ("series_created", "Séances ajoutées"),
-    ("occurrence_updated", "Séances modifiées"),
-    ("occurrence_deleted", "Séances annulées"),
-    ("exported", "Emplois du temps exportés en PDF"),
+for _code, _label, _action in (
+    ("created", "Calendriers créés", "a créé un calendrier"),
+    ("updated", "Calendriers modifiés", "a modifié un calendrier"),
+    ("archived", "Calendriers archivés", "a archivé un calendrier"),
+    ("restored", "Calendriers réactivés", "a réactivé un calendrier"),
+    (
+        "settings_updated",
+        "Périodes et vacances modifiées",
+        "a modifié les périodes et les vacances",
+    ),
+    ("series_created", "Séances ajoutées", "a ajouté des séances"),
+    ("occurrence_updated", "Séances modifiées", "a modifié des séances"),
+    ("occurrence_deleted", "Séances annulées", "a annulé des séances"),
+    ("exported", "Emplois du temps exportés en PDF", "a exporté un emploi du temps en PDF"),
 ):
     EVENTS[f"timetable.{_code}"] = EventDefinition(
         resource="timetable",
         payload=TimetableActivity,
         label=_label,
         icon="clock",
-        message=f"{{actor}} · {_label}.",
+        message=f"{{actor}} {_action}",
     )
 
-for _code, _label in (
-    ("room_saved", "Salles enregistrées"),
-    ("room_deleted", "Salles retirées"),
-    ("school_year_created", "Années scolaires créées"),
-    ("school_year_deleted", "Années scolaires supprimées"),
-    ("preferences_updated", "Archivage automatique configuré"),
+for _code, _label, _action in (
+    ("room_saved", "Salles enregistrées", "a enregistré une salle"),
+    ("room_deleted", "Salles retirées", "a retiré une salle"),
+    ("school_year_created", "Années scolaires créées", "a créé une année scolaire"),
+    ("school_year_deleted", "Années scolaires supprimées", "a supprimé une année scolaire"),
+    (
+        "preferences_updated",
+        "Archivage automatique configuré",
+        "a configuré l’archivage automatique",
+    ),
 ):
     EVENTS[f"timetable.{_code}"] = EventDefinition(
         payload=TimetableActivity,
         label=_label,
         icon="clock",
-        message=f"{{actor}} · {_label}.",
+        message=f"{{actor}} {_action}",
     )
 
 EVENTS["user.availability_updated"] = EventDefinition(

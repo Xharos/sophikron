@@ -6,6 +6,85 @@ from datetime import datetime
 from app.services.timetable_engine import PARIS
 
 
+def replacement_room_problem(
+    events: list[dict],
+    room_id: int,
+    capacity: int,
+    intervals: list[tuple[datetime, datetime]],
+    now: datetime,
+) -> str | None:
+    """Validate only the room intervals affected by a replacement, including other agendas."""
+    prepared = [
+        (e, datetime.fromisoformat(e["start"]), datetime.fromisoformat(e["end"]))
+        for e in events
+        if e["room_id"] == room_id
+    ]
+    for first, last in sorted(set(intervals)):
+        clipped = []
+        for event, start, end in prepared:
+            begin, finish = max(first, start), min(last, end)
+            if begin >= finish:
+                continue
+            if event["kind"] != "kholle":
+                return "La salle de remplacement est occupée par un cours ou un autre événement."
+            clipped.append({**event, "start": begin.isoformat(), "end": finish.isoformat()})
+        if room_capacity_conflicts(clipped, {room_id: capacity}, now):
+            return "La capacité simultanée de la salle de remplacement serait dépassée."
+    return None
+
+
+def room_capacity_conflicts(
+    events: list[dict], capacities: dict[int, int], now: datetime
+) -> list[dict]:
+    """Find the first future kholle overbooking for each room and participating calendar.
+
+    Parameters
+    ----------
+    events, capacities
+        Actual dated segments with calendar IDs and proposed room capacities.
+    now
+        Aware cutoff; ongoing occurrences remain protected, ended ones are ignored.
+
+    Returns
+    -------
+    list[dict]
+        Room/calendar diagnostics with local time, capacity and simultaneous count.
+    """
+    events = sorted(
+        events, key=lambda e: (e["start"], e["end"], e["calendar_id"], str(e.get("id", "")))
+    )
+    edges: dict[int, list[tuple[datetime, int, int]]] = defaultdict(list)
+    for index, event in enumerate(events):
+        room = event["room_id"]
+        if event["kind"] != "kholle" or room not in capacities:
+            continue
+        start, end = (datetime.fromisoformat(event[key]) for key in ("start", "end"))
+        if end <= now:
+            continue
+        edges[room].extend([(start, 1, index), (end, -1, index)])
+    conflicts = {}
+    for room, points in sorted(edges.items()):
+        active: dict[int, int] = {}
+        for instant, delta, index in sorted(points):
+            if delta < 0:
+                active.pop(index, None)
+                continue
+            active[index] = events[index]["calendar_id"]
+            if len(active) > capacities[room]:
+                for calendar in sorted(set(active.values())):
+                    conflicts.setdefault(
+                        (room, calendar),
+                        {
+                            "room_id": room,
+                            "calendar_id": calendar,
+                            "at": instant.astimezone(PARIS).isoformat(),
+                            "simultaneous": len(active),
+                            "capacity": capacities[room],
+                        },
+                    )
+    return list(conflicts.values())
+
+
 def _full_class_intervals(
     events: list[dict], pupils: set[int], groups: dict[tuple[str, int], set[int]]
 ) -> dict[str, list[tuple[int, int]]]:

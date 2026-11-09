@@ -115,8 +115,8 @@ distinguishes those forwarded by Compose from native-only options and fixed serv
 | `AUTH_PASSWORD_WORKERS` | `2`, per-process memory/CPU concurrency bound |
 | `AUTH_PASSWORD_QUEUE_SIZE` | `8` additional admitted password jobs per process |
 | `AUTH_PASSWORD_QUEUE_TIMEOUT_SECONDS` | `5`, maximum wait for a password worker |
-| `AUTH_REQUEST_MAX_BYTES` | `16384`, maximum authentication/admin request body before JSON parsing |
-| `AUTH_REQUEST_BODY_TIMEOUT_SECONDS` | `10`, total authentication/admin body-read deadline |
+| `AUTH_REQUEST_MAX_BYTES` | `16384`, maximum ordinary API request body before JSON parsing; document uploads use their own streaming byte limit |
+| `AUTH_REQUEST_BODY_TIMEOUT_SECONDS` | `10`, total ordinary API body-read deadline; uploads use their dedicated deadline |
 | `AUTH_RATE_WINDOW_SECONDS` | `900` |
 | `AUTH_LOGIN_IDENTITY_LIMIT` | `5` failed logins per IP/normalized supplied identifier |
 | `AUTH_LOGIN_IP_LIMIT` | `20` failed logins per IP across identifiers; consider shared school networks |
@@ -461,4 +461,7 @@ Added dependencies: `argon2-cffi` (MIT), `cryptography` (Apache-2.0 OR BSD-3-Cla
 (Unlicense), explicit `anyio` (MIT, already used by the framework), and `rapidfuzz` (MIT) for fuzzy name
 search. Keep their releases reviewed and maintained; passing these checks is not a comprehensive
 security assessment.
+
+See the [kholloscope release security review](security-review.md) for the route authentication
+inventory, explicit draft capabilities, dependency findings and verification limits.
 

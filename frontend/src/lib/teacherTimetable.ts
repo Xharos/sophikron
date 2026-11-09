@@ -19,8 +19,6 @@ export interface TeacherPattern {
 	revision: string | null;
 	default: boolean;
 	ranges: AvailabilityRange[];
-	kholle_min_hours: number;
-	kholle_max_hours: number;
 }
 
 export interface TeacherBoard {

@@ -1,11 +1,11 @@
 """Annual totals, genuine pupil lunch intervals and retained vacation exceptions."""
 
-from datetime import date
+from datetime import date, timedelta
 
 import pytest
 
 from app.schemas.timetable import BlockFields, SeriesFields, YearDocument, YearSettings
-from app.services.timetable_diagnostics import annual_diagnostics, largest_gap
+from app.services.timetable_diagnostics import annual_diagnostics, kholle_diagnostics, largest_gap
 from app.services.timetable_engine import apply_event_change, occurrences, series_dates
 from tests.test_timetable import series, settings
 
@@ -61,6 +61,74 @@ def test_annual_replacement_and_later_makeup_preserve_the_weekly_average() -> No
     assert maths["course"] == 4 and maths["weekly"]["course"] == 1
     other = next(row for row in totals if row["subject_id"] == 2)
     assert other["course"] == 1 and other["weekly"]["course"] == 0.25
+
+
+def test_kholle_targets_and_alternation_follow_live_edits() -> None:
+    """Warn separately for lost annual hours and displaced alternating subject coverage."""
+    cfg = grid(session_minutes=55)
+    requirements = {
+        "start": "2026-09-07",
+        "end": "2026-10-02",
+        "subjects": [{"subject_id": 1, "minutes": 120}],
+    }
+    audience = [{"promotion_id": 10, "kind": "kholles", "number": 2}]
+    sessions = [
+        event(d, "16:00:00", "16:55:00", kind="kholle", target_kind="kholles", target_number=2)
+        for d in ("2026-09-07", "2026-09-21")
+    ]
+    assert not kholle_diagnostics(sessions, cfg, requirements, audience, 10, 2026)
+    issues = kholle_diagnostics(sessions[:1], cfg, requirements, audience, 10, 2026)
+    assert {i["code"] for i in issues} == {"kholle-volume-1-2", "kholle-alternation-1-2"}
+    sessions[1]["start"], sessions[1]["end"] = (
+        "2026-09-14T16:00:00+02:00",
+        "2026-09-14T16:55:00+02:00",
+    )
+    issues = kholle_diagnostics(sessions, cfg, requirements, audience, 10, 2026)
+    assert [i["code"] for i in issues] == ["kholle-alternation-1-2"]
+    assert not kholle_diagnostics(sessions, cfg, None, audience, 10, 2026)
+
+
+def test_weekly_kholles_cannot_be_doubled_to_hide_a_missing_week() -> None:
+    """A correct annual total does not hide two sessions in one week and zero in another."""
+    requirements = {
+        "start": "2026-09-07",
+        "end": "2026-10-02",
+        "subjects": [{"subject_id": 1, "minutes": 240}],
+    }
+    audience = [{"promotion_id": 10, "kind": "kholles", "number": 2}]
+    sessions = [
+        event(day, "16:00:00", "17:00:00", kind="kholle", target_kind="kholles", target_number=2)
+        for day in ("2026-09-07", "2026-09-08", "2026-09-21", "2026-09-28")
+    ]
+    issues = kholle_diagnostics(sessions, grid(), requirements, audience, 10, 2026)
+    assert [i["code"] for i in issues] == ["kholle-alternation-1-2"]
+    assert "2 semaine(s)" in issues[0]["message"]
+
+
+@pytest.mark.parametrize("phase", [0, 1])
+def test_pt_partial_year_accepts_natural_12_or_13_but_not_broken_cycles(phase: int) -> None:
+    """Accept a normal 25-week alternation without hiding missing or duplicated cycles."""
+    first = date(2026, 9, 7)
+    last = first + timedelta(weeks=24, days=4)
+    cfg = grid(end=last.isoformat(), holidays=[], session_minutes=55)
+    requirements = {
+        "start": first.isoformat(), "end": last.isoformat(),
+        "subjects": [{"subject_id": 1, "minutes": 750}],
+    }
+    audience = [{"promotion_id": 10, "kind": "kholles", "number": 2}]
+    sessions = [
+        event(
+            (first + timedelta(weeks=week)).isoformat(), "16:00:00", "16:55:00",
+            kind="kholle", target_kind="kholles", target_number=2,
+        )
+        for week in range(phase, 25, 2)
+    ]
+    assert not kholle_diagnostics(sessions, cfg, requirements, audience, 10, 2026)
+    issues = kholle_diagnostics(sessions[2:], cfg, requirements, audience, 10, 2026)
+    assert {i["code"] for i in issues} == {"kholle-volume-1-2", "kholle-alternation-1-2"}
+    sessions[-1] = sessions[0]
+    issues = kholle_diagnostics(sessions, cfg, requirements, audience, 10, 2026)
+    assert any(i["code"] == "kholle-alternation-1-2" for i in issues)
 
 
 def test_groups_can_eat_at_different_times_inside_the_same_self_window() -> None:

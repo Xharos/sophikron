@@ -21,9 +21,11 @@ from app.schemas.timetable import (
 from app.services.activity import record_event
 from app.services.auth import AuthService, UserContext
 from app.services.errors import AuthError
+from app.services.kholloscope_workflow import fingerprint
 from app.services.timetable import TimetableService
 from app.services.timetable_engine import current_school_year
 from app.services.timetable_lifecycle import rollover
+from app.services.timetable_occupancy import room_capacity_conflicts
 
 
 class TimetableConfigurationService:
@@ -48,7 +50,12 @@ class TimetableConfigurationService:
                 },
                 "years": await self.core.common_years(),
                 "rooms": [
-                    {"id": room.id, "name": room.name, "revision": room.revision}
+                    {
+                        "id": room.id,
+                        "name": room.name,
+                        "revision": room.revision,
+                        "kholle_capacity": room.kholle_capacity,
+                    }
                     for room in await self.db.scalars(
                         select(TimetableRoom)
                         .where(TimetableRoom.is_active.is_(True))
@@ -134,7 +141,7 @@ class TimetableConfigurationService:
         data: RoomSave | None,
         expected_revision: str | None = None,
     ) -> dict:
-        """Rename or retire a room without erasing references in existing sessions."""
+        """Protect future room bookings and require confirmation for disruptive capacity cuts."""
         async with self.db.begin():
             await self.auth._lifecycle_lock()
             await self.core.authorize(actor, write=True)
@@ -144,6 +151,21 @@ class TimetableConfigurationService:
                 raise AuthError(404, "Salle introuvable.")
             if room.revision != revision:
                 raise AuthError(409, "Cette salle a changé. Rechargez le catalogue.")
+            impact = None
+            if data is None or (
+                "kholle_capacity" in data.model_fields_set
+                and data.kholle_capacity < room.kholle_capacity
+            ):
+                impact = await self._check_room_usage(room, data.kholle_capacity if data else None)
+                if (
+                    impact
+                    and data
+                    and (
+                        not data.confirmed_capacity_reduction
+                        or data.expected_impact_revision != impact["impact_revision"]
+                    )
+                ):
+                    return {"confirmation_required": True, **impact}
             if data:
                 name = " ".join(data.name.split())
                 if not name or len(name.casefold()) > 80:
@@ -156,6 +178,8 @@ class TimetableConfigurationService:
                 if other:
                     raise AuthError(409, "Une salle porte déjà ce nom.")
                 room.name, room.name_key = name, name.casefold()
+                if "kholle_capacity" in data.model_fields_set:
+                    room.kholle_capacity = data.kholle_capacity
             else:
                 room.is_active = False
             room.revision = uuid4().hex
@@ -165,7 +189,50 @@ class TimetableConfigurationService:
                 actor.id,
                 data={"title": room.name},
             )
-            return {"id": room.id, "revision": room.revision}
+            return {"id": room.id, "revision": room.revision, "revision_required": bool(impact)}
+
+    async def _check_room_usage(self, room: TimetableRoom, capacity: int | None) -> dict | None:
+        """Reject removal of a future booking or describe a proposed capacity conflict.
+
+        Parameters
+        ----------
+        room
+            Existing room under the lifecycle lock.
+        capacity
+            Proposed simultaneous kholle limit, or None for removal.
+
+        Returns
+        -------
+        dict | None
+            Capacity confirmation payload, or None when no future booking is affected.
+        """
+        now = self.auth.clock()
+        events = [event for event in await self.core.future_events() if event["room_id"] == room.id]
+        events.sort(key=lambda e: (e["calendar_id"], e["start"], e["id"]))
+        reasons = {"des khôlles" if e["kind"] == "kholle" else "l’EDT" for e in events}
+        if capacity is None and reasons:
+            raise AuthError(
+                409,
+                f"Impossible de supprimer la salle « {room.name} » : "
+                f"elle est utilisée dans {' et '.join(sorted(reasons))} pour des événements "
+                "à venir ou en cours.",
+            )
+        conflicts = (
+            room_capacity_conflicts(events, {room.id: capacity}, now)
+            if capacity is not None
+            else []
+        )
+        if not conflicts:
+            return None
+        first = conflicts[0]
+        return {
+            "impact_revision": fingerprint([room.revision, capacity, events]),
+            "message": f"La capacité de la salle « {room.name} » passera à {capacity}, "
+            f"alors que {first['simultaneous']} khôlles simultanées sont prévues "
+            f"le {first['at'][:10]} à {first['at'][11:16]}. "
+            "Ce changement nécessitera une révision et un recalcul des kholloscopes concernés. "
+            "Confirmez-vous cette diminution ?",
+        }
 
     async def archive(self, actor: UserContext, identifier: int, data: Version) -> dict:
         """Stop all diffusion and make a retained calendar permanently read-only until restored."""

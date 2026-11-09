@@ -274,8 +274,12 @@ def test_swagger_documents_browser_write_header() -> None:
 
 
 @pytest.mark.parametrize("length_header", [None, "2097152", "1"])
+@pytest.mark.parametrize(
+    "path",
+    ["/api/v1/auth/login", "/api/v1/promotion-groups/1/kholles/preview", "/api/v1/site"],
+)
 def test_oversized_auth_body_precedes_json(
-    settings_factory: Callable[..., DatabaseSettings], length_header: str | None
+    settings_factory: Callable[..., DatabaseSettings], length_header: str | None, path: str
 ) -> None:
     """Reject large declared, chunked and underreported bodies before JSON or dependencies."""
     app = create_app(settings_factory())
@@ -290,7 +294,7 @@ def test_oversized_auth_body_precedes_json(
             new=AsyncMock(side_effect=AssertionError("JSON parsed")),
         ),
     ):
-        response = client.post("/api/v1/auth/login", content=iter([body]), headers=headers)
+        response = client.post(path, content=iter([body]), headers=headers)
     assert response.status_code == 413
     assert response.headers["cache-control"] == "no-store"
 

@@ -113,6 +113,8 @@ def seed_catalog(
             users[person.email] = account
         profile = client.request("GET", f"/admin/users/{account['id']}/profile")
         current_promotions = {item["id"] for item in profile["promotions"]}
+        if person.promotion and not current_promotions <= set(promotion_ids):
+            raise SeedError("Affectations existantes incompatibles ; utilisez un autre namespace.")
         for identifier in promotion_ids:
             if identifier not in current_promotions:
                 client.request("PUT", f"/admin/users/{account['id']}/promotions/{identifier}")

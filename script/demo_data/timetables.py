@@ -68,7 +68,28 @@ def blocks_for_year(
                 "target_user_id": None,
             }
         )
-    return result
+    merged = []
+    for block in sorted(result, key=lambda b: (b["starts_on"], b["start_slot"])):
+        previous = next(
+            (
+                item
+                for item in reversed(merged)
+                if item["duration_slots"] == 2
+                and item["start_slot"] + 2 == block["start_slot"]
+                and all(
+                    item[key] == block[key]
+                    for key in FIELDS
+                    if key not in {"start_slot", "duration_slots"}
+                )
+                and year["slots"][block["start_slot"]][0] != 50400
+            ),
+            None,
+        )
+        if previous is None:
+            merged.append(block)
+        else:
+            previous["duration_slots"] = 4
+    return merged
 
 
 def seed_timetables(
@@ -165,6 +186,7 @@ def seed_timetables(
             )
         if final.get("teacher_commitments"):
             check_external_commitments(final)
+        seed_kholle_requirements(client, identifier, index, catalogue)
         agenda = final["calendars"][0]
         if settings.broadcast and agenda["is_paused"]:
             client.request(
@@ -184,6 +206,57 @@ def seed_timetables(
             f"{len(final['events'])} occurrences réelles."
         )
     return created
+
+
+def seed_kholle_requirements(client: Client, calendar_id: int, index: int, catalogue: dict) -> None:
+    """Fill the first 30 PTSI or 25 PT teaching weeks with the requested per-group volumes.
+
+    Parameters
+    ----------
+    client, calendar_id, index, catalogue
+        Authenticated API, annual calendar, alternating PTSI/PT index and subject identities.
+
+    Returns
+    -------
+    None
+        Matching settings are kept; existing different requirements are never overwritten.
+    """
+    path = f"/timetable/calendars/{calendar_id}/kholle"
+    state = client.request("POST", path + "/preview")
+    count, minutes = (30, 900) if index % 2 == 0 else (25, 750)
+    weeks = sorted(state["weeks"], key=lambda week: week["number"])
+    first = next((week for week in weeks if week["number"] == 1), None)
+    last = next((week for week in weeks if week["number"] == count), None)
+    if first is None or last is None:
+        raise SeedError(f"Le calendrier {calendar_id} ne contient pas les semaines 1 à {count}.")
+    settings = {
+        "start": first["start"],
+        "end": last["end"],
+        "subjects": [
+            {"subject_id": catalogue["subjects"][key]["id"], "minutes": minutes}
+            for key in ("maths", "si", "physics", "english")
+        ],
+    }
+    existing = state["settings"]
+    if existing is not None:
+        expected_subjects = {item["subject_id"]: item["minutes"] for item in settings["subjects"]}
+        actual_subjects = {item["subject_id"]: item["minutes"] for item in existing["subjects"]}
+        if (existing["start"], existing["end"], actual_subjects) != (
+            settings["start"],
+            settings["end"],
+            expected_subjects,
+        ):
+            raise SeedError("Les khôlles existantes diffèrent du scénario ; aucun volume remplacé.")
+        return
+    client.request(
+        "PUT",
+        path,
+        {
+            "expected_revision": state["revision"],
+            "expected_year_revision": state["year_revision"],
+            "settings": settings,
+        },
+    )
 
 
 def check_external_commitments(board: dict) -> None:

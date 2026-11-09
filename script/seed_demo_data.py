@@ -1,4 +1,4 @@
-"""Configure and create local demo data; use --dry-run to inspect without writing."""
+"""Create demo calendars and PTSI/PT kholle requirements; --dry-run never writes."""
 
 import argparse
 import os
@@ -14,14 +14,14 @@ from demo_data.runner import describe, seed
 CONFIG = Settings(
     namespace="demo",  # Use another name to keep multiple independent scenarios.
     school_year=2026,
-    class_count=2,
-    pupils_per_class=45,
+    class_count=1,
+    pupils_per_class=30,
     german_pupils=10,
     random_seed=2026,
     kholle_group_size=3,
     rooms=("B208", "C105", "C106", "D202", "E301"),
     include_summer_holidays=True,  # Keep the July 30 bound, but stop lessons on July 2.
-    filled_calendar_indexes=(0, 1),  # The PT calendar is created but intentionally left empty.
+    filled_calendar_indexes=None,  # Fill every requested PTSI and PT calendar.
     teacher_counts={
         "si": 2,
         "maths": 2,
@@ -30,7 +30,7 @@ CONFIG = Settings(
         "french": 1,
         "german": 1,
     },
-    kholleur_counts={"si": 1, "maths": 1, "physics": 1, "english": 1},
+    kholleur_counts={"si": 1, "maths": 1, "physics": 1, "english": 2},
     weekly_hours={
         "maths": {"course": 7, "td": 3},
         "si": {"course": 2, "td": 4, "tp": 4},
@@ -43,7 +43,7 @@ CONFIG = Settings(
     broadcast=False,  # Calendars are initially visible to administrators only.
 )
 BASE_URL = "http://127.0.0.1:8000"
-ORIGIN = "http://192.168.1.41:3000"
+ORIGIN = "http://localhost:3000"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -53,7 +53,7 @@ def main(argv: list[str] | None = None) -> int:
             stream.reconfigure(encoding="utf-8")
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--classes", type=int)
+    parser.add_argument("--classes", type=int, help="Number of classes per year (PTSI and PT)")
     parser.add_argument("--students", type=int)
     parser.add_argument("--namespace")
     parser.add_argument("--email", default=os.getenv("SOPHIKRON_SEED_EMAIL", ""))

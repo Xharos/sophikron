@@ -252,6 +252,7 @@ async def events(
     event_type: Annotated[str | None, Query(max_length=96)] = None,
     family: Literal["accounts", "promotions", "lessons", "administration"] | None = None,
     user_id: PositiveId | None = None,
+    user_ids: Annotated[list[PositiveId] | None, Query(max_length=100)] = None,
     actor_user_id: PositiveId | None = None,
     subject_user_id: PositiveId | None = None,
     resource_type: Annotated[str | None, Query(max_length=64)] = None,
@@ -260,7 +261,18 @@ async def events(
     until: AwareDatetime | None = None,
     order: Literal["asc", "desc"] = "desc",
 ) -> EventPage:
-    """Read an immutable journal with ID cursors and optional timezone-aware period filters."""
+    """Read a journal page; user_ids matches any selected author or target, once per event.
+
+    Parameters
+    ----------
+    user_ids
+        Up to 100 positive account IDs, supplied as repeated query parameters.
+
+    Returns
+    -------
+    EventPage
+        Chronological events with a cursor bound to the selected filters.
+    """
     return await service.events(
         actor,
         cursor=cursor,
@@ -268,6 +280,7 @@ async def events(
         event_type=event_type,
         family=family,
         user_id=user_id,
+        user_ids=user_ids,
         actor_user_id=actor_user_id,
         subject_user_id=subject_user_id,
         resource_type=resource_type,

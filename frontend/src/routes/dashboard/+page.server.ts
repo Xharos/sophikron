@@ -4,6 +4,7 @@ import { hasPermission } from '#lib/access';
 import { api } from '#lib/server/api';
 import { BackendError } from '#lib/server/backend';
 import type { Promotion } from '#lib/types';
+import type { TimetableCatalog } from '#lib/timetable';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
@@ -21,7 +22,21 @@ export const load: PageServerLoad = async (event) => {
 			throw cause;
 		}
 	}
+	let calendarCatalog: TimetableCatalog | null = null;
+	let calendarError = '';
+	if (
+		hasPermission(event.locals.user, 'users.manage') &&
+		['', 'overview'].includes(event.url.searchParams.get('tab') ?? '')
+	) {
+		try {
+			calendarCatalog = await api<TimetableCatalog>(event, '/timetable/catalog');
+		} catch {
+			calendarError = 'Les alertes des calendriers sont indisponibles.';
+		}
+	}
 	return {
+		calendarCatalog,
+		calendarError,
 		initialPromotion,
 		editPromotion:
 			hasPermission(event.locals.user, 'promotions.manage') &&

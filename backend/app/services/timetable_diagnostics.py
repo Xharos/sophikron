@@ -1,10 +1,130 @@
 """Annual pupil hours, partition balance and continuous lunch availability."""
 
 from collections import defaultdict
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from app.schemas.timetable import SeriesData, YearSettings
 from app.services.timetable_engine import teaching_day, teaching_weeks
+
+
+def kholle_diagnostics(
+    events: list[dict],
+    settings: YearSettings,
+    requirements: dict | None,
+    groups: list[dict],
+    promotion_id: int | None,
+    school_year: int,
+) -> list[dict]:
+    """Compare actual group kholles with annual targets and eligible fortnight cadences.
+
+    Parameters
+    ----------
+    events, settings, requirements
+        Live expanded sessions, calendar rules and configured pedagogical minute targets.
+    groups, promotion_id, school_year
+        Authorized group metadata and annual context.
+
+    Returns
+    -------
+    list[dict]
+        Nonblocking per-group volume and alternating-cycle warnings after live edits.
+    """
+    if not requirements:
+        return []
+    from app.services.kholle import kholle_weeks
+
+    numbers = sorted(
+        {
+            g["number"]
+            for g in groups
+            if g["kind"] == "kholles" and g["promotion_id"] == promotion_id
+        }
+    )
+    weeks = [
+        w["start"]
+        for w in kholle_weeks(settings, school_year)
+        if w["eligible"] and requirements["start"] <= w["start"] <= requirements["end"]
+    ]
+    totals, cycles, weekly = defaultdict(float), defaultdict(float), defaultdict(float)
+    issues = []
+    for event in events:
+        if event["kind"] != "kholle":
+            continue
+        targets = (
+            numbers
+            if event.get("target_kind") == "promotion"
+            else ([event.get("target_number")] if event.get("target_kind") == "kholles" else [])
+        )
+        start, end = (datetime.fromisoformat(event[key]) for key in ("start", "end"))
+        minutes = (end - start).total_seconds() / settings.session_minutes
+        monday = (start.date() - timedelta(days=start.weekday())).isoformat()
+        for group in targets:
+            totals[group, event["subject_id"]] += minutes
+            if monday in weeks:
+                cycles[group, event["subject_id"], weeks.index(monday) // 2] += minutes
+                weekly[group, event["subject_id"], monday] += minutes
+    for subject in requirements["subjects"]:
+        identifier, expected = subject["subject_id"], subject["minutes"]
+        label = (
+            next(
+                (
+                    e.get("subject_label", e.get("title"))
+                    for e in events
+                    if e["subject_id"] == identifier
+                ),
+                f"Matière {identifier}",
+            )
+            or f"Matière {identifier}"
+        )
+        cadence = expected * 2 / len(weeks) if weeks else 0
+        for group in numbers:
+            actual = totals[group, identifier]
+            natural_partial_cycle = (
+                len(weeks) % 2 == 1
+                and abs(cadence - 60) < 1e-5
+                and min(abs(actual - expected - 30), abs(actual - expected + 30)) < 1e-5
+            )
+            if abs(actual - expected) > 1e-5 and not natural_partial_cycle:
+                issues.append(
+                    {
+                        "code": f"kholle-volume-{identifier}-{group}",
+                        "severity": "warning",
+                        "subject_id": identifier,
+                        "kind": "kholle",
+                        "message": f"Groupe {group} · {label} : {actual / 60:.2f} h de khôlle "
+                        f"sur l’année, {expected / 60:.2f} h attendues.",
+                    }
+                )
+            if cadence <= 0 or abs(cadence / 60 - round(cadence / 60)) > 1e-7:
+                continue
+            every_week = abs(cadence / 120 - round(cadence / 120)) < 1e-7
+            irregular = (
+                [
+                    week
+                    for week in weeks
+                    if abs(weekly[group, identifier, week] - cadence / 2) > 1e-5
+                ]
+                if every_week
+                else [
+                    weeks[cycle * 2]
+                    for cycle in range(len(weeks) // 2)
+                    if abs(cycles[group, identifier, cycle] - cadence) > 1e-5
+                ]
+            )
+            unit = "semaine(s)" if every_week else "cycle(s) A/B"
+            if irregular:
+                issues.append(
+                    {
+                        "code": f"kholle-alternation-{identifier}-{group}",
+                        "severity": "warning",
+                        "subject_id": identifier,
+                        "kind": "kholle",
+                        "message": f"Groupe {group} · {label} : alternance à vérifier sur "
+                        f"{len(irregular)} {unit} (début : {', '.join(irregular[:6])}). "
+                        "Vérifiez les déplacements et rattrapages.",
+                    }
+                )
+    return issues
 
 
 def recipients(event: dict, pupils: set[int], groups: dict[tuple[str, int], set[int]]) -> set[int]:

@@ -913,6 +913,7 @@ class AdministrationService:
         order: str = "desc",
         family: str | None = None,
         user_id: int | None = None,
+        user_ids: list[int] | None = None,
     ) -> EventPage:
         """Return one chronological cursor page with historical roles and grouped identities."""
         if order not in {"asc", "desc"}:
@@ -924,6 +925,7 @@ class AdministrationService:
                 order,
                 family,
                 user_id,
+                sorted(set(user_ids or [])),
                 event_type,
                 actor_user_id,
                 subject_user_id,
@@ -948,6 +950,13 @@ class AdministrationService:
                     or_(
                         ActivityEvent.actor_user_id == user_id,
                         ActivityEvent.subject_user_id == user_id,
+                    )
+                )
+            if user_ids:
+                statement = statement.where(
+                    or_(
+                        ActivityEvent.actor_user_id.in_(user_ids),
+                        ActivityEvent.subject_user_id.in_(user_ids),
                     )
                 )
             for column, value in (

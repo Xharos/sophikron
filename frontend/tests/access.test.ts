@@ -32,6 +32,18 @@ test('anonymous visitors cannot access any account page', () => {
 		assert.equal(canAccess(null, access), false);
 });
 
+test('kholloscope requires an explicit read permission and remains admin only', () => {
+	const administrator = user(['admin']);
+	assert.equal(canAccess(administrator, 'kholloscope'), false);
+	administrator.permissions.push('kholloscope.read');
+	assert.equal(canAccess(administrator, 'kholloscope'), true);
+	const teacher = user(['teacher']);
+	teacher.permissions.push('kholloscope.read', 'kholloscope.write');
+	assert.equal(canAccess(teacher, 'kholloscope'), false);
+	administrator.is_bootstrap = true;
+	assert.equal(canAccess(administrator, 'kholloscope'), false);
+});
+
 test('page permissions distinguish students, teachers and administrators', () => {
 	for (const [roles, expected] of [
 		[['user'], [true, false, false]],
