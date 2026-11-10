@@ -6,19 +6,45 @@ import json
 import os
 import secrets
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Generator
 from pathlib import Path
 from unittest.mock import AsyncMock
 
 import pytest
+from coverage import Coverage
 from sqlalchemy import delete, select
 
 from app.core.config import DatabaseSettings
 from app.core.database import Database
 from app.models import AccountInvitation, User
-from tests.postgres import run_alembic
-from tests.test_auth_postgres import auth_case  # noqa: F401
-from tests.test_lessons_postgres import course  # noqa: F401
+from tests.support.authentication import auth_case  # noqa: F401
+from tests.support.cleanup import clear_test_events
+from tests.support.lessons import course  # noqa: F401
+from tests.support.postgres import run_alembic
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_protocol(item: pytest.Item) -> Generator[None, object, object]:
+    """Associate setup, asynchronous tasks and teardown with the exact pytest case."""
+    coverage = Coverage.current()
+    if coverage is not None:
+        coverage.switch_context(item.nodeid)
+    try:
+        return (yield)
+    finally:
+        if coverage is not None:
+            coverage.switch_context("")
+
+
+def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
+    """Keep marker selection consistent with the suite directories, including future tests."""
+    for item in items:
+        relative = Path(item.path).relative_to(Path(__file__).parent)
+        category = relative.parts[0]
+        if category in {"unit", "integration", "e2e", "perf"}:
+            item.add_marker(getattr(pytest.mark, category))
+        if category == "e2e":
+            item.add_marker(pytest.mark.integration)
 
 
 @pytest.fixture(scope="session")
@@ -33,6 +59,10 @@ def migrated_database() -> None:
         database = Database(DatabaseSettings())
         try:
             async with database.sessions.begin() as session:
+                bootstrap_ids = list(
+                    await session.scalars(select(User.id).where(User.is_bootstrap))
+                )
+                await clear_test_events(bootstrap_ids)
                 ids = select(User.id).where(User.is_bootstrap)
                 await session.execute(
                     delete(AccountInvitation).where(
