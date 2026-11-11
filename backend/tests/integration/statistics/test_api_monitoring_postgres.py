@@ -2,13 +2,15 @@
 
 import asyncio
 import os
+from copy import copy
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from sqlalchemy import delete
 
 from app.models.statistics import ApiMetric
-from app.services.api_monitoring import ApiMonitor
+from app.services.api_monitoring import ApiMonitor, ApiMonitoringService
+from app.services.auth import AuthService
 from tests.support.authentication import Harness
 
 pytestmark = [
@@ -20,22 +22,43 @@ pytestmark = [
 
 
 @pytest.mark.asyncio
-async def test_atomic_monitoring_reduction_retention_and_authorization(auth_case: Harness) -> None:
+async def test_atomic_monitoring_reduction_retention_and_authorization(
+    auth_case: Harness,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Reduce many minute rows in SQL, preserve exact code counts and reject non-admin reads."""
     case = auth_case
-    now = datetime.now(UTC).replace(second=0, microsecond=0)
+    # Keep every sample within one Paris day, away from live middleware observations.
+    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0) - timedelta(days=2)
+
+    def monitoring_with_fixed_clock(auth: AuthService) -> ApiMonitoringService:
+        """Freeze only monitoring reads, preserving real session creation and authentication."""
+        isolated_auth = copy(auth)
+        isolated_auth.clock = lambda: now + timedelta(seconds=30)
+        return ApiMonitoringService(isolated_auth)
+
+    monkeypatch.setattr("app.api.v1.statistics.ApiMonitoringService", monitoring_with_fixed_clock)
     first, second = ApiMonitor(), ApiMonitor()
+    outside = ApiMonitor()
+    outside_bucket = now + timedelta(hours=2)
+    outside.observe("other", 200, 1000, now=outside_bucket)
     for index in range(60):
         moment = now - timedelta(minutes=index)
         first.observe("other", 200, 1000, now=moment)
         second.observe("other", 503, 100000, now=moment)
     try:
-        await asyncio.gather(first.flush(case.database), second.flush(case.database))
-        assert not first.pending and not second.pending
+        await asyncio.gather(
+            first.flush(case.database),
+            second.flush(case.database),
+            outside.flush(case.database),
+        )
+        assert not first.pending and not second.pending and not outside.pending
         async with case.database.sessions() as session:
             row = await session.get(ApiMetric, (now, "other"))
             assert row.requests == 2 and row.statuses == {"200": 1, "503": 1}
             assert sum(row.histogram.values()) == 2
+            outside_row = await session.get(ApiMetric, (outside_bucket, "other"))
+            assert outside_row.requests == 1
         case.as_admin()
         for period, maximum in (("day", 1500), ("week", 169), ("month", 30)):
             response = await case.client.get(
@@ -44,7 +67,7 @@ async def test_atomic_monitoring_reduction_retention_and_authorization(auth_case
             assert response.status_code == 200, response.text
             body = response.json()
             assert len(body["points"]) <= maximum
-            assert body["requests"] >= 2
+            assert body["requests"] == 120
             assert body["mean_ms"] == 50.5 and body["p95_ms"] == 100
             assert body["server_error_rate"] == 50
             point = next(point for point in body["points"] if point["requests"] > 0)
@@ -79,4 +102,15 @@ async def test_atomic_monitoring_reduction_retention_and_authorization(auth_case
         assert (await case.client.get("/api/v1/admin/monitoring")).status_code == 403
     finally:
         async with case.database.sessions.begin() as session:
-            await session.execute(delete(ApiMetric).where(ApiMetric.category == "other"))
+            await session.execute(
+                delete(ApiMetric).where(
+                    ApiMetric.category == "other",
+                    ApiMetric.bucket.in_(
+                        [
+                            *(now - timedelta(minutes=index) for index in range(60)),
+                            outside_bucket,
+                            now - timedelta(days=32),
+                        ]
+                    ),
+                )
+            )
