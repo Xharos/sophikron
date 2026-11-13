@@ -17,12 +17,12 @@ test('course teams group the responsible teacher and collaborators without dupli
 		role,
 		can_edit: role === 'teacher'
 	});
-	const responsible = person(1, 'Zoé Responsable', 'teacher');
+	const responsible = person(1, 'Zêta Responsable', 'teacher');
 	const team = lessonTeam({
 		responsible,
 		collaborators: [
-			person(2, 'Zoé Collègue', 'teacher'),
-			person(3, 'Alice Collègue', 'teacher'),
+			person(2, 'Zêta Collègue', 'teacher'),
+			person(3, 'Alpha Collègue', 'teacher'),
 			person(4, 'Khôlleur', 'kholleur'),
 			responsible
 		]
@@ -49,7 +49,7 @@ test('document labels hide the actual extension and preserve author titles and i
 
 test('section headings preserve multiline formatting and leave HTML as literal text', () => {
 	const blocks = formattedBlocks(
-		'# **Section**\n## ==Sous-section==\n**première\nseconde**\n<script>alert(1)</script>'
+		'# **Section**\n## ==Sous-section==\n**pdemoère\nseconde**\n<script>alert(1)</script>'
 	);
 	assert.equal(blocks[0].level, 1);
 	assert.equal(blocks[0].parts[0].text, 'Section');

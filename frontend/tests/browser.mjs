@@ -183,7 +183,7 @@ export async function courseBrowserJourney({
 		await page.getByRole('button', { name: 'Accès et collaborateurs', exact: true }).click();
 		await dialog
 			.getByLabel('Ajouter un enseignant ou un khôlleur', { exact: true })
-			.fill('Camille');
+			.fill('Compte');
 		await dialog
 			.locator('#collaborator-candidates')
 			.getByRole('button', { name: /^Ajouter / })
@@ -441,7 +441,7 @@ export async function browserJourney({
 				body: JSON.stringify({
 					command: 'createUser',
 					data: {
-						first_name: 'Camille',
+						first_name: 'Compte',
 						last_name: 'Colleur',
 						email: 'browser-kholleur@example.org',
 						roles: ['kholleur']
@@ -513,8 +513,8 @@ export async function browserJourney({
 			.uncheck();
 		await creationRoles.getByRole('checkbox', { name: 'Khôlleur', exact: true }).uncheck();
 		await creationRoles.getByRole('checkbox', { name: 'Élève', exact: true }).check();
-		await dialog.getByLabel('Prénom', { exact: true }).fill('Élodie');
-		await dialog.getByLabel('Nom', { exact: true }).fill('Roy');
+		await dialog.getByLabel('Prénom', { exact: true }).fill('Échantillon');
+		await dialog.getByLabel('Nom', { exact: true }).fill('Test');
 		await dialog.getByLabel('Adresse email', { exact: true }).fill('browser@example.org');
 		await dialog.getByRole('button', { name: 'Créer le compte', exact: true }).click();
 		await dialog.getByRole('heading', { name: 'Compte créé', exact: true }).waitFor();
@@ -528,9 +528,9 @@ export async function browserJourney({
 			.getByRole('textbox', { name: 'Rechercher un compte', exact: true })
 			.fill(student.username);
 		await page.locator('.account-row').filter({ hasText: student.username }).click();
-		await dialog.getByRole('heading', { name: 'Valentin Burgaud', exact: true }).waitFor();
+		await dialog.getByRole('heading', { name: 'Exemple Fictif', exact: true }).waitFor();
 		await dialog.getByRole('link', { name: 'Voir la fiche complète', exact: true }).click();
-		await page.getByRole('heading', { name: 'Valentin Burgaud', exact: true }).waitFor();
+		await page.getByRole('heading', { name: 'Exemple Fictif', exact: true }).waitFor();
 		await page.getByLabel('Ville et code postal', { exact: true }).fill('Nant');
 		await page.getByRole('button', { name: 'Nantes 44000', exact: true }).click();
 		assert.equal(
@@ -548,8 +548,8 @@ export async function browserJourney({
 		await page.getByRole('button', { name: 'Ajouter une option', exact: true }).click();
 		await page.getByLabel('Option 1', { exact: true }).fill('Mathématiques');
 		await page.getByLabel('Note /20', { exact: true }).fill('0');
-		await page.getByLabel('Prénom du référent', { exact: true }).fill('Marie');
-		await page.getByLabel('Nom du référent', { exact: true }).fill('Roy');
+		await page.getByLabel('Prénom du référent', { exact: true }).fill('Modele');
+		await page.getByLabel('Nom du référent', { exact: true }).fill('Test');
 		await page.getByLabel('Téléphone du référent', { exact: true }).fill('01 23 45 67 89');
 		await page.getByRole('link', { name: 'Retour aux comptes', exact: true }).click();
 		await dialog
@@ -588,7 +588,7 @@ export async function browserJourney({
 		assert.ok(
 			(await dialog.getByRole('alert').textContent())
 				.replace(/\s+/g, ' ')
-				.includes('Valentin Burgaud')
+				.includes('Exemple Fictif')
 		);
 		await dialog.getByRole('button', { name: 'Annuler', exact: true }).click();
 		await dialog.waitFor({ state: 'hidden' });
@@ -707,10 +707,10 @@ export async function browserJourney({
 		const teamSubject = page
 			.locator('.team-subject')
 			.filter({ has: page.getByRole('heading', { name: 'Matière corrigée', exact: true }) });
-		await teamSubject.getByRole('link', { name: 'Marie Dupont', exact: true }).waitFor();
+		await teamSubject.getByRole('link', { name: 'Modele Temoin', exact: true }).waitFor();
 		assert.equal(await teamSubject.locator('a.role-teacher').count(), 1);
 		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-		await teamSubject.getByRole('link', { name: 'Marie Dupont', exact: true }).click();
+		await teamSubject.getByRole('link', { name: 'Modele Temoin', exact: true }).click();
 		await assignedSubjects
 			.getByRole('checkbox', { name: 'Matière corrigée', exact: true })
 			.waitFor();
@@ -810,7 +810,7 @@ export async function browserJourney({
 		);
 		await page.getByRole('button', { name: 'Mes élèves', exact: true }).click();
 		await page.locator('.account-row').filter({ hasText: student.username }).click();
-		await dialog.getByRole('heading', { name: 'Valentin Burgaud', exact: true }).waitFor();
+		await dialog.getByRole('heading', { name: 'Exemple Fictif', exact: true }).waitFor();
 		assert.equal(
 			await dialog.getByRole('button', { name: /Archiver|Réinitialiser|invitation/ }).count(),
 			0
@@ -820,7 +820,7 @@ export async function browserJourney({
 			0
 		);
 		await dialog.getByRole('link', { name: 'Voir la fiche complète', exact: true }).click();
-		await page.getByRole('heading', { name: 'Valentin Burgaud', exact: true }).waitFor();
+		await page.getByRole('heading', { name: 'Exemple Fictif', exact: true }).waitFor();
 		assert.ok(await page.getByLabel('Email', { exact: true }).isDisabled());
 		assert.equal(
 			await page.getByRole('group', { name: 'Rôles du compte', exact: true }).count(),

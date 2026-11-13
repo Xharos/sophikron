@@ -679,7 +679,8 @@ class TimetableService:
             document = await self.repo.document(year)
             source = next((item for item in document.series if item.id == series_id), None)
             if (
-                data.block is not None and data.block.kind == "kholle"
+                data.block is not None
+                and data.block.kind == "kholle"
                 or source is not None
                 and any(
                     block is not None and block.kind == "kholle"

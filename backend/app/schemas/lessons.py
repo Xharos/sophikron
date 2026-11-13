@@ -11,10 +11,28 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from app.schemas.auth import InputModel
 
 LessonIcon = Literal[
-    "book", "science", "calculator", "language", "history", "code", "school",
-    "physics", "biology", "geology", "engineering", "astronomy", "statistics",
-    "economics", "finance", "sociology", "geography", "philosophy", "literature",
-    "ancient", "art", "music",
+    "book",
+    "science",
+    "calculator",
+    "language",
+    "history",
+    "code",
+    "school",
+    "physics",
+    "biology",
+    "geology",
+    "engineering",
+    "astronomy",
+    "statistics",
+    "economics",
+    "finance",
+    "sociology",
+    "geography",
+    "philosophy",
+    "literature",
+    "ancient",
+    "art",
+    "music",
 ]
 ElementKind = Literal["section", "subsection", "text", "youtube", "file", "table"]
 ScheduleMode = Literal["inherit", "from", "range"]

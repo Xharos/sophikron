@@ -25,6 +25,7 @@ from app.models import (
     UserPromotion,
     UserRole,
 )
+from app.models.curricula import Curriculum
 from app.models.site import Subject, TeacherSubject
 from app.repositories.administration import AdministrationRepository
 from app.repositories.groups import GroupsRepository
@@ -121,6 +122,7 @@ class AdministrationService:
         return [
             PromotionResponse(
                 id=item.id,
+                curriculum_id=item.curriculum_id,
                 year=item.year,
                 identifier=item.identifier,
                 color=item.color,
@@ -214,6 +216,7 @@ class AdministrationService:
         try:
             async with self.db.begin():
                 await self.auth._actor(actor, permission="promotions.manage")
+                await self._validate_curriculum(data.curriculum_id)
                 promotion = Promotion(**data.model_dump(), is_active=True)
                 self.db.add(promotion)
                 await self.db.flush()
@@ -237,8 +240,14 @@ class AdministrationService:
                 await self.auth._lifecycle_lock()
                 await self.auth._actor(actor, permission="promotions.manage")
                 promotion = await self._promotion(promotion_id, lock=True)
+                if (
+                    "curriculum_id" in data.model_fields_set
+                    and data.curriculum_id != promotion.curriculum_id
+                ):
+                    await self._validate_curriculum(data.curriculum_id)
                 previous = {
-                    field: getattr(promotion, field) for field in ("identifier", "year", "color")
+                    field: getattr(promotion, field)
+                    for field in ("identifier", "year", "color", "curriculum_id")
                 }
                 changes = {
                     key: value
@@ -291,6 +300,13 @@ class AdministrationService:
                 return (await self._promotion_profiles([promotion]))[0]
         except IntegrityError:
             raise AuthError(409, "Cette promotion existe déjà.") from None
+
+    async def _validate_curriculum(self, curriculum_id: int | None) -> None:
+        """Permit unassigned promotions and require an active explicitly selected pathway."""
+        if curriculum_id is not None:
+            curriculum = await self.db.get(Curriculum, curriculum_id)
+            if curriculum is None or not curriculum.is_active:
+                raise AuthError(422, "Choisissez un référentiel actif.")
 
     async def promotion_archive_impact(
         self, actor: UserContext, promotion_id: int

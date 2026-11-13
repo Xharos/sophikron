@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sophikron-api"
-version = "0.2.0"
+version = "0.3.0"
 description = "Backend API for the Sophikron educational platform"
 requires-python = ">=3.12"
 dependencies = [
@@ -33,6 +33,7 @@ dev = [
     "pytest",
     "pytest-asyncio>=1.4,<2.0",
     "ruff",
+    "coverage>=7.10,<8",
 ]
 
 [tool.setuptools.packages.find]
@@ -43,7 +44,29 @@ include = ["app*"]
 testpaths = ["tests"]
 asyncio_mode = "strict"
 asyncio_default_fixture_loop_scope = "function"
-markers = ["integration: requires the full services and a dedicated PostgreSQL test database"]
+junit_family = "xunit1"
+markers = [
+    "unit: isolated business logic and boundary tests",
+    "integration: requires the full services and a dedicated PostgreSQL test database",
+    "e2e: complete journeys against the running disposable API",
+    "perf: repeatable performance regression checks",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["app", "run_tests"]
+data_file = "reports/.coverage"
+
+[tool.coverage.report]
+show_missing = true
+precision = 2
+
+[tool.coverage.html]
+directory = "reports/html"
+
+[tool.coverage.json]
+output = "reports/coverage.json"
+show_contexts = true
 
 [tool.ruff]
 line-length = 100

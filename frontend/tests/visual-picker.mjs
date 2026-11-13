@@ -477,7 +477,7 @@ test('header navigation and colored account menu work on desktop, mobile and key
 				await page.emulateMedia({ colorScheme });
 				await page.goto(`${server.resolvedUrls.local[0]}__picker?header`);
 				const trigger = page.getByRole('button', {
-					name: 'Menu du compte de Valentin Burgaud',
+					name: 'Menu du compte de Exemple Fictif',
 					exact: true
 				});
 				await trigger.waitFor();
@@ -615,9 +615,9 @@ test('journal menus and account pickers stay compact, styled and usable on mobil
 		const users = [
 			{
 				id: 9,
-				first_name: 'Alice',
-				last_name: 'Martin',
-				username: 'alice123',
+				first_name: 'Alpha',
+				last_name: 'Specimen',
+				username: 'alpha123',
 				status: 'disabled',
 				roles: ['teacher', 'kholleur'],
 				promotions: [
@@ -722,7 +722,7 @@ test('journal menus and account pickers stay compact, styled and usable on mobil
 				assert.equal(await dialog.locator('.role-teacher').count(), 1);
 				assert.equal(await dialog.locator('.role-kholleur').count(), 1);
 				assert.equal(await dialog.locator('.promotion-tag').count(), 1);
-				await dialog.getByLabel('Rechercher un compte', { exact: true }).fill('Alice');
+				await dialog.getByLabel('Rechercher un compte', { exact: true }).fill('Alpha');
 				await dialog.getByLabel('Rôle du compte', { exact: true }).selectOption('teacher');
 				await page.waitForResponse(
 					(response) =>
@@ -736,7 +736,7 @@ test('journal menus and account pickers stay compact, styled and usable on mobil
 						response.url().includes('resource=events') &&
 						response.url().includes('user_id=9')
 				);
-				await page.getByRole('button', { name: 'Alice Martin', exact: true }).click();
+				await page.getByRole('button', { name: 'Alpha Specimen', exact: true }).click();
 				await dialog
 					.getByRole('button', { name: 'Effacer la sélection', exact: true })
 					.click();
@@ -955,10 +955,10 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			];
 			const student = {
 				id: 3,
-				username: 'alice123',
-				first_name: 'Alice',
-				last_name: 'Martin',
-				email: 'martin.alice@test.fr',
+				username: 'alpha123',
+				first_name: 'Alpha',
+				last_name: 'Specimen',
+				email: 'specimen.alpha@example.org',
 				roles: ['user'],
 				status: archived ? 'disabled' : 'active',
 				created_at: '2026-01-01T00:00:00Z',
@@ -979,7 +979,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 					json = {
 						items: [
 							student,
-							{ ...student, id: 4, first_name: 'Benoît', group_assignments: [] }
+							{ ...student, id: 4, first_name: 'Bêta', group_assignments: [] }
 						],
 						total: 2
 					};
@@ -989,7 +989,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			await page.goto(
 				`${server.resolvedUrls.local[0]}__picker?directory${teacher ? '&teacher' : ''}${archived ? '&archived' : ''}`
 			);
-			const row = page.locator('.account-row').filter({ hasText: 'Alice Martin' });
+			const row = page.locator('.account-row').filter({ hasText: 'Alpha Specimen' });
 			await row.waitFor();
 			assert.equal(
 				await row.evaluate((element) => element.classList.contains('archived-account')),
@@ -1006,7 +1006,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			assert.equal(
 				await page
 					.locator('.account-row')
-					.filter({ hasText: 'Benoît Martin' })
+					.filter({ hasText: 'Bêta Specimen' })
 					.locator('.group-tags')
 					.count(),
 				0
@@ -1022,7 +1022,7 @@ test('saved group tags appear in promotion rosters, popup cards and full profile
 			);
 			assert.equal(await full.locator('.membership-row').count(), teacher ? 1 : 2);
 			const search = page.getByRole('textbox', { name: 'Rechercher un compte', exact: true });
-			await search.fill('Alice');
+			await search.fill('Alpha');
 			await page.waitForResponse((response) => response.url().includes('resource=search'));
 			await row.waitFor();
 			assert.deepEqual(await row.locator('.group-tags .tag').allTextContents(), [
@@ -1081,11 +1081,11 @@ test('archived pupils stay grey and movable outside effective khôlle sizes', as
 		const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
 		const errors = [];
 		page.on('pageerror', (error) => errors.push(error.message));
-		const students = ['Alice', 'Benoît', 'Camille', 'Diane', 'Émile', 'Farah'].map(
+		const students = ['Alpha', 'Bêta', 'Compte', 'Delta', 'Étalon', 'Foxtrot'].map(
 			(name, index) => ({
 				id: index + 1,
 				first_name: name,
-				last_name: 'Martin',
+				last_name: 'Specimen',
 				status: index === 5 ? 'disabled' : 'active'
 			})
 		);
@@ -1115,7 +1115,7 @@ test('archived pupils stay grey and movable outside effective khôlle sizes', as
 		await archivedGroup.waitFor();
 		assert.equal(await archivedGroup.locator('.bubble-handle .tag').textContent(), '0');
 		const archivedStudent = page.getByRole('button', {
-			name: 'Farah Martin · Archivé',
+			name: 'Foxtrot Specimen · Archivé',
 			exact: true
 		});
 		assert.equal(
@@ -1170,10 +1170,10 @@ test('newcomers join existing groups in both views and khôlles can be paired an
 		const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
 		const errors = [];
 		page.on('pageerror', (error) => errors.push(error.message));
-		const students = ['Alice', 'Benoît', 'Camille', 'Diane'].map((name, index) => ({
+		const students = ['Alpha', 'Bêta', 'Compte', 'Delta'].map((name, index) => ({
 			id: index + 1,
 			first_name: name,
-			last_name: 'Martin',
+			last_name: 'Specimen',
 			status: 'active'
 		}));
 		const partition = {
@@ -1197,17 +1197,17 @@ test('newcomers join existing groups in both views and khôlles can be paired an
 		await page.goto(`${server.resolvedUrls.local[0]}__picker?groups`);
 		await page.getByRole('button', { name: 'Groupes de khôlle', exact: true }).click();
 		const bubble = (name) => page.getByRole('region', { name, exact: true });
-		const pupil = (name) => page.getByRole('button', { name: `${name} Martin`, exact: true });
+		const pupil = (name) => page.getByRole('button', { name: `${name} Specimen`, exact: true });
 		const save = page.getByRole('button', { name: 'Enregistrer', exact: true });
 		await page.getByRole('button', { name: 'Affecter ces élèves', exact: true }).click();
 		assert.equal(await save.isDisabled(), true);
-		await pupil('Diane').dragTo(bubble('Groupe 02').locator('.bubble-members'));
+		await pupil('Delta').dragTo(bubble('Groupe 02').locator('.bubble-members'));
 		assert.equal(await save.isEnabled(), true);
 		assert.equal(await bubble('Groupe 01').locator('.student-chip').count(), 2);
 		await page.getByRole('button', { name: 'Annuler', exact: true }).click();
 		await page.getByRole('button', { name: 'Vue liste', exact: true }).click();
 		await page.getByRole('button', { name: 'Affecter ces élèves', exact: true }).click();
-		await pupil('Diane').focus();
+		await pupil('Delta').focus();
 		await page.keyboard.press('Enter');
 		await bubble('Groupe 02')
 			.getByRole('button', { name: 'Déplacer ici', exact: true })
@@ -1225,38 +1225,38 @@ test('newcomers join existing groups in both views and khôlles can be paired an
 		assert.equal(writes.length, 1);
 		await page.getByRole('button', { name: 'Vue bulles', exact: true }).click();
 		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
-		await pupil('Alice').dragTo(pupil('Camille'));
+		await pupil('Alpha').dragTo(pupil('Compte'));
 		assert.equal(await bubble('Groupe 03').locator('.student-chip').count(), 2);
 		assert.equal(
 			await bubble('Groupe 01').locator('.student-chip').textContent(),
-			'Benoît Martin'
+			'Bêta Specimen'
 		);
 		assert.equal(
 			await bubble('Groupe 02').locator('.student-chip').textContent(),
-			'Diane Martin'
+			'Delta Specimen'
 		);
 		assert.equal(await save.isDisabled(), true);
-		await pupil('Alice').dragTo(page.locator('.group-board'), {
+		await pupil('Alpha').dragTo(page.locator('.group-board'), {
 			targetPosition: { x: 650, y: 320 }
 		});
 		assert.equal(await page.locator('.group-bubble').count(), 4);
 		assert.equal(
 			await bubble('Groupe 03').locator('.student-chip').textContent(),
-			'Camille Martin'
+			'Compte Specimen'
 		);
 		assert.equal(
 			await bubble('Groupe 04').locator('.student-chip').textContent(),
-			'Alice Martin'
+			'Alpha Specimen'
 		);
 		assert.equal(await save.isDisabled(), true);
-		await pupil('Alice').click();
+		await pupil('Alpha').click();
 		await bubble('Groupe 03')
 			.getByRole('button', { name: 'Déplacer ici', exact: true })
 			.click();
 		await bubble('Groupe 04')
 			.getByRole('button', { name: 'Retirer ce groupe vide', exact: true })
 			.click();
-		await pupil('Diane').click();
+		await pupil('Delta').click();
 		await bubble('Groupe 01')
 			.getByRole('button', { name: 'Déplacer ici', exact: true })
 			.click();
@@ -1282,8 +1282,8 @@ test('custom group editing preserves archived pupils and lets them be removed an
 		browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || undefined });
 		const page = await browser.newPage({ viewport: { width: 1280, height: 1100 } });
 		const students = [
-			{ id: 1, first_name: 'Alice', last_name: 'Martin', status: 'active' },
-			{ id: 2, first_name: 'Farah', last_name: 'Martin', status: 'disabled' }
+			{ id: 1, first_name: 'Alpha', last_name: 'Specimen', status: 'active' },
+			{ id: 2, first_name: 'Foxtrot', last_name: 'Specimen', status: 'disabled' }
 		];
 		let groups = [
 			{
@@ -1314,7 +1314,7 @@ test('custom group editing preserves archived pupils and lets them be removed an
 		const custom = page.getByRole('region', { name: 'Allemand', exact: true });
 		const source = page.getByRole('region', { name: 'Classe entière', exact: true });
 		const archived = (region) =>
-			region.getByRole('button', { name: 'Farah Martin · Archivé', exact: true });
+			region.getByRole('button', { name: 'Foxtrot Specimen · Archivé', exact: true });
 		await custom.getByRole('button', { name: 'Modifier', exact: true }).click();
 		assert.equal(await archived(custom).isEnabled(), true);
 		await page.getByRole('button', { name: 'Enregistrer', exact: true }).click();
@@ -1346,8 +1346,8 @@ test('promotion groups support bubble movement, transfers, saved drafts and inde
 		const page = await browser.newPage({ viewport: { width: 1280, height: 1000 } });
 		const errors = [];
 		page.on('pageerror', (error) => errors.push(error.message));
-		const students = ['Alice', 'Benoît', 'Camille', 'Diane', 'Émile', 'Farah'].map(
-			(name, index) => ({ id: index + 1, first_name: name, last_name: 'Martin' })
+		const students = ['Alpha', 'Bêta', 'Compte', 'Delta', 'Étalon', 'Foxtrot'].map(
+			(name, index) => ({ id: index + 1, first_name: name, last_name: 'Specimen' })
 		);
 		const initial = [
 			{ number: 1, x: 20, y: 20, student_ids: [1, 2, 3] },
@@ -1434,14 +1434,14 @@ test('promotion groups support bubble movement, transfers, saved drafts and inde
 		await page.setViewportSize({ width: 1280, height: 1000 });
 		await bubbles
 			.first()
-			.getByRole('button', { name: 'Alice Martin', exact: true })
+			.getByRole('button', { name: 'Alpha Specimen', exact: true })
 			.dragTo(bubbles.nth(1).locator('.bubble-members'));
 		assert.equal(await bubbles.nth(1).locator('.student-chip').count(), 4);
 		assert.equal(
 			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(),
 			true
 		);
-		await bubbles.nth(1).getByRole('button', { name: 'Diane Martin', exact: true }).click();
+		await bubbles.nth(1).getByRole('button', { name: 'Delta Specimen', exact: true }).click();
 		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
 		assert.equal(
 			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isEnabled(),
@@ -1473,13 +1473,13 @@ test('promotion groups support bubble movement, transfers, saved drafts and inde
 		assert.equal(await bubbles.count(), 0);
 		await page.getByRole('button', { name: 'Groupes de khôlle', exact: true }).click();
 		await page.getByRole('button', { name: 'Modifier les groupes', exact: true }).click();
-		await bubbles.nth(1).getByRole('button', { name: 'Diane Martin', exact: true }).click();
+		await bubbles.nth(1).getByRole('button', { name: 'Delta Specimen', exact: true }).click();
 		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
 		assert.equal(
 			await page.getByRole('button', { name: 'Enregistrer', exact: true }).isDisabled(),
 			true
 		);
-		await bubbles.nth(1).getByRole('button', { name: 'Émile Martin', exact: true }).click();
+		await bubbles.nth(1).getByRole('button', { name: 'Étalon Specimen', exact: true }).click();
 		await bubbles.first().getByRole('button', { name: 'Déplacer ici', exact: true }).click();
 		assert.equal(await bubbles.first().locator('.student-chip').count(), 5);
 		assert.equal(await bubbles.nth(1).locator('.student-chip').count(), 1);
@@ -1919,7 +1919,7 @@ test('course cards, folded sections, locked resources and file drop forms stay u
 				.locator('.team-line')
 				.allTextContents()
 				.then((lines) => lines.map((line) => line.replace(/\s+/g, ' ').trim())),
-			['Camille Martin Alice Durand', 'Zoé Bernard']
+			['Compte Specimen Alpha Fictice', 'Zêta Temoin']
 		);
 		assert.ok((await page.locator('.course-card').boundingBox()).height < 300);
 		const arrow = await page.locator('.course-open').boundingBox();
@@ -2061,7 +2061,7 @@ test('collaborator suggestions open immediately, search each letter and refill a
 		page.on('pageerror', (error) => errors.push(error.message));
 		const people = Array.from({ length: 7 }, (_, index) => ({
 			id: 20 + index,
-			label: `Alex Martin ${index + 1}`,
+			label: `Avatar Specimen ${index + 1}`,
 			role: index % 2 ? 'kholleur' : 'teacher',
 			can_edit: index % 2 === 0
 		}));
@@ -2115,10 +2115,14 @@ test('collaborator suggestions open immediately, search each letter and refill a
 			.waitFor();
 		await query.fill('');
 		await list.locator('.candidate-row').nth(4).waitFor();
-		await list.getByRole('button', { name: 'Ajouter Alex Martin 1', exact: true }).click();
-		await list.getByRole('button', { name: 'Ajouter Alex Martin 6', exact: true }).waitFor();
+		await list.getByRole('button', { name: 'Ajouter Avatar Specimen 1', exact: true }).click();
+		await list
+			.getByRole('button', { name: 'Ajouter Avatar Specimen 6', exact: true })
+			.waitFor();
 		assert.equal(
-			await list.getByRole('button', { name: 'Ajouter Alex Martin 1', exact: true }).count(),
+			await list
+				.getByRole('button', { name: 'Ajouter Avatar Specimen 1', exact: true })
+				.count(),
 			0
 		);
 		assert.equal(await list.locator('.candidate-row').count(), 5);

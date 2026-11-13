@@ -101,6 +101,11 @@ password hashing concurrency. Native hashing settings and validation bounds are 
 [authentication configuration](authentication.md#keys-and-configuration); settings not forwarded by
 Compose cannot be overridden merely by adding them to `.env`.
 
+Curriculum JSON files are limited to 4 MiB. The exact backend curriculum-import route and frontend
+`/curricula/transfer` route use an 8 MiB + 4 KiB request-envelope exception for the original escaped
+file text, with the existing body-read deadline and authentication/CSRF policy. This does not change
+`AUTH_REQUEST_MAX_BYTES` or the separate binary document upload limit. See [curricula](curricula.md).
+
 ## Private document storage
 
 All sizes below are bytes; 1 MiB = 1048576 bytes and 1 GiB = 1073741824 bytes.

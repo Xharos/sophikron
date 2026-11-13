@@ -256,7 +256,7 @@ Connections use `search_path=pg_catalog`; qualify application tables explicitly 
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
 Most autonomous IDs are bigint identities; singleton and token-keyed tables have dedicated keys; associations use composite keys.
 
-The release baseline contains eight feature migrations:
+The release baseline contains nine feature migrations:
 
 | Revision | Schema responsibility |
 | --- | --- |
@@ -267,14 +267,26 @@ The release baseline contains eight feature migrations:
 | `0005_lessons` | Course content, documents, permissions and statistics |
 | `0006_promotion_groups` | Standard promotion partitions and pupil group assignments |
 | `0007_timetable` | Annual calendars, rooms, availability, compact series, custom audiences, archive policy, encrypted revocable ICS links and lifetime ICS usage totals |
-| `0008_kholloscope` | Kholle requirements, academic label creation order, subject commitments, preparation workflow, room capacity, durable generation/revision jobs and explicit read/write capabilities; removal of legacy availability hour bounds |
+| `0008_kholloscope` | Kholle requirements, academic label creation order, subject commitments, preparation workflow, room capacity, durable generation/revision jobs and explicit read/write capabilities |
+| `0009_curricula` | Current multi-subject curricula, subject-scoped competency DAGs, optional promotion association, bounded revision-protected undo and staff read/edit/manage grants |
 
 The release-check cache belongs to `0002_configuration`.
-The final head is `0008_kholloscope`. It consolidates the unreleased former revisions 0008–0014
-with explicit authorization to rewrite this feature's history. It supports fresh databases and
-databases still at `0007_timetable`. An installation stamped with one of the replaced revisions
-needs a reviewed transition; deleting application records does not reset its Alembic revision.
-Never artificially stamp it to bypass a schema mismatch.
+The kholloscope revision `0008_kholloscope` follows `0007_timetable` and adds preparation and
+durable generation jobs. The final head is `0009_curricula`. It creates `curricula`, `curriculum_subjects`,
+`competencies`, `competency_links` and `curriculum_undo`, plus nullable `promotions.curriculum_id`.
+`curricula.version` is the optimistic concurrency counter checked by
+metadata edits, competency mutations, imports and undo; `after_version` protects inverse operations.
+This is separate from the JSON file format version. Both endpoints of competency links use composite
+foreign keys; cycle prevention and current subject rights are enforced transactionally by services.
+
+Fresh databases and an exact supported 0008 baseline can apply the new head. Databases stamped
+with incompatible development schemas need an inspected transition; a reused revision ID does not
+prove schema equivalence. An empty feature catalogue does not make those schemas equivalent.
+Do not apply a blind stamp or destructive downgrade to resolve the mismatch. A downgrade of
+`0009_curricula` removes all curriculum data/undo and promotion associations while
+preserving older promotions, subjects and calendars. Tests round-trip this on a disposable database.
+See [curriculum contracts and migration compatibility](curricula.md) and
+[ADR 0011](decisions/0011-curricula-and-competency-graphs.md).
 
 The kholloscope schema uses the following integrity rules:
 
@@ -289,15 +301,14 @@ The kholloscope schema uses the following integrity rules:
 - Requirements, workflow details and solver payloads remain validated JSONB documents. Real
   teacher/subject/room references in published events use existing timetable foreign keys.
 
-All application tables have runtime references; retained job snapshots and rollback metadata are
-used by stale-source detection, dated revisions and publication rollback. They are not redundant
-copies to remove. No speculative JSONB indexes or duplicate event tables are introduced.
+Retained job snapshots and rollback metadata support stale-source detection, dated revisions and
+publication rollback. Published events remain in the timetable tables.
 See [ADR 0010](decisions/0010-kholloscope-drafts-and-revisions.md).
 
 API monitoring has no foreign keys to pedagogical tables, so it can be created in configuration.
 ICS usage belongs to the timetable feature. The timetable migration creates the final schema directly,
-including nullable availability ranges and encrypted token metadata. The final 0008 schema removes
-the old min/max kholle hour bounds in favor of exact subject commitments.
+including nullable availability ranges and encrypted token metadata. The cleaned 0007 baseline
+omits legacy min/max kholle hour bounds; 0008 adds exact subject commitments.
 Recurrences and exceptions remain compact JSON documents; shared teachers require no separate table.
 
 This baseline is intended for fresh databases (`alembic upgrade head`), not for upgrading databases

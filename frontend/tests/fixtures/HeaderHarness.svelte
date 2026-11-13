@@ -9,9 +9,9 @@
 		? null
 		: {
 				id: 1,
-				username: 'valentin123',
-				first_name: 'Valentin',
-				last_name: 'Burgaud',
+				username: 'exemple123',
+				first_name: 'Exemple',
+				last_name: 'Fictif',
 				email: null,
 				status: 'active',
 				roles: role === 'admin' ? ['admin', 'teacher'] : [role],

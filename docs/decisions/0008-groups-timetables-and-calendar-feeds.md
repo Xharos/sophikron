@@ -2,7 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-30
-- **Sources:** `0006_promotion_groups.py`, `0007_timetable.py` and timetable/group services.
+- **Sources:** [group migration](../../backend/alembic/versions/0006_promotion_groups.py),
+  [timetable migration](../../backend/alembic/versions/0007_timetable.py).
 
 ## Context and decision
 
@@ -14,8 +15,8 @@ Named custom groups extend audiences in 0007 without overloading standard partit
 Timetables separate calendars, school years, rooms, yearly settings, teacher availability and compact
 JSONB recurrence/exception series. Relational references protect teacher/subject/room integrity;
 services validate recurrence content, overlaps, audiences and publication permissions. A partial unique
-index permits only one non-archived calendar per promotion. Availability ranges may be null; kholle
-bounds remain ordered and nonnegative. Revision tokens prevent silent concurrent overwrites.
+index permits only one non-archived calendar per promotion. Availability ranges may be null.
+Revision tokens prevent silent concurrent overwrites.
 
 Personal ICS subscriptions use hashed tokens for lookup and encrypted recoverable tokens for display.
 Tokens are credentials: requests recheck account/subscription status; links are revocable and excluded
@@ -34,5 +35,5 @@ See [timetable behavior and feeds](../timetable.md), authorization integration t
 frontend recurrence/occupancy tests.
 
 [ADR 0010](0010-kholloscope-drafts-and-revisions.md) extends this design with private kholloscope
-generation and dated revisions. Its consolidated 0008 migration replaces the legacy availability
-hour bounds with exact subject commitments; the final schema no longer retains those bounds.
+generation and dated revisions. Exact subject commitments are stored separately from weekly
+availability patterns.

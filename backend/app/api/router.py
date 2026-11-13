@@ -5,6 +5,7 @@ from fastapi import APIRouter
 from app.api.v1 import (
     admin,
     auth,
+    curricula,
     dashboard,
     groups,
     kholloscope,
@@ -20,6 +21,7 @@ from app.api.v1 import (
 router = APIRouter()
 v1 = APIRouter(prefix="/api/v1")
 v1.include_router(auth.router)
+v1.include_router(curricula.router)
 v1.include_router(admin.router)
 v1.include_router(dashboard.router)
 v1.include_router(groups.router)

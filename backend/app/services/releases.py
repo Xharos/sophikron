@@ -28,11 +28,14 @@ def stable_version(value: str) -> tuple[int, int, int] | None:
 
 def fetch_release() -> tuple[str, str] | None:
     """Fetch one stable public release with a timeout and a bounded response body."""
-    request = Request(API_URL, headers={
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "Sophikron-update-check",
-        "X-GitHub-Api-Version": "2022-11-28",
-    })
+    request = Request(
+        API_URL,
+        headers={
+            "Accept": "application/vnd.github+json",
+            "User-Agent": "Sophikron-update-check",
+            "X-GitHub-Api-Version": "2022-11-28",
+        },
+    )
     try:
         with urlopen(request, timeout=4) as response:
             body = response.read(262145)
@@ -45,8 +48,11 @@ def fetch_release() -> tuple[str, str] | None:
     data = json.loads(body)
     tag = data.get("tag_name")
     if (
-        not isinstance(tag, str) or len(tag) > 100 or stable_version(tag) is None
-        or data.get("draft") is not False or data.get("prerelease") is not False
+        not isinstance(tag, str)
+        or len(tag) > 100
+        or stable_version(tag) is None
+        or data.get("draft") is not False
+        or data.get("prerelease") is not False
     ):
         raise ValueError("Unsupported stable release")
     return tag.removeprefix("v"), f"{REPOSITORY}/releases/tag/{quote(tag, safe='')}"

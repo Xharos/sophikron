@@ -1,6 +1,7 @@
 """Early bounded API bodies and application-scoped browser CORS policy."""
 
 import logging
+import re
 
 import anyio
 from starlette.middleware.cors import CORSMiddleware
@@ -53,6 +54,10 @@ class AuthRequestMiddleware:
             return
         settings = scope["app"].state.auth_settings
         limit = settings.request_max_bytes
+        if scope.get("method") == "POST" and re.fullmatch(
+            r"/api/v1/curricula/[1-9]\d*/subjects/[1-9]\d*/import", scope["path"]
+        ):
+            limit = 8 * 1024 * 1024 + 4096
         binary = is_document_upload(scope["path"], scope.get("method", ""))
         if binary:
             limit = scope["app"].state.document_settings.max_bytes

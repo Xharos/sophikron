@@ -16,9 +16,9 @@ Session and invitation credentials remain independent random secrets, never inte
 
 ```json
 {
-    "first_name": "Valentin",
-    "last_name": "BURGAUD",
-    "email": "valentin@example.org",
+    "first_name": "Exemple",
+    "last_name": "FICTIF",
+    "email": "exemple@example.org",
     "roles": ["user"],
     "promotion_ids": [1, 2]
 }
@@ -31,8 +31,8 @@ bootstrap account alone may omit names/email and use its explicitly configured u
 
 The server generates the username once: normalized first initial + first four normalized family-name
 letters (or the complete shorter name) + a random suffix from 100 through 999. Accents, apostrophes,
-hyphens and spaces disappear; `œ` becomes `oe`, `æ` becomes `ae`. Examples: `vburg103`, `vroy103`,
-`vremi103`, `dduse103`. There are 900 suffixes per prefix. Each is tried at most once in random order;
+hyphens and spaces disappear; `œ` becomes `oe`, `æ` becomes `ae`. Examples: `efict103`, `etest103`,
+`edemo103`, `cdute103`. There are 900 suffixes per prefix. Each is tried at most once in random order;
 exhaustion returns 409. The lifecycle transaction lock serializes generators across API workers;
 the unique HMAC index remains the final database uniqueness control.
 
@@ -434,7 +434,7 @@ also applies this revision. No new dependency or external service is required.
 
 ## Interactive search
 
-`GET /api/v1/admin/users/search?q=valentin%20burgo&limit=20` requires `users.read`.
+`GET /api/v1/admin/users/search?q=exemple%20ficto&limit=20` requires `users.read`.
 Queries contain 2–100 characters; limit is 1–20. Optional `role`, `status`, `promotion_id` filters
 restrict candidates before decryption. Results contain `id`, `username`, `first_name`, `last_name`,
 `status`, without email. Administrator results also include current `roles` and `promotions`
@@ -555,6 +555,15 @@ Count `auth.login_succeeded` events by `subject_user_id` for period reports. The
 retention purge; define retention before production and use a privileged maintenance procedure.
 
 ## Migrations and verification
+
+Curriculum metadata is managed at `/curricula`, not in a separate dashboard pathway tab.
+Promotions accept optional `curriculum_id` and keep their free identifiers and existing calendars.
+Administrators manage all curricula; teachers edit competencies only in currently assigned active
+subjects; kholleurs read all reference programmes. Competency graphs, generated codes, JSON files
+and revision-protected undo are described in [curricula](curricula.md) and
+[ADR 0011](decisions/0011-curricula-and-competency-graphs.md).
+The `curriculum.changed` journal payload identifies the action, programme, subject, competency,
+modified fields, parent/child counts or imported count without copying long teaching text.
 
 See [database migrations](database.md#migrations) for the complete feature history and compatibility
 rules, and [release verification](../CONTRIBUTING.md#verification-before-a-release) for shared commands.

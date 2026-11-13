@@ -17,6 +17,8 @@ Use synthetic data locally; the [demo guide](../script/README.md) describes API-
 | [Frontend/BFF](frontend-bff.md) | Pages, cookies, same-origin requests, proxy trust and HTTPS deployment |
 | [Courses and documents](lessons.md) | Content trees, inherited access, private files, quotas, cleanup and backup/restore |
 | [Timetables](timetable.md) | Audiences, annual settings, publication, diagnostics and ICS |
+| [Kholloscope generation](kholloscope-generation.md) | Preparation, private jobs, group assignment and dated publication revisions |
+| [Curricula](curricula.md) | Competency graphs, permissions, JSON exchange and undo |
 | [Statistics](statistics.md) | Pedagogical indicators, storage and API monitoring |
 | [Architecture decisions](decisions/README.md) | Why schema and deployment boundaries were chosen |
 

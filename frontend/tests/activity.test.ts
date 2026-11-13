@@ -10,6 +10,24 @@ import {
 } from '../src/lib/activity.ts';
 import type { ActivityEvent } from '../src/lib/types.ts';
 
+test('programme journal identifies the action, subject, competency and relationship counts', () => {
+	const details = eventDetails(
+		event('curriculum.changed', {
+			action: 'competency_created',
+			curriculum_title: 'PTSI/PT',
+			subject_name: 'SII',
+			competency_name: 'Analyser',
+			changed_fields: ['parent_ids'],
+			parent_count: 1,
+			child_count: 0
+		})
+	);
+	assert.ok(details.includes('Compétence ajoutée'));
+	assert.ok(details.includes('Matière : SII'));
+	assert.ok(details.includes('Compétence : Analyser'));
+	assert.ok(details.includes('Champs : Compétences parentes'));
+});
+
 function event(event_type: string, data: Record<string, unknown>): ActivityEvent {
 	return {
 		id: 1,
@@ -22,8 +40,8 @@ function event(event_type: string, data: Record<string, unknown>): ActivityEvent
 		subject_role: 'user',
 		actor_profile_available: true,
 		subject_profile_available: true,
-		actor_label: 'Val Burgaud',
-		subject_label: 'Marie Tidj',
+		actor_label: 'Exemple Fictif',
+		subject_label: 'Modele Tidj',
 		resource_type: null,
 		resource_id: null,
 		promotion_snapshot: null,
@@ -85,12 +103,12 @@ test('combined role changes stay explicit even when their highest role remains a
 	assert.deepEqual(eventRoles(['kholleur', 'forged']), ['kholleur']);
 	assert.equal(highestRole([]), null);
 	assert.equal(
-		roleTransitionLabel('Marie', ['teacher', 'admin']),
-		'Marie · Enseignant + Administrateur'
+		roleTransitionLabel('Modele', ['teacher', 'admin']),
+		'Modele · Enseignant + Administrateur'
 	);
 	assert.notEqual(
-		roleTransitionLabel('Marie', ['admin']),
-		roleTransitionLabel('Marie', ['teacher', 'admin'])
+		roleTransitionLabel('Modele', ['admin']),
+		roleTransitionLabel('Modele', ['teacher', 'admin'])
 	);
 });
 

@@ -251,7 +251,7 @@ test('external teacher conflicts are critical in both calendars and deduplicate 
 	assert.equal(
 		crossCalendarTeacherConflicts(
 			[reverse],
-			[{ ...booking, calendar_id: 1, calendar_label: 'Première année' }],
+			[{ ...booking, calendar_id: 1, calendar_label: 'Pdemoère année' }],
 			'2026-09-07'
 		).length,
 		1

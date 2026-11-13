@@ -85,7 +85,7 @@ test('one production build renders different runtime names and escapes HTML in t
 	for (const [configured, expected] of [
 		[undefined, 'Sophikron'],
 		[' \t ', 'Sophikron'],
-		['  Lycée Jean Moulin  ', 'Lycée Jean Moulin'],
+		['  Lycée Exemple  ', 'Lycée Exemple'],
 		[
 			'École d’Art & "Sciences" <script>alert(1)</script>',
 			'École d’Art & "Sciences" <script>alert(1)</script>'

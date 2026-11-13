@@ -35,11 +35,11 @@ test('pupil exclusivity, a nonempty selection and known unique roles are require
 
 test('subject staff appear once for each teaching role, with contextual badges and sorted names', () => {
 	const members = [
-		{ id: 1, first_name: 'Val', last_name: 'Zulu', roles: ['admin', 'teacher'] },
-		{ id: 2, first_name: 'Zoé', last_name: 'Éclair', roles: ['teacher', 'kholleur', 'admin'] },
-		{ id: 3, first_name: 'Alice', last_name: 'Alpha', roles: ['kholleur'] },
-		{ id: 4, first_name: 'Bob', last_name: 'Eclair', roles: ['teacher'] },
-		{ id: 5, first_name: 'Sam', last_name: 'Admin', roles: ['admin'] }
+		{ id: 1, first_name: 'Exemple', last_name: 'Zulu', roles: ['admin', 'teacher'] },
+		{ id: 2, first_name: 'Zêta', last_name: 'Éclair', roles: ['teacher', 'kholleur', 'admin'] },
+		{ id: 3, first_name: 'Alpha', last_name: 'Alpha', roles: ['kholleur'] },
+		{ id: 4, first_name: 'Bravo', last_name: 'Eclair', roles: ['teacher'] },
+		{ id: 5, first_name: 'Sujet', last_name: 'Admin', roles: ['admin'] }
 	];
 	assert.deepEqual(
 		teachingRoleEntries(members).map(({ member, role }) => [member.id, role]),
@@ -78,24 +78,24 @@ test('promotion teaching candidates use one server union filter for listing and 
 			id: 1,
 			roles: ['teacher'],
 			username: 'teacher',
-			first_name: 'Camille',
-			last_name: 'Martin',
+			first_name: 'Compte',
+			last_name: 'Specimen',
 			status: 'active'
 		},
 		{
 			id: 2,
 			roles: ['kholleur'],
 			username: 'kholleur',
-			first_name: 'Camille',
-			last_name: 'Martin',
+			first_name: 'Compte',
+			last_name: 'Specimen',
 			status: 'active'
 		},
 		{
 			id: 3,
 			roles: ['admin', 'teacher', 'kholleur'],
 			username: 'both',
-			first_name: 'Camille',
-			last_name: 'Martin',
+			first_name: 'Compte',
+			last_name: 'Specimen',
 			status: 'active'
 		}
 	];
@@ -111,14 +111,14 @@ test('promotion teaching candidates use one server union filter for listing and 
 			url.searchParams.get('resource') === 'users' ? { items: candidates } : candidates
 		);
 	});
-	for (const query of ['', '  Camille  '])
+	for (const query of ['', '  Compte  '])
 		assert.deepEqual(await promotionCandidates('teaching', query, controller.signal), candidates);
 	assert.equal(requests.length, 2);
 	assert.deepEqual(
 		requests.map((url) => url.searchParams.get('resource')),
 		['users', 'search']
 	);
-	assert.equal(requests[1].searchParams.get('q'), 'Camille');
+	assert.equal(requests[1].searchParams.get('q'), 'Compte');
 });
 
 test('promotion pupil category requests only pupils and waits for two search characters', async (t) => {
@@ -133,7 +133,7 @@ test('promotion pupil category requests only pupils and waits for two search cha
 	assert.deepEqual(await promotionCandidates('user', 'C'), []);
 	assert.equal(requests.length, 0);
 	await promotionCandidates('user', '');
-	await promotionCandidates('user', 'Camille');
+	await promotionCandidates('user', 'Compte');
 	assert.equal(requests.length, 2);
 });
 
@@ -165,7 +165,7 @@ test('both promotion candidate categories exclude existing members in listing an
 		return Response.json(url.searchParams.get('resource') === 'users' ? { items: [] } : []);
 	});
 	for (const category of ['user', 'teaching'] as const) {
-		for (const query of ['', 'Camille']) {
+		for (const query of ['', 'Compte']) {
 			await promotionCandidates(category, query, undefined, 42);
 			assert.equal(requests.at(-1)?.searchParams.get('role'), category);
 		}

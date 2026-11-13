@@ -330,8 +330,8 @@ valuable course data to bypass that guard.
 
 ### Verification
 
-`tests/test_document_storage.py` checks actual supported file structures, hostile archives,
-streaming/hash limits and actual subprocess validation/publication. `tests/test_lesson_documents_postgres.py`
+[Document storage tests](../backend/tests/unit/lessons/test_document_storage.py) check supported file structures, hostile archives,
+streaming/hash limits and subprocess validation/publication. [Document integration tests](../backend/tests/integration/lessons/test_lesson_documents_postgres.py)
 checks real disk operations, PostgreSQL cascades, free table labels, independent cells, staff-only
 subtrees, live dates/access, replacements, stale uploads, storage failures, integrity errors
 and durable deletion retry. Parsing, database and filesystem operations remain real.

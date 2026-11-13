@@ -79,8 +79,8 @@ for (const suppliedOrigin of [null, 'https://evil.example']) {
 expectRedirect(await login('verification_setup', bootstrap), '/');
 expectRedirect(await request('/admin/users/new'), '/setup');
 const setup = await request('/setup', {
-	first_name: 'Alice',
-	last_name: 'Martin',
+	first_name: 'Alpha',
+	last_name: 'Specimen',
 	email: 'owner@example.org',
 	password,
 	confirmation: password
@@ -104,7 +104,7 @@ expectRedirect(await request('/login?next=https%3A%2F%2Fevil.example'), '/');
 assert.equal((await request('/dashboard')).status, 200);
 expectRedirect(await request('/admin'), '/dashboard');
 expectRedirect(await request('/admin/users/new'), '/dashboard?tab=accounts&create=account');
-assert.ok((await (await request('/me')).text()).includes('Alice'));
+assert.ok((await (await request('/me')).text()).includes('Alpha'));
 const promotion = await command('createPromotion', {
 	data: { year: 2026, identifier: 'PTSI', color: '#5566CC' }
 });
@@ -118,17 +118,17 @@ const create = (first, last, email, roles, promotionIds = []) =>
 			promotion_ids: promotionIds
 		}
 	});
-const student = await create(
-	'Valentin',
-	'Burgaud',
-	'student@example.org',
-	['user'],
+const student = await create('Exemple', 'Fictif', 'student@example.org', ['user'], [promotion.id]);
+const teacher = await create(
+	'Modele',
+	'Temoin',
+	'teacher@example.org',
+	['teacher'],
 	[promotion.id]
 );
-const teacher = await create('Marie', 'Dupont', 'teacher@example.org', ['teacher'], [promotion.id]);
-const outsider = await create('Paul', 'Petit', 'outsider@example.org', ['user']);
+const outsider = await create('Profil', 'Petit', 'outsider@example.org', ['user']);
 assert.equal(typeof student.id, 'number');
-assert.match(student.username, /^vburg\d{3}$/);
+assert.match(student.username, /^efict\d{3}$/);
 const old = await command('invitation', { id: student.id });
 const invitation = await command('invitation', { id: student.id });
 assert.equal(invitation.delivery, 'manual');
@@ -150,9 +150,9 @@ assert.equal(
 );
 const me = await (await request('/me')).text();
 assert.ok(
-	me.includes('Valentin') &&
-		me.includes('BURGAUD') === false &&
-		me.includes('Burgaud') &&
+	me.includes('Exemple') &&
+		me.includes('FICTIF') === false &&
+		me.includes('Fictif') &&
 		me.includes('PTSI')
 );
 assert.equal(
@@ -206,7 +206,7 @@ const teacherSession = jar.get('sophikron_session_dev');
 assert.equal((await request('/dashboard')).status, 200);
 assert.equal((await data('users')).items[0].status, 'disabled');
 assert.deepEqual(
-	(await data('search', { q: 'burgo' })).map((item) => item.id),
+	(await data('search', { q: 'ficto' })).map((item) => item.id),
 	[student.id]
 );
 assert.equal((await request(`/dashboard/data?resource=user&id=${outsider.id}`)).status, 404);
@@ -264,7 +264,7 @@ if (process.env.BFF_BROWSER_INTEGRATION === '1') {
 // Course checks follow the dashboard assertions so their audit totals stay independent.
 jar.set('sophikron_session_dev', adminSession);
 await command('archiveAccount', { id: student.id, data: { archived: false } });
-const collaborator = await create('Camille', 'Durand', 'collaborator@example.org', ['teacher']);
+const collaborator = await create('Compte', 'Fictice', 'collaborator@example.org', ['teacher']);
 const subject = await command('createSubject', {
 	data: { name: 'Sciences', icon: 'science', color: '#32735B' }
 });
@@ -333,7 +333,7 @@ await courseEdit('grantPromotion', {
 await courseEdit('addCollaborator', { userId: collaborator.id, data: {} });
 const catalogueHtml = await (await request('/lessons?q=unused-filter')).text();
 assert.ok(
-	catalogueHtml.includes('Sciences et découvertes') && catalogueHtml.includes('Camille Durand')
+	catalogueHtml.includes('Sciences et découvertes') && catalogueHtml.includes('Compte Fictice')
 );
 assert.ok(catalogueHtml.includes('role-teacher'));
 assert.ok(!catalogueHtml.includes('course-search') && !catalogueHtml.includes('name="q"'));

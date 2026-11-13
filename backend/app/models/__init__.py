@@ -11,6 +11,8 @@ from app.models.auth import (
     User,
     UserRole,
 )
+from app.models.curricula import Competency, CompetencyLink, Curriculum, CurriculumSubject
+from app.models.curriculum_undo import CurriculumUndo
 from app.models.groups import (
     PromotionCustomGroup,
     PromotionCustomGroupMember,
@@ -51,6 +53,11 @@ from app.models.timetable import (
 )
 
 __all__ = [
+    "CurriculumUndo",
+    "Competency",
+    "CompetencyLink",
+    "Curriculum",
+    "CurriculumSubject",
     "KholloscopeRun",
     "KholloscopeWorkflow",
     "KholleWish",

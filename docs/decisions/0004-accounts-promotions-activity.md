@@ -32,7 +32,7 @@ derive presentation text separately. Preserve the journal through runtime SELECT
 
 The current baseline places accounts/authentication/permissions and activity in `0001_authentication`,
 configuration in `0002_configuration`, and promotions in `0003_promotions`.
-[ADR 0005](0005-release-baseline-and-configuration.md) records the seven-revision release baseline
+[ADR 0005](0005-release-baseline-and-configuration.md) records the installation baseline
 and compatibility limits. Future published migrations remain immutable.
 
 ## Consequences
