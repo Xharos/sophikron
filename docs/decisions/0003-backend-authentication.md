@@ -8,8 +8,8 @@
 ## Decision
 
 Use local Argon2id credentials, PostgreSQL-backed opaque cookie sessions, and single-use 48-hour
-administrator invitations. The original design exposed seven authentication/account routes under
-`/api/v1`; the current API and SvelteKit BFF have since expanded (see the authentication guide).
+administrator invitations. See the [authentication guide](../authentication.md) for current API
+and SvelteKit BFF contracts.
 Use reusable FastAPI `Annotated` dependencies for active-account and explicit
 role requirements; administrators do not implicitly inherit other roles.
 
@@ -33,8 +33,8 @@ Compose gates API startup on database health
 and a successful one-shot migration service, without granting DDL credentials to the API.
 
 Authentication and installation state belong to the initial migration. The release baseline
-targets fresh databases; existing incompatible schemas require a separate transition. A guarded
-compatibility operation supports the old empty baseline. Never automatically reset stored data.
+targets fresh databases; existing incompatible schemas require a separate transition.
+Never automatically reset stored data.
 Published migrations are immutable.
 
 The authentication schema includes temporary login leases and nonnegative failure counters. Login quotas are twenty failures per IP and five per IP/supplied
@@ -49,5 +49,6 @@ Operators must protect and back up identity keys separately. Exact identity look
 substring search and plaintext SQL sorting are not. Key/index rotation requires maintenance in this
 initial implementation. SMTP is optional and replaceable; failed delivery is explicit, without a
 plaintext-token outbox. Login statistics record successful authentication rather than human presence.
-Retention must be selected before collecting production history. MFA, public registration, recovery,
-analytics endpoints and a frontend activation page remain separate work.
+Retention must be selected before collecting production history. MFA and public registration
+are outside this design. Invitations, password reset and activation are documented in the
+[authentication guide](../authentication.md).

@@ -21,13 +21,13 @@ from app.services.search import NameSearchCache, rank_names
 @pytest.mark.parametrize(
     "first,last,prefix",
     [
-        ("Valentin", "BURGAUD", "vburg"),
-        ("Valentin", "Roy", "vroy"),
-        ("Valentin", "Rémi", "vremi"),
-        ("Dionis", "DU SEJOUR", "dduse"),
-        ("Élodie", "D’Artagnan", "edart"),
-        ("Anne-Marie", "Le Bœuf", "alebo"),
-        ("Œdipe", "Ægir", "oaegi"),
+        ("Exemple", "FICTIF", "efict"),
+        ("Exemple", "Test", "etest"),
+        ("Exemple", "Démo", "edemo"),
+        ("Compte", "DU TEST", "cdute"),
+        ("Échantillon", "D’Exemple", "edexe"),
+        ("Alpha-Modele", "Le Bœuf", "alebo"),
+        ("Œpsilon", "Æchantillon", "oaech"),
     ],
 )
 def test_username_normalization(first: str, last: str, prefix: str) -> None:
@@ -59,14 +59,14 @@ def test_invalid_names(name: str) -> None:
 def test_allowed_roles(roles: list[str]) -> None:
     """Keep administrator-only accounts valid without implying teacher permissions."""
     data = CreateUserRequest(
-        first_name="Valentin", last_name="Roy", email="v@example.org", roles=roles
+        first_name="Exemple", last_name="Test", email="account@example.org", roles=roles
     )
     assert data.roles == roles and data.promotion_ids == []
 
 
 def test_default_student_role() -> None:
     """Give new accounts only student access when roles are omitted."""
-    data = CreateUserRequest(first_name="Valentin", last_name="Roy", email="v@example.org")
+    data = CreateUserRequest(first_name="Exemple", last_name="Test", email="account@example.org")
     assert data.roles == ["user"]
 
 
@@ -95,9 +95,9 @@ async def test_admin_only_creation_rejects_promotions_before_writes() -> None:
     """Reject ineligible creation before reserving an ID or inserting any account."""
     service = object.__new__(AuthService)
     data = CreateUserRequest(
-        first_name="Camille",
-        last_name="Martin",
-        email="camille@example.org",
+        first_name="Compte",
+        last_name="Specimen",
+        email="compte@example.org",
         roles=["admin"],
         promotion_ids=[1],
     )
@@ -122,7 +122,7 @@ def test_forbidden_roles(roles: list[str]) -> None:
     """Refuse incompatible or obsolete role combinations before any account is created."""
     with pytest.raises(ValidationError):
         CreateUserRequest(
-            first_name="Valentin", last_name="Roy", email="v@example.org", roles=roles
+            first_name="Exemple", last_name="Test", email="account@example.org", roles=roles
         )
 
 
@@ -139,7 +139,7 @@ def test_strict_creation(extra: dict[str, object]) -> None:
     """Forbid caller-selected usernames/passwords and invalid membership lists."""
     with pytest.raises(ValidationError):
         CreateUserRequest.model_validate(
-            dict(first_name="Valentin", last_name="Roy", email="v@example.org", roles=["user"])
+            dict(first_name="Exemple", last_name="Test", email="test@example.org", roles=["user"])
             | extra
         )
 
@@ -154,18 +154,18 @@ def test_promotion_validation() -> None:
             PromotionUpdate.model_validate(payload)
 
 
-@pytest.mark.parametrize("query", ["burg", "burgaud val", "valentin burgo", "VALENTIN BURGAUD"])
+@pytest.mark.parametrize("query", ["fict", "fictif exe", "exemple ficto", "EXEMPLE FICTIF"])
 def test_fuzzy_relevance(query: str) -> None:
     """Return the intended person for partial, reversed and misspelled French names."""
-    names = [(1, "Valentin", "Burgaud"), (2, "Alice", "Martin"), (3, "Paul", "Durand")]
+    names = [(1, "Exemple", "Fictif"), (2, "Alpha", "Specimen"), (3, "Profil", "Fictice")]
     assert rank_names(query, names, 20)[0] == 1
 
 
 def test_fuzzy_accents_separators_and_order() -> None:
     """Favor exact names, tolerate accents/separators and bound short-query noise."""
-    names = [(1, "Paul", "Rémilly"), (2, "Alice", "Rémi"), (3, "Dionis", "DU SEJOUR")]
-    assert rank_names("remi", names, 1) == [2]
-    assert rank_names("dusejour", names, 20)[0] == 3
+    names = [(1, "Profil", "Démolly"), (2, "Alpha", "Démo"), (3, "Compte", "DU TEST")]
+    assert rank_names("demo", names, 1) == [2]
+    assert rank_names("dutest", names, 20)[0] == 3
     assert rank_names("zz", names, 20) == []
     assert rank_names("--", names, 20) == []
 
@@ -206,11 +206,11 @@ async def test_username_collision_retry_and_exhaustion() -> None:
     service.repo = MagicMock()
     service.repo.by_lookup = AsyncMock(side_effect=[object(), None])
     with patch("app.services.auth.secrets.SystemRandom.shuffle"):
-        assert await service._generate_username("Valentin", "Roy") == "vroy101"
+        assert await service._generate_username("Exemple", "Test") == "etest101"
     assert service.repo.by_lookup.await_count == 2
     service.repo.by_lookup = AsyncMock(return_value=object())
     with pytest.raises(AuthError) as error:
-        await service._generate_username("Valentin", "Roy")
+        await service._generate_username("Exemple", "Test")
     assert error.value.status == 409 and service.repo.by_lookup.await_count == 900
 
 
@@ -235,16 +235,16 @@ def test_name_cache_capacity_expiry_and_invalidation() -> None:
     cipher = MagicMock()
     cipher.decrypt.side_effect = lambda user_id, field, value: value.decode()
     cache = NameSearchCache(max_entries=1, ttl_seconds=60, clock=lambda: now[0])
-    candidate = [(1, b"Valentin", b"Burgaud")]
-    assert cache.prepare(candidate, cipher)[1].last_name == "Burgaud"
+    candidate = [(1, b"Exemple", b"Fictif")]
+    assert cache.prepare(candidate, cipher)[1].last_name == "Fictif"
     cache.prepare(candidate, cipher)
     assert cipher.decrypt.call_count == 2
-    assert cache.prepare([(1, b"Valentin", b"Roy")], cipher)[1].last_name == "Roy"
+    assert cache.prepare([(1, b"Exemple", b"Test")], cipher)[1].last_name == "Test"
     assert cipher.decrypt.call_count == 4
     now[0] = 61
-    cache.prepare([(1, b"Valentin", b"Roy")], cipher)
+    cache.prepare([(1, b"Exemple", b"Test")], cipher)
     assert cipher.decrypt.call_count == 6
-    assert set(cache.prepare([(2, b"Alice", b"Martin")], cipher)) == {2}
+    assert set(cache.prepare([(2, b"Alpha", b"Specimen")], cipher)) == {2}
     cache.prepare(candidate, cipher)
     assert cipher.decrypt.call_count == 10  # ID 1 was evicted by the one-entry capacity.
     assert cache.prepare([], cipher) == {}

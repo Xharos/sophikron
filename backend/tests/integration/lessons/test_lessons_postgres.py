@@ -129,7 +129,7 @@ async def test_collaborator_options_browse_live_search_and_exclusions(
     eligible = [teacher_id, *(identifier for identifier, _ in readers)]
     await course.login(course.owner)
     path = course.path + "/teacher-options"
-    for params in [{}, {"q": ""}, {"q": "V"}, {"q": "  valentin  "}]:
+    for params in [{}, {"q": ""}, {"q": "F"}, {"q": "  exemple  "}]:
         response = await case.client.get(path, params=params)
         assert response.status_code == 200, response.text
         assert [person["id"] for person in response.json()] == eligible[:5]
@@ -285,7 +285,7 @@ async def test_creator_collaborator_and_admin_permissions_follow_current_roles(
             },
         )
     ).status_code == 403
-    assert (await case.client.get(f"{course.path}/teacher-options?q=Valentin")).status_code == 403
+    assert (await case.client.get(f"{course.path}/teacher-options?q=Exemple")).status_code == 403
     case.as_admin()
     changed = await case.client.patch(
         f"/api/v1/admin/users/{course.collaborator_id}/profile",

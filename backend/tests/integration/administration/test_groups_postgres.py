@@ -131,7 +131,7 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
         pdf = PdfReader(BytesIO(response.content))
         assert pdf.metadata.title.endswith(" - 2019")
         # Three pupil rows, plus the fixture administrator's name in the footer.
-        assert pdf.pages[0].extract_text().count("Valentin") == (4)
+        assert pdf.pages[0].extract_text().count("Exemple") == (4)
         for role in ("teacher", "kholleur", "user"):
             identifier, username = await case.create(role)
             response = await case.client.put(
@@ -145,7 +145,7 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
             exported = await case.client.get(path)
             assert exported.status_code == (200 if role == "teacher" else 403)
             if role == "teacher":
-                assert PdfReader(BytesIO(exported.content)).metadata.author == "BURGAUD Valentin"
+                assert PdfReader(BytesIO(exported.content)).metadata.author == "FICTIF Exemple"
                 case.as_admin()
                 assert (
                     await case.client.delete(
@@ -164,7 +164,7 @@ async def test_attendance_export_respects_directory_scope_and_current_roster(
         ).status_code == 204
         response = await case.client.get(path)
         # Includes the remaining two pupils plus the newly attached student account.
-        assert PdfReader(BytesIO(response.content)).pages[0].extract_text().count("Valentin") == (
+        assert PdfReader(BytesIO(response.content)).pages[0].extract_text().count("Exemple") == (
             4 if variant in {"roster", "global", "halves", "thirds", "kholles"} else 3
         )
         case.client.cookies.clear()
@@ -411,7 +411,7 @@ async def test_directory_and_profiles_scope_saved_group_tags(auth_case: Harness)
             assert tags(response.json()) == all_tags
         for path in (
             f"/api/v1/admin/users?promotion_id={shared}",
-            f"/api/v1/admin/users/search?q=Valentin&promotion_id={shared}",
+            f"/api/v1/admin/users/search?q=Exemple&promotion_id={shared}",
         ):
             response = (await case.client.get(path)).json()
             items = response if isinstance(response, list) else response["items"]
@@ -436,8 +436,8 @@ async def test_directory_and_profiles_scope_saved_group_tags(auth_case: Harness)
         for path in (
             "/api/v1/teaching/users",
             f"/api/v1/teaching/users?promotion_id={shared}",
-            "/api/v1/teaching/users/search?q=Valentin",
-            f"/api/v1/teaching/users/search?q=Valentin&promotion_id={shared}",
+            "/api/v1/teaching/users/search?q=Exemple",
+            f"/api/v1/teaching/users/search?q=Exemple&promotion_id={shared}",
         ):
             response = (await case.client.get(path)).json()
             items = response if isinstance(response, list) else response["items"]

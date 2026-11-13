@@ -215,7 +215,7 @@ async def test_historical_roles_survive_later_changes(auth_case: Harness) -> Non
     ).status_code == 200
     assert (
         await case.client.patch(
-            path, json={"expected_version": 1, "roles": ["admin"], "first_name": "Marie"}
+            path, json={"expected_version": 1, "roles": ["admin"], "first_name": "Modele"}
         )
     ).status_code == 200
     result = await case.client.get(
@@ -225,7 +225,7 @@ async def test_historical_roles_survive_later_changes(auth_case: Harness) -> Non
     entry = result.json()["items"][0]
     assert entry["actor_user_id"] == staff_id and entry["actor_role"] == "admin"
     assert entry["subject_user_id"] == user_id and entry["subject_role"] == "user"
-    assert entry["subject_label"] == "Marie Burgaud"
+    assert entry["subject_label"] == "Modele Fictif"
     assert entry["data"] == {"previous_roles": ["user"], "roles": ["teacher"]}
     assert entry["actor_profile_available"] and entry["subject_profile_available"]
 
@@ -253,7 +253,9 @@ async def test_promotion_snapshot_and_explicit_changes(auth_case: Harness) -> No
         created = next(item for item in result if item["event_type"] == "promotion.created")
         updated = next(item for item in result if item["event_type"] == "promotion.updated")
         assert created["promotion_snapshot"] == {
-            field: before[field] for field in ("identifier", "year", "color")
+            **{field: before[field] for field in ("identifier", "year", "color")},
+            "curriculum_id": None,
+            "track_id": None,
         }
         assert updated["promotion_snapshot"]["identifier"] == "RENAMED"
         assert updated["data"]["previous"]["identifier"] == before["identifier"]

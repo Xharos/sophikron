@@ -222,7 +222,7 @@ The temporary account can log in, inspect `/auth/me`, log out, and call `POST /a
 It cannot create/invite ordinary accounts or change passwords. Complete setup with:
 
 ```json
-{"first_name":"Valentin","last_name":"Burgaud","email":"operator@example.org","password":"ExampleAdminPassword2026!"}
+{"first_name":"Exemple","last_name":"Fictif","email":"operator@example.org","password":"ExampleAdminPassword2026!"}
 ```
 
 Roles cannot be supplied. The service creates an active permanent administrator, sets
@@ -413,12 +413,12 @@ with UI labels for first activation, resend/expiry and password reset.
 
 The invitation is committed before SMTP; no SQL transaction is held during network IO. A known or
 uncertain transport failure revokes that link and returns a generic error. A crash can leave an
-unsent invitation record: explicit resend safely replaces it. This increment does not promise
-transactional email delivery or add an outbox storing plaintext invitation secrets.
+unsent invitation record: explicit resend safely replaces it. Delivery is not transactional;
+there is no outbox storing plaintext invitation secrets.
 
 SMTP links place the token in a URL **fragment**, not a query string, to keep it out of ordinary
-access logs. The eventual client activation page must read the fragment and POST it in JSON. That
-page is implemented at `/activate` by SvelteKit. Manual delivery never marks email as verified.
+access logs. The SvelteKit `/activate` page reads the fragment and submits the token through the BFF.
+Manual delivery never marks email as verified.
 See [invitations and password resets](frontend-bff.md#invitations-and-password-resets).
 
 ## Activity and login statistics
@@ -462,6 +462,4 @@ Added dependencies: `argon2-cffi` (MIT), `cryptography` (Apache-2.0 OR BSD-3-Cla
 search. Keep their releases reviewed and maintained; passing these checks is not a comprehensive
 security assessment.
 
-See the [kholloscope release security review](security-review.md) for the route authentication
-inventory, explicit draft capabilities, dependency findings and verification limits.
 

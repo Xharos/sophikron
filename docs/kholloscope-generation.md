@@ -426,5 +426,4 @@ A PostgreSQL integration test migrates and exercises the real durable queue, ass
 publication and rights. Browser tests cover live progress, correction, group assignment and
 explicit application. Use the existing project pytest and frontend verification commands.
 
-Revision subjects are selected with keyboard-accessible toggle buttons. For release verification
-and known dependency findings, see the [security review](security-review.md).
+Revision subjects are selected with keyboard-accessible toggle buttons.

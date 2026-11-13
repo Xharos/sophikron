@@ -353,10 +353,10 @@ Default availability is 08:00–19:00 Monday–Friday and 08:00–12:00 Saturday
 An absent pattern means that entire grid is available; an explicit empty pattern means unavailable.
 Saving null restores the default. Patterns belong only to their chosen year and are never copied.
 Availability editing stores only weekly ranges. Khôlle commitments are managed exclusively
-in `/timetable/kholloscope`; migration `0008_kholloscope` removes the former min/max columns.
-Existing availability ranges and revisions are preserved. Legacy bounds are discarded without
-conversion because they do not define an exact commitment per subject; downgrade restores zero
-bounds and cannot recover their previous values. Earlier baseline migrations remain unchanged.
+in `/timetable/kholloscope`. The cleaned `0007_timetable` baseline never creates legacy min/max
+columns, and `0008_kholloscope` neither removes nor restores them. Availability ranges and revisions
+are preserved when applying or rolling back `0008`. Databases that applied the former `0007`
+with legacy bounds need a reviewed transition; these amended files do not clean an existing schema.
 Overlapping/touching ranges merge. Out-of-grid submissions, including Saturday afternoon, are refused.
 The Saturday column remains visible in the staff workspace regardless of promotion settings.
 

@@ -22,7 +22,8 @@ export const handle: Handle = async ({ event, resolve }) => {
 				event.url.pathname !== '/lessons/upload'
 			) {
 				const length = event.request.headers.get('content-length');
-				const bodyLimit = 16384;
+				const bodyLimit =
+					event.url.pathname === '/curricula/transfer' ? 8 * 1024 * 1024 + 4096 : 16384;
 				if (length && (!/^\d{1,8}$/.test(length) || Number(length) > bodyLimit))
 					throw new BackendError(413, 'Demande trop volumineuse.');
 				let size = 0;

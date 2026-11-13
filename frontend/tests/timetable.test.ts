@@ -132,15 +132,19 @@ test('odd PT cycles give a group 12 or 13 sessions, while even PTSI cycles give 
 
 test('simultaneous blocks retain subject and teacher order across weeks and database order', () => {
 	const blocks = [
-		conflictEvent({ id: '1', title: 'Physique', teacher: 'Albert' }),
-		conflictEvent({ id: '2', title: 'Mathématiques', teacher: 'Zoé' }),
-		conflictEvent({ id: '3', title: 'Mathématiques', teacher: 'Émile' })
+		conflictEvent({ id: '1', title: 'Physique', teacher: 'Alpha' }),
+		conflictEvent({ id: '2', title: 'Mathématiques', teacher: 'Zêta' }),
+		conflictEvent({ id: '3', title: 'Mathématiques', teacher: 'Étalon' })
 	];
 	const labels = (events: TimetableEvent[]): string[] =>
 		events
 			.toSorted(compareTimetableDisplayEvents)
 			.map((event) => `${event.title}/${event.teacher}`);
-	assert.deepEqual(labels(blocks), ['Mathématiques/Émile', 'Mathématiques/Zoé', 'Physique/Albert']);
+	assert.deepEqual(labels(blocks), [
+		'Mathématiques/Étalon',
+		'Mathématiques/Zêta',
+		'Physique/Alpha'
+	]);
 	const nextWeek = blocks.toReversed().map((event, index) => ({
 		...event,
 		id: `new-${index}`,
@@ -157,11 +161,11 @@ test('calendar ordering uses the first assigned teacher then room and numeric gr
 		...base,
 		teacher_ids: [7, 8],
 		teachers: [
-			{ id: 8, name: 'Zoé', available: true },
-			{ id: 7, name: 'Alice', available: true }
+			{ id: 8, name: 'Zêta', available: true },
+			{ id: 7, name: 'Alpha', available: true }
 		]
 	};
-	assert.ok(compareTimetableDisplayEvents(alpha, { ...base, teacher: 'Bernard' }) < 0);
+	assert.ok(compareTimetableDisplayEvents(alpha, { ...base, teacher: 'Temoin' }) < 0);
 	assert.ok(compareTimetableDisplayEvents({ ...base, room: 'B2' }, { ...base, room: 'B10' }) < 0);
 	assert.ok(
 		compareTimetableDisplayEvents({ ...base, target_number: 2 }, { ...base, target_number: 10 }) < 0
@@ -488,10 +492,10 @@ test('resizing either border preserves the other boundary across recess-split se
 
 test('subject specialists precede other teachers and each group stays alphabetically ordered', () => {
 	const teachers = [
-		{ id: 1, name: 'Zoé', subject_ids: [1] },
-		{ id: 2, name: 'Alice', subject_ids: [2] },
-		{ id: 3, name: 'Émile', subject_ids: [1, 2] },
-		{ id: 4, name: 'Benoît' }
+		{ id: 1, name: 'Zêta', subject_ids: [1] },
+		{ id: 2, name: 'Alpha', subject_ids: [2] },
+		{ id: 3, name: 'Étalon', subject_ids: [1, 2] },
+		{ id: 4, name: 'Bêta' }
 	];
 	assert.deepEqual(
 		orderedTimetableTeachers(teachers, 1).map((teacher) => teacher.id),

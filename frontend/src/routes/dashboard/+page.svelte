@@ -62,8 +62,8 @@
 			? [
 					{ id: 'overview', name: 'Vue d’ensemble', icon: 'overview' as const },
 					{ id: 'promotions', name: 'Promotions', icon: 'promotions' as const },
-					{ id: 'accounts', name: 'Comptes', icon: 'accounts' as const },
 					{ id: 'subjects', name: 'Matières', icon: 'book' as const },
+					{ id: 'accounts', name: 'Comptes', icon: 'accounts' as const },
 					{ id: 'team', name: 'Équipe enseignante', icon: 'teacher' as const },
 					{ id: 'configuration', name: 'Configuration', icon: 'edit' as const }
 				]

@@ -26,7 +26,7 @@ def test_group_tables_paginate_with_parallel_headings(variant: str, columns: int
         AttendanceGroup(
             f"Groupe {index}",
             [
-                AttendanceStudent(f"Élève-{index}-{pupil:03}", "Jean", archived=pupil == 89)
+                AttendanceStudent(f"Élève-{index}-{pupil:03}", "Jeu", archived=pupil == 89)
                 for pupil in range(90)
             ],
         )
@@ -64,7 +64,7 @@ def test_global_contains_assignments_and_escaped_names() -> None:
             render_attendance_pdf(
                 "PTSI",
                 "#4361EE",
-                [AttendanceStudent("<Nom>", "Jean", assignments=("A", "X", "01"))],
+                [AttendanceStudent("<Nom>", "Jeu", assignments=("A", "X", "01"))],
                 "Enseignant",
                 GENERATED,
                 "global",
@@ -103,7 +103,7 @@ def render(students: list[AttendanceStudent]) -> PdfReader:
                 "PTSI",
                 "#4361EE",
                 students,
-                "DUPONT Émilie",
+                "TEMOIN Échantillon",
                 GENERATED,
             )
         )
@@ -112,17 +112,17 @@ def render(students: list[AttendanceStudent]) -> PdfReader:
 
 def test_standard_roster_fits_one_a4_page_with_private_generation_details() -> None:
     """Keep 45 pupils on one A4 page with all requested headings and Paris time."""
-    pdf = render([AttendanceStudent(f"Élève {i:02}", "jean-pierre") for i in range(45)])
+    pdf = render([AttendanceStudent(f"Élève {i:02}", "jeu-exemple") for i in range(45)])
     assert len(pdf.pages) == 1
     page = pdf.pages[0]
     assert float(page.mediabox.width) == pytest.approx(A4[0], abs=0.01)
     assert float(page.mediabox.height) == pytest.approx(A4[1], abs=0.01)
     text = page.extract_text()
     assert "PTSI" in text and "NOM" in text and "Prénom" in text and "Remarque" in text
-    assert text.count("Jean-Pierre") == 45
+    assert text.count("Jeu-Exemple") == 45
     assert "ÉLÈVE 00" in text and "ÉLÈVE 44" in text
-    assert "DUPONT Émilie" in text and "29/10/2026 à 13:34:56" in text
-    assert pdf.metadata.author == "DUPONT Émilie"
+    assert "TEMOIN Échantillon" in text and "29/10/2026 à 13:34:56" in text
+    assert pdf.metadata.author == "TEMOIN Échantillon"
     operators = page.get_contents().operations
     # Exact promotion title color and alternating light-grey row backgrounds are drawn.
     fills = [tuple(float(value) for value in operands) for operands, op in operators if op == b"rg"]
@@ -132,10 +132,10 @@ def test_standard_roster_fits_one_a4_page_with_private_generation_details() -> N
 
 def test_large_roster_repeats_title_columns_and_footer_on_every_page() -> None:
     """Paginate without losing pupils or generation metadata."""
-    pdf = render([AttendanceStudent(f"Élève {i:03}", "Camille") for i in range(125)])
+    pdf = render([AttendanceStudent(f"Élève {i:03}", "Compte") for i in range(125)])
     assert len(pdf.pages) >= 3
     texts = [page.extract_text() for page in pdf.pages]
-    assert sum(text.count("Camille") for text in texts) == 125
+    assert sum(text.count("Compte") for text in texts) == 125
     for text in texts:
         assert all(
             value in text
@@ -144,7 +144,7 @@ def test_large_roster_repeats_title_columns_and_footer_on_every_page() -> None:
                 "NOM",
                 "Prénom",
                 "Remarque",
-                "DUPONT Émilie",
+                "TEMOIN Échantillon",
                 "29/10/2026 à 13:34:56",
             )
         )
@@ -154,24 +154,24 @@ def test_archived_pupils_sort_last_with_struck_through_names_and_safe_markup() -
     """Sort both sections alphabetically, preserve accents and escape paragraph markup."""
     pdf = render(
         [
-            AttendanceStudent("Albert", "élise", archived=True),
-            AttendanceStudent("Zulu", "marie"),
-            AttendanceStudent("Éclair", "jean-luc"),
-            AttendanceStudent("Durand", "<b>léa & zoé</b>"),
+            AttendanceStudent("Alpha", "échantillon", archived=True),
+            AttendanceStudent("Zulu", "modele"),
+            AttendanceStudent("Éclair", "jeu-test"),
+            AttendanceStudent("Donnee", "<b>démo & zêta</b>"),
         ]
     )
     page = pdf.pages[0]
     text = page.extract_text()
-    assert text.index("DURAND") < text.index("ÉCLAIR") < text.index("ZULU") < text.index("ALBERT")
-    assert "Élise" in text and "Jean-Luc" in text and "<B>Léa & Zoé</B>" in text
+    assert text.index("DONNEE") < text.index("ÉCLAIR") < text.index("ZULU") < text.index("ALPHA")
+    assert "Échantillon" in text and "Jeu-Test" in text and "<B>Démo & Zêta</B>" in text
     lines = [operands for operands, op in page.get_contents().operations if op == b"l"]
     # Two additional strokes cross the archived pupil's surname and first name.
     plain = render(
         [
-            AttendanceStudent("Albert", "élise"),
-            AttendanceStudent("Zulu", "marie"),
-            AttendanceStudent("Éclair", "jean-luc"),
-            AttendanceStudent("Durand", "<b>léa & zoé</b>"),
+            AttendanceStudent("Alpha", "échantillon"),
+            AttendanceStudent("Zulu", "modele"),
+            AttendanceStudent("Éclair", "jeu-test"),
+            AttendanceStudent("Donnee", "<b>démo & zêta</b>"),
         ]
     )
     plain_lines = [op for _, op in plain.pages[0].get_contents().operations if op == b"l"]
@@ -182,7 +182,7 @@ def test_empty_roster_and_long_names_render_without_overflow() -> None:
     """Handle empty promotions and wrap long identity fields instead of clipping them."""
     assert len(render([]).pages) == 1
     last_name = "Trèslongnom" * 10
-    first_name = "Marie-" * 15
+    first_name = "Modele-" * 15
     pdf = render([AttendanceStudent(last_name, first_name)])
     text = "".join(pdf.pages[0].extract_text().split())
     assert last_name.upper() in text and first_name.title() in text
@@ -192,9 +192,9 @@ def test_account_badges_distinguish_active_pending_and_archived_accounts() -> No
     """Draw one green badge for an active account and red badges for other states."""
     pdf = render(
         [
-            AttendanceStudent("Active", "Alice", active=True),
-            AttendanceStudent("Pending", "Benoît"),
-            AttendanceStudent("Archived", "Camille", archived=True),
+            AttendanceStudent("Active", "Alpha", active=True),
+            AttendanceStudent("Pending", "Bêta"),
+            AttendanceStudent("Archived", "Compte", archived=True),
         ]
     )
     fills = [
@@ -222,7 +222,7 @@ def test_global_omits_undefined_partitions_and_colors_only_letter_groups() -> No
             render_attendance_pdf(
                 "PTSI",
                 "#4361EE",
-                [AttendanceStudent("Nom", "Jean", assignments=("A", "", ""))],
+                [AttendanceStudent("Nom", "Jeu", assignments=("A", "", ""))],
                 "Enseignant",
                 GENERATED,
                 "global",
@@ -240,7 +240,7 @@ def test_group_tables_have_gutters_and_no_unused_custom_columns() -> None:
     from app.services.attendance_pdf import grouped_tables
 
     groups = [
-        AttendanceGroup(f"Groupe {index}", [AttendanceStudent("Nom", "Jean")])
+        AttendanceGroup(f"Groupe {index}", [AttendanceStudent("Nom", "Jeu")])
         for index in range(15)
     ]
     story = grouped_tables(groups, 3, 530)

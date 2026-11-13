@@ -2,7 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-11-09
-- **Sources:** `0008_kholloscope.py`, kholloscope API, services, worker and PostgreSQL tests.
+- **Sources:** [migration](../../backend/alembic/versions/0008_kholloscope.py),
+  [API](../../backend/app/api/v1/kholloscope.py),
+  [publication revisions](../../backend/app/services/kholloscope_revision.py).
 - **Extends:** [ADR 0008](0008-groups-timetables-and-calendar-feeds.md).
 
 ## Context and decision
@@ -37,11 +39,9 @@ scope. Only administrators receive the initial grants; no new role or teacher ac
 Named PDF rosters additionally require `users.read`. All browser writes retain the existing CSRF
 policy, and drafts/snapshots are excluded from public feeds and search indexing.
 
-Consolidate the unreleased feature revisions 0008–0014 into `0008_kholloscope` with the project
-owner's explicit authorization. Leave revisions 0001–0007 unchanged. Remove legacy availability
-min/max hour columns: exact staff/subject commitments and their recorded reference cycles replace
-them. A downgrade restores zero bounds, not discarded values, and removes private drafts while
-preserving published timetable series.
+Exact staff/subject commitments and their recorded reference cycles provide the kholle contract,
+independently of weekly availability. A downgrade removes private drafts while preserving
+published timetable series.
 
 ## Consequences and alternatives
 
@@ -55,10 +55,6 @@ event model. SQL constraints protect relational identities, commitment bounds, r
 active-job uniqueness; services validate the JSON content and scheduling rules. No speculative
 JSONB indexes are added. Future query or retention requirements may justify a separate decision.
 
-The consolidated migration is suitable for a fresh database or one still at 0007. A database
-stamped with replaced revisions needs a reviewed transition even if its application rows are empty.
-Published migrations become immutable after this release.
-
-See [kholloscope behavior](../kholloscope-generation.md), [schema inventory](../database.md#migrations)
-and [release security review](../security-review.md). Tests cover real CP-SAT behavior, authorization,
+See [kholloscope behavior](../kholloscope-generation.md) and [schema inventory](../database.md#migrations)
+for operational contracts and migration compatibility. Tests cover real CP-SAT behavior, authorization,
 source invalidation, PostgreSQL constraints, upgrade/downgrade and transactional publication/rollback.

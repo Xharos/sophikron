@@ -654,7 +654,7 @@ async def test_combined_roles_preserve_remaining_course_permissions(
     assert response.status_code == 200, response.text
     await course.login(course.owner)
     await course.mutation(f"/collaborators/{course.collaborator_id}", {}, "put")
-    candidates = await case.client.get(course.path + "/teacher-options", params={"q": "Valentin"})
+    candidates = await case.client.get(course.path + "/teacher-options", params={"q": "Exemple"})
     assert candidates.status_code == 200, candidates.text
     assert all(item["id"] != course.collaborator_id for item in candidates.json())
     current = await profile(case, course.collaborator_id)

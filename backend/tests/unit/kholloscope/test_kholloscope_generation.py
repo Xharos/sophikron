@@ -106,10 +106,10 @@ def test_generation_default_budget_and_log_millisecond_boundaries() -> None:
     assert GenerationRules(time_limit=1800).time_limit == 1800
     submitted = datetime(2026, 11, 6, tzinfo=timezone.utc)
     assert run_log_lines(
-        "Première ligne\n  Deuxième ligne\n\n",
+        "Pdemoère ligne\n  Deuxième ligne\n\n",
         submitted,
         at=submitted + timedelta(minutes=2, seconds=3, milliseconds=45),
-    ) == ["[02:03:045] Première ligne", "[02:03:045]   Deuxième ligne"]
+    ) == ["[02:03:045] Pdemoère ligne", "[02:03:045]   Deuxième ligne"]
     assert run_log_lines("Avant", submitted, at=submitted - timedelta(seconds=1)) == [
         "[00:00:000] Avant"
     ]

@@ -116,7 +116,7 @@ async def test_kholloscope_migration_roundtrip(databases: tuple[Database, Databa
                     )
                 )
             )
-            assert {"kholle_min_hours", "kholle_max_hours"} <= columns
+            assert columns == {"user_id", "school_year", "ranges", "revision"}
             assert (
                 await session.scalar(
                     text(
@@ -494,6 +494,17 @@ async def test_feature_migration_stages(databases: tuple[Database, Database]) ->
                 )
                 is None
             )
+        run_alembic("upgrade", "0007_timetable")
+        async with migration.sessions() as session:
+            columns = set(
+                await session.scalars(
+                    text(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema = 'sophikron' AND table_name = 'teacher_availability'"
+                    )
+                )
+            )
+            assert columns == {"user_id", "school_year", "ranges", "revision"}
         run_alembic("upgrade", "head")
         async with migration.sessions() as session:
             assert await session.scalar(

@@ -84,8 +84,8 @@ class Harness:
         response = await self.client.post(
             "/api/v1/admin/users",
             json={
-                "first_name": "Valentin",
-                "last_name": "Burgaud",
+                "first_name": "Exemple",
+                "last_name": "Fictif",
                 "email": f"{username}@example.org",
                 "roles": [role],
             },
@@ -164,8 +164,8 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                     await client.post(
                         "/api/v1/admin/users",
                         json={
-                            "first_name": "Valentin",
-                            "last_name": "Burgaud",
+                            "first_name": "Exemple",
+                            "last_name": "Fictif",
                             "email": f"{prefix}_forbidden@example.org",
                             "roles": ["teacher"],
                         },
@@ -175,8 +175,8 @@ async def auth_case(migrated_database: None, tmp_path: Path) -> AsyncIterator[Ha
                 response = await client.post(
                     "/api/v1/auth/setup",
                     json={
-                        "first_name": "Valentin",
-                        "last_name": "Burgaud",
+                        "first_name": "Exemple",
+                        "last_name": "Fictif",
                         "email": f"{prefix}_1@example.org",
                         "password": PASSWORD,
                     },

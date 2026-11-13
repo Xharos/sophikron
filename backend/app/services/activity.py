@@ -12,9 +12,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models import ActivityEvent, Promotion, Role, UserRole
 from app.models.site import Subject
-from app.schemas.administration import PromotionCreate
+from app.schemas.administration import PromotionCreate, PromotionSnapshot
 from app.schemas.auth import InputModel, RoleCodes
 from app.schemas.site import SubjectFields
+
+
+class CurriculumActivity(InputModel):
+    """Describe programme changes without retaining long teaching text in the journal."""
+
+    action: str = Field(max_length=40)
+    curriculum_title: str = Field(max_length=160)
+    subject_name: str | None = Field(default=None, max_length=100)
+    competency_name: str | None = Field(default=None, max_length=300)
+    changed_fields: list[str] = Field(default_factory=list, max_length=20)
+    parent_count: int = Field(default=0, ge=0)
+    child_count: int = Field(default=0, ge=0)
+    imported_count: int = Field(default=0, ge=0, le=2000)
 
 
 class EmptyData(InputModel):
@@ -24,16 +37,18 @@ class EmptyData(InputModel):
 class PromotionChanges(InputModel):
     """Describe changed promotion fields without storing arbitrary request bodies."""
 
-    changed_fields: list[Literal["year", "identifier", "color"]] = Field(max_length=3)
-    previous: PromotionCreate
-    current: PromotionCreate
+    changed_fields: list[Literal["year", "identifier", "color", "track_id", "curriculum_id"]] = (
+        Field(max_length=5)
+    )
+    previous: PromotionSnapshot
+    current: PromotionSnapshot
 
 
 class AccountArchiveCause(InputModel):
     """Identify an automatic promotion action without copying pupil identities."""
 
     promotion_id: int | None = Field(default=None, gt=0)
-    promotion: PromotionCreate | None = None
+    promotion: PromotionSnapshot | None = None
 
 
 class PromotionArchiveCounts(InputModel):
@@ -208,7 +223,7 @@ class LessonActivity(InputModel):
     removed_count: int | None = Field(default=None, ge=1, le=500)
     direction: Literal["up", "down"] | None = None
     promotion_id: int | None = Field(default=None, gt=0)
-    promotion: PromotionCreate | None = None
+    promotion: PromotionSnapshot | None = None
     previous_period: LessonPeriod | None = None
     period: LessonPeriod | None = None
 
@@ -556,6 +571,24 @@ EVENTS["promotion.attendance_exported"] = EventDefinition(
     label="Listes d’appel exportées",
     icon="download",
     message="{actor} a généré une liste d’appel de {promotion}.",
+)
+
+
+for _resource, _label in (("track", "Filière"), ("curriculum", "Référentiel")):
+    EVENTS[f"{_resource}.saved"] = EventDefinition(
+        resource=_resource,
+        label=f"{_label} enregistré",
+        icon="book",
+        message=f"{{actor}} a modifié un élément du catalogue : {_label.lower()}.",
+    )
+
+
+EVENTS["curriculum.changed"] = EventDefinition(
+    resource="curriculum",
+    payload=CurriculumActivity,
+    label="Modification du programme",
+    icon="book",
+    message="{actor} a modifié le programme pédagogique.",
 )
 
 

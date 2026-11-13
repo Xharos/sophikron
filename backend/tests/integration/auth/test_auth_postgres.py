@@ -225,8 +225,8 @@ async def test_generic_failures_and_role_boundaries(auth_case: Harness) -> None:
         await case.client.post(
             "/api/v1/admin/users",
             json={
-                "first_name": "Valentin",
-                "last_name": "Burgaud",
+                "first_name": "Exemple",
+                "last_name": "Fictif",
                 "email": "unauthorized@example.org",
                 "roles": ["admin"],
             },
@@ -501,8 +501,8 @@ async def test_delivery_failure_and_duplicates(auth_case: Harness) -> None:
         assert invitation.revoked_at is not None
     for data in (
         {
-            "first_name": "Valentin",
-            "last_name": "Burgaud",
+            "first_name": "Exemple",
+            "last_name": "Fictif",
             "email": case.emails[username].upper(),
             "roles": ["user"],
         },
@@ -512,8 +512,8 @@ async def test_delivery_failure_and_duplicates(auth_case: Harness) -> None:
         await case.client.post(
             "/api/v1/admin/users",
             json={
-                "first_name": "Valentin",
-                "last_name": "Burgaud",
+                "first_name": "Exemple",
+                "last_name": "Fictif",
                 "email": "unknown_role@example.org",
                 "roles": ["missing"],
             },
@@ -564,7 +564,7 @@ async def test_identity_key_rotation_preserves_login(
         stored.reference_adult_encrypted = case.app.state.identity_cipher.encrypt(
             stored.id,
             "reference_adult",
-            '{"first_name":"Marie","last_name":"Roy","phone":"+33612345678"}',
+            '{"first_name":"Modele","last_name":"Test","phone":"+33612345678"}',
         )
     new_path = tmp_path / "rotated-keys"
     generate_keys(new_path)
@@ -582,7 +582,7 @@ async def test_identity_key_rotation_preserves_login(
         assert actor.id == case.administrator
         stored = await session.get(User, actor.id)
         assert cipher.decrypt(actor.id, "birth_date", stored.birth_date_encrypted) == '"1988-03-12"'
-        assert "Marie" in cipher.decrypt(
+        assert "Modele" in cipher.decrypt(
             actor.id, "reference_adult", stored.reference_adult_encrypted
         )
 
@@ -722,8 +722,8 @@ async def test_setup_is_atomic_and_never_reopens(
                     await client.post(
                         "/api/v1/auth/setup",
                         json={
-                            "first_name": "Valentin",
-                            "last_name": "Burgaud",
+                            "first_name": "Exemple",
+                            "last_name": "Fictif",
                             "email": "owner@example.org",
                             "password": PASSWORD,
                         },
@@ -740,8 +740,8 @@ async def test_setup_is_atomic_and_never_reopens(
                 ids.append(int(login.json()["id"]))
                 bootstrap_token = client.cookies.get(settings.cookie_name)
                 body = {
-                    "first_name": "Valentin",
-                    "last_name": "Burgaud",
+                    "first_name": "Exemple",
+                    "last_name": "Fictif",
                     "username": prefix,
                     "email": "owner@example.org",
                     "password": PASSWORD,

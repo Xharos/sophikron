@@ -70,10 +70,10 @@
 		icon: 'calculator',
 		color: '#244bc1',
 		creator: { id: 99, label: 'Créateur historique', role: 'teacher', can_edit: false },
-		responsible: { id: 1, label: 'Camille Martin', role: 'teacher', can_edit: true },
+		responsible: { id: 1, label: 'Compte Specimen', role: 'teacher', can_edit: true },
 		collaborators: [
-			{ id: 2, label: 'Alice Durand', role: 'teacher', can_edit: true },
-			{ id: 3, label: 'Zoé Bernard', role: 'kholleur', can_edit: false }
+			{ id: 2, label: 'Alpha Fictice', role: 'teacher', can_edit: true },
+			{ id: 3, label: 'Zêta Temoin', role: 'kholleur', can_edit: false }
 		],
 		can_open: true,
 		can_edit: true,

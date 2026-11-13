@@ -2,8 +2,10 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-30
-- **Sources:** `0005_lessons.py`, `app/services/document_storage.py`, `file_validation.py`,
-  `lesson_documents.py` and `compose.yaml`.
+- **Sources:** [course migration](../../backend/alembic/versions/0005_lessons.py),
+  [storage](../../backend/app/services/document_storage.py),
+  [file validation](../../backend/app/services/file_validation.py),
+  [document service](../../backend/app/services/lesson_documents.py), [Compose](../../compose.yaml).
 
 ## Context and decision
 

@@ -106,8 +106,8 @@ async def test_promotion_role_eligibility_and_teaching_filter(auth_case: Harness
             response = await case.client.post(
                 "/api/v1/admin/users",
                 json={
-                    "first_name": "Camille",
-                    "last_name": "Martin",
+                    "first_name": "Compte",
+                    "last_name": "Specimen",
                     "email": f"{case.prefix}-eligible-{index}@example.org",
                     "roles": roles,
                     "promotion_ids": [promotion_id],
@@ -145,7 +145,7 @@ async def test_promotion_role_eligibility_and_teaching_filter(auth_case: Harness
         searched = await case.client.get(
             "/api/v1/admin/users/search",
             params={
-                "q": "Camille",
+                "q": "Compte",
                 "role": "teaching",
                 "promotion_id": promotion_id,
             },
@@ -173,8 +173,8 @@ async def test_promotion_role_eligibility_and_teaching_filter(auth_case: Harness
         rejected = await case.client.post(
             "/api/v1/admin/users",
             json={
-                "first_name": "Camille",
-                "last_name": "Martin",
+                "first_name": "Compte",
+                "last_name": "Specimen",
                 "email": f"{case.prefix}-rejected@example.org",
                 "roles": ["admin"],
                 "promotion_ids": [promotion_id],
@@ -185,8 +185,8 @@ async def test_promotion_role_eligibility_and_teaching_filter(auth_case: Harness
         accepted = await case.client.post(
             "/api/v1/admin/users",
             json={
-                "first_name": "Camille",
-                "last_name": "Martin",
+                "first_name": "Compte",
+                "last_name": "Specimen",
                 "email": f"{case.prefix}-rejected@example.org",
                 "roles": ["admin"],
             },
@@ -231,7 +231,7 @@ async def test_promotion_candidates_exclude_members(auth_case: Harness, roles: l
             response = await case.client.post(
                 "/api/v1/admin/users",
                 json={
-                    "first_name": "Camille",
+                    "first_name": "Compte",
                     "last_name": "Exclusion",
                     "email": f"{case.prefix}-exclude-{index}@example.org",
                     "roles": roles,
@@ -517,8 +517,8 @@ async def test_atomic_creation_and_immutable_username(auth_case: Harness) -> Non
     promotion_id = await make_promotion(case)
     try:
         body = dict(
-            first_name="Valentin",
-            last_name="Rémi",
+            first_name="Exemple",
+            last_name="Démo",
             email="atomic@example.org",
             roles=["teacher", "admin"],
             promotion_ids=[promotion_id],
@@ -528,7 +528,7 @@ async def test_atomic_creation_and_immutable_username(auth_case: Harness) -> Non
         user = response.json()
         case.ids.append(user["id"])
         assert isinstance(user["id"], int) and user["id"] > 0
-        assert user["username"].startswith("vremi") and 100 <= int(user["username"][-3:]) <= 999
+        assert user["username"].startswith("edemo") and 100 <= int(user["username"][-3:]) <= 999
         assert {"teacher.access", "users.manage"} <= set(user["permissions"])
         before = (await case.client.get("/api/v1/admin/users")).json()["total"]
         for changes, expected in (
@@ -615,11 +615,11 @@ async def test_search_filters_and_permissions(auth_case: Harness) -> None:
     assert (await case.client.get("/api/v1/test/teacher")).status_code == 403
     user_id, username = await case.create("teacher")
     assert (
-        await case.client.get("/api/v1/admin/users/search?q=valentin%20burgo&role=teacher")
+        await case.client.get("/api/v1/admin/users/search?q=exemple%20ficto&role=teacher")
     ).json()[0]["id"] == user_id
     assert (await case.client.get("/api/v1/admin/users/search?q=v")).status_code == 422
     assert (await case.client.get("/api/v1/admin/users/search?q=zzzzzzzz")).json() == []
-    assert (await case.client.get("/api/v1/admin/users/search?q=val&limit=21")).status_code == 422
+    assert (await case.client.get("/api/v1/admin/users/search?q=exe&limit=21")).status_code == 422
     assert (await case.client.get("/api/v1/admin/users?role=teacher")).json()["total"] == 1
     assert (await case.client.get("/api/v1/admin/users/9223372036854775807")).status_code == 404
     assert (
@@ -628,10 +628,10 @@ async def test_search_filters_and_permissions(auth_case: Harness) -> None:
     await case.client.post(
         "/api/v1/auth/login", json={"identifier": username, "password": PASSWORD}
     )
-    for path in ("users", "users/search?q=val", "promotions", "events"):
+    for path in ("users", "users/search?q=exe", "promotions", "events"):
         assert (await case.client.get("/api/v1/admin/" + path)).status_code == 403
     case.client.cookies.clear()
-    assert (await case.client.get("/api/v1/admin/users/search?q=val")).status_code == 401
+    assert (await case.client.get("/api/v1/admin/users/search?q=exe")).status_code == 401
 
 
 @pytest.mark.asyncio
@@ -729,8 +729,8 @@ async def test_parallel_username_generation(auth_case: Harness) -> None:
             case.client.post(
                 "/api/v1/admin/users",
                 json={
-                    "first_name": "Dionis",
-                    "last_name": "DU SEJOUR",
+                    "first_name": "Compte",
+                    "last_name": "DU TEST",
                     "email": f"collision{index}@example.org",
                     "roles": ["user"],
                 },
@@ -742,7 +742,7 @@ async def test_parallel_username_generation(auth_case: Harness) -> None:
         assert response.status_code == 201, response.text
         case.ids.append(response.json()["id"])
     names = [response.json()["username"] for response in responses]
-    assert len(set(names)) == 3 and all(name.startswith("dduse") for name in names)
+    assert len(set(names)) == 3 and all(name.startswith("cdute") for name in names)
 
 
 @pytest.mark.asyncio
@@ -754,20 +754,20 @@ async def test_cached_search_observes_current_identity_and_filters(auth_case: Ha
         user_id, _ = await case.create(activate=False)
         membership = f"/api/v1/admin/users/{user_id}/promotions/{promotion_id}"
         await case.client.put(membership)
-        params = {"q": "burgaud", "promotion_id": promotion_id}
+        params = {"q": "fictif", "promotion_id": promotion_id}
         assert (await case.client.get("/api/v1/admin/users/search", params=params)).json()[0][
             "id"
         ] == user_id
         async with case.database.sessions.begin() as session:
             user = await session.get(User, user_id)
             user.last_name_encrypted = case.app.state.identity_cipher.encrypt(
-                user_id, "last_name", "Martin"
+                user_id, "last_name", "Specimen"
             )
         assert (await case.client.get("/api/v1/admin/users/search", params=params)).json() == []
-        params["q"] = "martin"
+        params["q"] = "specimen"
         assert (await case.client.get("/api/v1/admin/users/search", params=params)).json()[0][
             "last_name"
-        ] == "Martin"
+        ] == "Specimen"
         await case.client.delete(membership)
         assert (await case.client.get("/api/v1/admin/users/search", params=params)).json() == []
     finally:

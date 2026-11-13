@@ -297,11 +297,11 @@ test('teachers precede kholleurs with French alphabetical ordering and dual role
 		roles: ('teacher' | 'kholleur')[]
 	) => ({ id, last_name, first_name, roles });
 	const people = [
-		person(1, 'Aaron', 'Paul', ['kholleur']),
-		person(2, 'Zola', 'Zoé', ['teacher']),
-		person(3, 'Émile', 'Alice', ['teacher', 'kholleur']),
-		person(4, 'Zola', 'Alice', ['teacher']),
-		person(5, 'Bernard', 'Paul', ['kholleur'])
+		person(1, 'Aaron', 'Profil', ['kholleur']),
+		person(2, 'Zeta', 'Zêta', ['teacher']),
+		person(3, 'Étalon', 'Alpha', ['teacher', 'kholleur']),
+		person(4, 'Zeta', 'Alpha', ['teacher']),
+		person(5, 'Temoin', 'Profil', ['kholleur'])
 	];
 	assert.deepEqual(
 		[...people].sort(compareWishPeople).map((person) => person.id),
@@ -322,8 +322,8 @@ test('only subjects with allocated kholles appear, including when wishes are sti
 		staff: [
 			{
 				id: 10,
-				name: 'Marie Test',
-				first_name: 'Marie',
+				name: 'Modele Test',
+				first_name: 'Modele',
 				last_name: 'Test',
 				roles: ['teacher'],
 				sessions: id === 2 ? 4 : null

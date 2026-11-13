@@ -29,6 +29,7 @@ export interface Account extends User {
 
 export interface Promotion {
 	id: number;
+	curriculum_id?: number | null;
 	year: number;
 	identifier: string;
 	color: string;

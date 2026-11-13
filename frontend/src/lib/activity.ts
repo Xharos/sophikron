@@ -40,6 +40,13 @@ export function roleTransitionLabel(name: string, roles: string[]): string {
 }
 
 const fieldLabels: Record<string, string> = {
+	parent_ids: 'Compétences parentes',
+	source_url: 'Programme officiel',
+	is_active: 'État',
+	knowledge: 'Connaissances associées',
+	semester: 'Semestre',
+	position: 'Ordre',
+	subject_ids: 'Matières',
 	audience: 'Visibilité',
 	table_structure: 'Lignes et colonnes du tableau',
 	first_name: 'Prénom',
@@ -101,6 +108,32 @@ export function eventSubjects(value: unknown): ActivitySubject[] {
 /** Explain recorded facts without copying private profile values or invitation secrets. */
 export function eventDetails(event: ActivityEvent): string[] {
 	const data = event.data;
+	if (event.event_type === 'curriculum.changed') {
+		const labels: Record<string, string> = {
+			referential_created: 'Référentiel créé',
+			referential_updated: 'Référentiel modifié',
+			referential_archived: 'Référentiel archivé',
+			referential_saved: 'Référentiel enregistré',
+			competency_created: 'Compétence ajoutée',
+			competency_updated: 'Compétence modifiée',
+			competency_deleted: 'Compétence supprimée',
+			competencies_imported: 'Compétences importées',
+			action_undone: 'Action annulée'
+		};
+		return [
+			labels[String(data.action)] ?? 'Programme modifié',
+			typeof data.imported_count === 'number' && data.imported_count > 0
+				? `${data.imported_count} compétence(s) ajoutée(s)`
+				: '',
+			typeof data.curriculum_title === 'string' ? `Référentiel : ${data.curriculum_title}` : '',
+			typeof data.subject_name === 'string' ? `Matière : ${data.subject_name}` : '',
+			typeof data.competency_name === 'string' ? `Compétence : ${data.competency_name}` : '',
+			Array.isArray(data.changed_fields) && data.changed_fields.length
+				? `Champs : ${data.changed_fields.map((field) => fieldLabels[String(field)] ?? String(field)).join(', ')}`
+				: '',
+			data.competency_name ? `${data.parent_count} parent(s) · ${data.child_count} enfant(s)` : ''
+		].filter(Boolean);
+	}
 	if (
 		event.event_type.startsWith('timetable.') ||
 		event.event_type === 'user.availability_updated'

@@ -60,6 +60,31 @@ can be retried without creating another account.
 
 ## Responsive workspace
 
+### Curriculum workspace
+
+`/curricula` and its header link require `curricula.read`; server loads and backend services both
+enforce this. Administrators manage metadata, while current subject assignments scope teacher
+competency/import actions. Kholleurs receive a read-only view. Promotions may reference a curriculum
+without changing their free name or calendar identity.
+
+The desktop graph uses Three.js and existing subject badges/modals. Concentric rings are recalculated
+for visible branches; direct links join block borders. The compact parent-first outline is the only
+view at widths up to 650 px, with no WebGL initialization there. Returning to desktop recreates the
+canvas/context. Subject headings add a root competency only when authorized. Other editors retain
+keyboard handling, inherited colors, fullscreen toggling and reduced-motion behavior.
+
+`POST /curricula/data` relays allowlisted metadata, graph, node and undo commands. The dedicated
+`POST /curricula/transfer` accepts only import/export commands with positive numeric IDs. The latter
+alone has an 8 MiB + 4 KiB bounded-body guard for escaped original JSON file text; ordinary JSON
+writes retain 16 KiB. Backend parsing and live permissions remain authoritative. Exports use the
+chosen subject name as a safe `.json` basename; imports append atomically and can be undone as a lot.
+The file modal reuses the course document dropzone. No uploaded file or teaching text is executed.
+
+See [curriculum behavior and limits](curricula.md) and
+[ADR 0011](decisions/0011-curricula-and-competency-graphs.md).
+
+### Administration workspace
+
 The administrator overview shows a half-doughnut of active, pending-activation and archived accounts,
 the total and active promotion counts, promotion shortcuts and a journal of 15 events per page.
 Journal entries use newest timestamps first with ID tie-breaking; arrows navigate opaque cursors.
@@ -164,8 +189,7 @@ the displayed token; reopen the existing account to generate a replacement.
 Activation reads `#token=…` in the browser, removes the fragment from the current history entry,
 and submits the token in a form body through the BFF. Pasting a token manually also works without
 JavaScript. The token is single-use, expires, and is replaced by explicit regeneration. Manual
-delivery does not verify the email. Under explicit owner authorization, the existing 0001 migration
-includes archive dates and invitation purposes; no migration was added for this draft.
+delivery does not verify the email.
 
 ## Code and verification
 

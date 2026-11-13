@@ -21,6 +21,10 @@ test('the bridge permits course roots and element operations while refusing arbi
 	for (const [path, method] of [
 		['/lessons?q=maths', 'GET'],
 		['/lessons', 'POST'],
+		['/curricula/catalog', 'GET'],
+		['/curricula/tracks', 'POST'],
+		['/curricula/12/subjects/3', 'GET'],
+		['/curricula/12/subjects/3/nodes/4', 'PUT'],
 		['/lessons/12', 'PUT'],
 		['/lessons/12/elements/34', 'DELETE'],
 		['/lessons/12/elements/34/move', 'POST'],
@@ -43,6 +47,7 @@ test('the bridge permits course roots and element operations while refusing arbi
 	}
 	for (const path of [
 		'/lessons/../admin/users',
+		'/curricula/../admin/users',
 		'//evil.example',
 		'/lessons/12#secret',
 		'/unknown/path',
@@ -265,11 +270,11 @@ test('bridge supports typed mutations and encoded directory queries without perm
 	await requestBackend(
 		event(null, 'GET').input,
 		config,
-		'/teaching/users/search?q=du%20sejour&limit=20',
+		'/teaching/users/search?q=du%20test&limit=20',
 		'GET',
 		undefined,
 		async (url) => {
-			assert.equal(url, 'http://backend:8000/api/v1/teaching/users/search?q=du%20sejour&limit=20');
+			assert.equal(url, 'http://backend:8000/api/v1/teaching/users/search?q=du%20test&limit=20');
 			return Response.json([]);
 		}
 	);

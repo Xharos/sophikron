@@ -1,7 +1,7 @@
 """Consolidated kholloscope preparation, durable drafts and administrator capabilities.
 
 This unreleased baseline replaces the former 0008 through 0014 revisions.
-Apply it to a fresh database or one still at 0007; never stamp an old schema to match it.
+Apply it to a fresh database or the cleaned 0007 baseline; never stamp an old schema to match it.
 """
 
 import sqlalchemy as sa
@@ -52,15 +52,6 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["subject_id"], ["sophikron.subjects.id"], ondelete="RESTRICT"),
         schema="sophikron",
     )
-    for name in ("kholle_max_hours", "kholle_min_hours"):
-        op.drop_constraint(
-            op.f(f"ck_teacher_availability_{name}"),
-            "teacher_availability",
-            type_="check",
-            schema="sophikron",
-        )
-    for name in ("kholle_min_hours", "kholle_max_hours"):
-        op.drop_column("teacher_availability", name, schema="sophikron")
     op.create_table(
         "kholloscope_workflows",
         sa.Column("school_year", sa.Integer(), primary_key=True),
@@ -149,24 +140,6 @@ def downgrade() -> None:
     )
     op.drop_column("timetable_rooms", "kholle_capacity", schema="sophikron")
     op.drop_table("kholloscope_workflows", schema="sophikron")
-    for name in ("kholle_min_hours", "kholle_max_hours"):
-        op.add_column(
-            "teacher_availability",
-            sa.Column(name, sa.Integer(), nullable=False, server_default="0"),
-            schema="sophikron",
-        )
-    op.create_check_constraint(
-        op.f("ck_teacher_availability_kholle_min_hours"),
-        "teacher_availability",
-        "kholle_min_hours >= 0",
-        schema="sophikron",
-    )
-    op.create_check_constraint(
-        op.f("ck_teacher_availability_kholle_max_hours"),
-        "teacher_availability",
-        "kholle_max_hours >= kholle_min_hours",
-        schema="sophikron",
-    )
     op.drop_table("kholle_wishes", schema="sophikron")
     op.drop_column("timetable_school_years", "created_at", schema="sophikron")
     op.drop_column("timetable_calendars", "kholle_settings", schema="sophikron")

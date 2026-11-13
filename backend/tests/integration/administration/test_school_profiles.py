@@ -42,7 +42,7 @@ def test_age_birthday_boundaries(birth: date | None, today: date, expected: int 
         {"phone": "hello"},
         {"postal_code": "7500"},
         {"orientation_project": "x" * 201},
-        {"reference_adult": {"first_name": "Paul", "last_name": "Roy"}},
+        {"reference_adult": {"first_name": "Profil", "last_name": "Test"}},
         {"baccalaureate": {"overall_grade": 20.01}},
         {"baccalaureate": {"subjects": [{"name": "Maths", "grade": -1}]}},
         {"baccalaureate": {"subjects": [{"name": "Maths"}, {"name": "maths"}]}},
@@ -111,8 +111,8 @@ async def test_private_profile_edit_encryption_and_version(
     path = f"/api/v1/admin/users/{user_id}/profile"
     patch = {
         "expected_version": 0,
-        "first_name": "Élodie",
-        "last_name": "Roy",
+        "first_name": "Échantillon",
+        "last_name": "Test",
         "email": "updated-profile@example.org",
         "birth_date": "2006-05-17",
         "city": "untrusted label",
@@ -127,7 +127,7 @@ async def test_private_profile_edit_encryption_and_version(
             "subjects": [{"name": "Mathématiques", "grade": 0}, {"name": "SI", "grade": 18}],
         },
         "orientation_project": "École d’ingénieurs",
-        "reference_adult": {"first_name": "Marie", "last_name": "Roy", "phone": "01 23 45 67 89"},
+        "reference_adult": {"first_name": "Modele", "last_name": "Test", "phone": "01 23 45 67 89"},
     }
     response = await case.client.patch(path, json=patch)
     assert response.status_code == 200, response.text
@@ -163,10 +163,10 @@ async def test_private_profile_edit_encryption_and_version(
             )
         ).all()
         assert journal and all("changed_fields" in event.data for event in journal)
-        assert "Roy" not in json.dumps([event.data for event in journal])
+        assert "Test" not in json.dumps([event.data for event in journal])
     user = (await case.client.get(f"/api/v1/admin/users/{user_id}")).json()
     assert "birth_date" not in user and "profile" not in user
-    matches = await case.client.get("/api/v1/admin/users/search?q=elodie%20roy")
+    matches = await case.client.get("/api/v1/admin/users/search", params={"q": "Échantillon Test"})
     assert matches.json()[0]["id"] == user_id
     login = await case.client.post(
         "/api/v1/auth/login",
@@ -270,11 +270,11 @@ async def test_profile_duplicate_email_rolls_back(auth_case: Harness) -> None:
     path = f"/api/v1/admin/users/{user_id}/profile"
     email = (await case.client.get(f"/api/v1/admin/users/{case.administrator}")).json()["email"]
     response = await case.client.patch(
-        path, json={"expected_version": 0, "first_name": "Paul", "email": email}
+        path, json={"expected_version": 0, "first_name": "Profil", "email": email}
     )
     assert response.status_code == 409
     detail = (await case.client.get(path)).json()
-    assert detail["first_name"] == "Valentin" and detail["profile_version"] == 0
+    assert detail["first_name"] == "Exemple" and detail["profile_version"] == 0
 
 
 @pytest.mark.integration
@@ -350,12 +350,12 @@ async def test_role_changes_noop_validation_and_atomicity(auth_case: Harness) ->
     email = (await case.client.get(f"/api/v1/admin/users/{case.administrator}")).json()["email"]
     response = await case.client.patch(
         path,
-        json={"expected_version": 1, "email": email, "roles": ["user"], "first_name": "Paul"},
+        json={"expected_version": 1, "email": email, "roles": ["user"], "first_name": "Profil"},
     )
     assert response.status_code == 409
     detail = (await case.client.get(path)).json()
     assert detail["roles"] == ["admin", "teacher"] and detail["profile_version"] == 1
-    assert detail["first_name"] == "Valentin"
+    assert detail["first_name"] == "Exemple"
     async with case.database.sessions() as session:
         events = list(
             await session.scalars(
@@ -423,11 +423,11 @@ async def test_administrator_cannot_remove_own_admin_role(auth_case: Harness) ->
     path = f"/api/v1/admin/users/{case.administrator}/profile"
     for roles in [["user"], ["teacher"]]:
         response = await case.client.patch(
-            path, json={"expected_version": 0, "roles": roles, "first_name": "Paul"}
+            path, json={"expected_version": 0, "roles": roles, "first_name": "Profil"}
         )
         assert response.status_code == 409
     detail = (await case.client.get(path)).json()
-    assert detail["roles"] == ["admin"] and detail["first_name"] == "Valentin"
+    assert detail["roles"] == ["admin"] and detail["first_name"] == "Exemple"
     assert detail["profile_version"] == 0
     for version, roles in enumerate([["teacher", "admin"], ["admin"]]):
         response = await case.client.patch(path, json={"expected_version": version, "roles": roles})

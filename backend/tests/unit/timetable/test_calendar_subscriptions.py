@@ -34,11 +34,11 @@ def test_export_subject_and_audience_notes(target: str, number: int | None, labe
             "target_number": number,
             "audience_label": "Option allemand",
             "promotion_label": "PTSI",
-            "teacher": "Camille Martin",
+            "teacher": "Compte Specimen",
         }
     )
     assert summary == "TD - MATHÉMATIQUES"
-    assert notes == f"PTSI — {label}\nCamille Martin"
+    assert notes == f"PTSI — {label}\nCompte Specimen"
 
 
 def test_export_subjectless_session_without_teacher() -> None:

@@ -2,12 +2,11 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-30
-- **Sources:** `backend/alembic/versions/0001_authentication.py` through `0007_timetable.py`,
-  especially `0002_configuration.py`; `app/services/releases.py`.
+- **Sources:** [configuration migration](../../backend/alembic/versions/0002_configuration.py),
+  [release service](../../backend/app/services/releases.py).
 
 ## Context and decision
 
-The release baseline contains seven ordered feature revisions, with `0007_timetable` as the only head.
 Configuration includes the singleton release-check cache. This is a fresh
 installation baseline, not an upgrade path for any database that used an earlier amended history.
 Do not use `stamp` to make such a database appear compatible. Published revisions become immutable.
@@ -25,7 +24,6 @@ lookup sends no credentials or student data. Outages preserve the last success. 
 
 `alembic upgrade head` creates the full installation in dependency order. Downgrading configuration
 removes settings and these measurements/cache; it is not a way to undo only the release check.
-Keeping a separate 0008 would preserve the old chain but obscure this pre-release consolidation.
 The migration-stage integration test checks the cache is absent at 0001 and seeded at 0002;
 round-trip and metadata checks validate the full PostgreSQL schema. The runtime cannot access
 Alembic's version table and never receives the migration password.

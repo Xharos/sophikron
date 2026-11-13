@@ -239,7 +239,7 @@ async def test_teacher_scope_includes_archived_students(auth_case: Harness) -> N
         assert (
             await case.client.get(f"/api/v1/teaching/users?promotion_id={other}")
         ).status_code == 404
-        matches = await case.client.get("/api/v1/teaching/users/search?q=valentin")
+        matches = await case.client.get("/api/v1/teaching/users/search?q=exemple")
         assert [item["id"] for item in matches.json()] == [student_id]
         for path in ("/api/v1/admin/users", "/api/v1/admin/summary", "/api/v1/admin/events"):
             assert (await case.client.get(path)).status_code == 403
@@ -272,7 +272,7 @@ async def test_event_date_order_and_expired_invitation(auth_case: Harness) -> No
     page = await case.client.get("/api/v1/admin/events?limit=1")
     assert page.status_code == 200
     assert datetime.fromisoformat(page.json()["items"][0]["occurred_at"]) == future
-    assert page.json()["items"][0]["subject_label"] == "Valentin Burgaud"
+    assert page.json()["items"][0]["subject_label"] == "Exemple Fictif"
     cursor = page.json()["next_cursor"]
     next_page = await case.client.get("/api/v1/admin/events", params={"cursor": cursor, "limit": 1})
     assert next_page.json()["items"][0]["id"] != page.json()["items"][0]["id"]

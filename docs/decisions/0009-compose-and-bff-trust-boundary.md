@@ -2,8 +2,8 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-30
-- **Sources:** `compose.yaml`, `compose.local.yaml`, `infra/postgres/init/001_roles.sql`,
-  `infra/nginx.conf`, backend proxy middleware and frontend server helpers.
+- **Sources:** [Compose base](../../compose.yaml), [local overlay](../../compose.local.yaml),
+  [database roles](../../infra/postgres/init/001_roles.sql), [host proxy](../../infra/nginx.conf).
 
 ## Context and decision
 

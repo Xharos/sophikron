@@ -260,16 +260,16 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 						staff: [
 							{
 								id: 2,
-								name: 'Marie Test',
-								first_name: 'Marie',
+								name: 'Modele Test',
+								first_name: 'Modele',
 								last_name: 'Test',
 								roles: ['teacher'],
 								sessions: wishesByYear.get(year) ?? 0
 							},
 							{
 								id: 4,
-								name: 'Paul Kholleur',
-								first_name: 'Paul',
+								name: 'Profil Kholleur',
+								first_name: 'Profil',
 								last_name: 'Kholleur',
 								roles: ['kholleur'],
 								sessions: 1
@@ -312,8 +312,8 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 						staff: [
 							{
 								id: 2,
-								name: 'Marie Test',
-								first_name: 'Marie',
+								name: 'Modele Test',
+								first_name: 'Modele',
 								last_name: 'Test',
 								roles: ['teacher', 'kholleur'],
 								sessions: wishesByYear.get(year) ?? null
@@ -328,8 +328,8 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 						staff: [
 							{
 								id: 99,
-								name: 'Paul Exemple',
-								first_name: 'Paul',
+								name: 'Profil Exemple',
+								first_name: 'Profil',
 								last_name: 'Exemple',
 								roles: ['teacher'],
 								sessions: 4
@@ -694,7 +694,7 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 			return reply({
 				id: 1,
 				username: 'test',
-				first_name: 'Camille',
+				first_name: 'Compte',
 				last_name: 'Test',
 				is_bootstrap: false,
 				status: 'active',
@@ -1212,7 +1212,7 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 			0
 		);
 		assert.equal(
-			await page.locator('.wishes').getByText('Paul Exemple', { exact: true }).count(),
+			await page.locator('.wishes').getByText('Profil Exemple', { exact: true }).count(),
 			0
 		);
 		const wishInput = page.getByRole('spinbutton', { name: /Séances sur deux semaines/ });
@@ -1296,17 +1296,20 @@ test('live annual management, recurrence confirmations, hours, archival and annu
 			0
 		);
 		assert.equal(
-			await page.locator('.service-panel tbody tr').filter({ hasText: 'Marie Test' }).count(),
+			await page
+				.locator('.service-panel tbody tr')
+				.filter({ hasText: 'Modele Test' })
+				.count(),
 			1
 		);
 		await page.getByRole('checkbox', { name: 'C106' }).check();
 		await page.getByRole('checkbox', { name: 'C105' }).check();
 		await assertUntouchedSteps(['Génération du calendrier', 'Affectation des groupes']);
 		const preferenceSwitch = page.getByRole('switch', {
-			name: /Priorité à sa promotion — Marie Test/
+			name: /Priorité à sa promotion — Modele Test/
 		});
 		const kholleurPreference = page.getByRole('switch', {
-			name: /Priorité à ses promotions — Paul Kholleur/
+			name: /Priorité à ses promotions — Profil Kholleur/
 		});
 		assert.equal(await kholleurPreference.isEnabled(), true);
 		assert.equal(await kholleurPreference.isChecked(), true);

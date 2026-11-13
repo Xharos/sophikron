@@ -34,6 +34,9 @@ class Promotion(Base):
     )
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(always=True), primary_key=True)
+    curriculum_id: Mapped[int | None] = mapped_column(
+        ForeignKey("sophikron.curricula.id", ondelete="RESTRICT"), index=True
+    )
     year: Mapped[int] = mapped_column(Integer, index=True)
     identifier: Mapped[str] = mapped_column(String(64))
     color: Mapped[str] = mapped_column(String(7))

@@ -13,6 +13,7 @@ class PromotionCreate(InputModel):
     """Create an active promotion using a year, identifier and hexadecimal CSS color."""
 
     year: int = Field(ge=1, le=9999)
+    curriculum_id: int | None = Field(default=None, gt=0)
     identifier: str = Field(min_length=1, max_length=64)
     color: str = Field(pattern=r"^#[0-9A-Fa-f]{6}$")
 
@@ -32,10 +33,17 @@ class PromotionCreate(InputModel):
         return value.upper()
 
 
+class PromotionSnapshot(PromotionCreate):
+    """Read legacy pathway references only in historical event snapshots."""
+
+    track_id: int | None = Field(default=None, gt=0)
+
+
 class PromotionUpdate(InputModel):
     """Update supplied fields, including reversible archive state; null is never a value."""
 
     year: int | None = Field(default=None, ge=1, le=9999)
+    curriculum_id: int | None = Field(default=None, gt=0)
     identifier: str | None = Field(default=None, min_length=1, max_length=64)
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     is_active: bool | None = None
@@ -105,6 +113,7 @@ class PromotionResponse(BaseModel):
     """Expose promotion metadata and the current number of linked permanent accounts."""
 
     id: int
+    curriculum_id: int | None = None
     year: int
     identifier: str
     color: str
@@ -177,7 +186,7 @@ class EventResponse(BaseModel):
     subject_user_id: int | None
     actor_role: Literal["admin", "teacher", "kholleur", "user"] | None
     subject_role: Literal["admin", "teacher", "kholleur", "user"] | None
-    promotion_snapshot: PromotionCreate | None
+    promotion_snapshot: PromotionSnapshot | None
     resource_type: str | None
     resource_id: int | None
     data: dict[str, object]

@@ -13,12 +13,12 @@ pytestmark = pytest.mark.perf
 @pytest.mark.parametrize("count", [2000, 10000])
 def test_search_ranking_latency(count: int, record_property: Callable[[str, object], None]) -> None:
     """Keep top-result correctness while measuring repeated large candidate ranking."""
-    names = {i: prepare_name("Alice", "Martin") for i in range(count)}
-    names[count] = prepare_name("Valentin", "Burgaud")
+    names = {i: prepare_name("Alpha", "Specimen") for i in range(count)}
+    names[count] = prepare_name("Exemple", "Fictif")
     samples = []
     for _ in range(6):
         start = perf_counter()
-        result = rank_prepared_names("valentin burgo", names, 20)
+        result = rank_prepared_names("exemple ficto", names, 20)
         samples.append(perf_counter() - start)
         assert result[0] == count
     p95 = max(samples[1:])

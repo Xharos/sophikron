@@ -46,7 +46,7 @@ async def test_interactive_search_representative_volumes(auth_case: Harness) -> 
                     username = f"benchmark{user_id}"
                     email = f"{username}@example.org"
                     first, last = (
-                        ("Valentin", "Burgaud") if index % 10 == 0 else ("Alice", "Martin")
+                        ("Exemple", "Fictif") if index % 10 == 0 else ("Alpha", "Specimen")
                     )
                     records.append(
                         dict(
@@ -76,13 +76,13 @@ async def test_interactive_search_representative_volumes(auth_case: Harness) -> 
                 response = await case.client.get(
                     "/api/v1/admin/users/search",
                     params={
-                        "q": "valentin burgo",
+                        "q": "exemple ficto",
                         "promotion_id": promotion_id,
                     },
                 )
                 elapsed = perf_counter() - start
                 assert response.status_code == 200 and len(response.json()) == 20
-                assert all(item["last_name"] == "Burgaud" for item in response.json())
+                assert all(item["last_name"] == "Fictif" for item in response.json())
                 return elapsed
 
             await timed_search()

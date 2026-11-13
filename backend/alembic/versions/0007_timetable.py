@@ -1,4 +1,4 @@
-"""Create annual timetables, kholle bounds, audiences and revocable ICS subscriptions."""
+"""Create annual timetables, availability patterns, audiences and revocable ICS subscriptions."""
 
 from uuid import uuid4
 
@@ -13,7 +13,7 @@ depends_on: str | None = None
 
 
 def upgrade() -> None:
-    """Create timetable storage, availability bounds, archive policy and personal calendar links."""
+    """Create timetables, availability patterns, archive policy and personal calendar links."""
     op.create_table(
         "timetable_calendars",
         sa.Column("id", sa.BigInteger(), sa.Identity(), primary_key=True),
@@ -61,15 +61,6 @@ def upgrade() -> None:
         sa.Column("user_id", sa.BigInteger(), nullable=False),
         sa.Column("school_year", sa.Integer(), nullable=False),
         sa.Column("ranges", postgresql.JSONB(), nullable=True),
-        sa.Column("kholle_min_hours", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("kholle_max_hours", sa.Integer(), nullable=False, server_default="0"),
-        sa.CheckConstraint(
-            "kholle_min_hours >= 0", name=op.f("ck_teacher_availability_kholle_min_hours")
-        ),
-        sa.CheckConstraint(
-            "kholle_max_hours >= kholle_min_hours",
-            name=op.f("ck_teacher_availability_kholle_max_hours"),
-        ),
         sa.Column("revision", sa.String(32), nullable=False),
         sa.PrimaryKeyConstraint("user_id", "school_year"),
         sa.ForeignKeyConstraint(["user_id"], ["sophikron.users.id"], ondelete="CASCADE"),

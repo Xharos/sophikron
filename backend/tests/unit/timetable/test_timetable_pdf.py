@@ -23,7 +23,7 @@ def event(identifier: str, **changes: object) -> dict:
         "subject_id": 1,
         "subject_label": "Mathématiques",
         "title": "Titre",
-        "teacher": "DUPONT Émilie",
+        "teacher": "TEMOIN Échantillon",
         "color": "#4361EE",
         "target_kind": "promotion",
         **changes,
@@ -44,7 +44,7 @@ def test_export_styles_teacher_and_room() -> None:
             (text, str((font or {}).get("/BaseFont", "")))
         )
     )
-    assert any("DUPONT" in text and "Bold" in font for text, font in fragments)
+    assert any("TEMOIN" in text and "Bold" in font for text, font in fragments)
     assert any("B208" in text and "Oblique" in font for text, font in fragments)
 
 
@@ -144,7 +144,7 @@ def test_landscape_page_contains_labels_breaks_and_no_dates_or_kholles(saturday:
                 settings,
                 [
                     event("one", target_kind="halves", target_number=1),
-                    event("two", kind="tp", subject_label="Physique", teacher="MARTIN Jean"),
+                    event("two", kind="tp", subject_label="Physique", teacher="SPECIMEN Jeu"),
                     event("kh", kind="kholle", teacher="Excluded"),
                 ],
             )
@@ -163,8 +163,8 @@ def test_landscape_page_contains_labels_breaks_and_no_dates_or_kholles(saturday:
         "TD",
         "TP",
         "Groupe A",
-        "DUPONT Émilie",
-        "MARTIN Jean",
+        "TEMOIN Échantillon",
+        "SPECIMEN Jeu",
         "Pause",
         "Self",
     ):

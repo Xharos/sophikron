@@ -2,7 +2,9 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-30
-- **Sources:** `0003_promotions.py`, `0004_subjects.py`, `0005_lessons.py` and their backend services.
+- **Sources:** [promotions](../../backend/alembic/versions/0003_promotions.py),
+  [subjects](../../backend/alembic/versions/0004_subjects.py),
+  [courses](../../backend/alembic/versions/0005_lessons.py).
 
 ## Context and decision
 

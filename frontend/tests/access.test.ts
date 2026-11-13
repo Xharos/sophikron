@@ -7,8 +7,8 @@ function user(roles: string[]): User {
 	return {
 		id: 1,
 		username: 'member',
-		first_name: 'Valentin',
-		last_name: 'Burgaud',
+		first_name: 'Exemple',
+		last_name: 'Fictif',
 		email: null,
 		status: 'active',
 		roles,

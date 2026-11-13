@@ -491,8 +491,12 @@ def solve_choices(
     status = cp_model.UNKNOWN
     selected = None
     all_optimal = True
-    weights = rules.time_distribution() if template and rules.optimize else (
-        (sum(rules.time_distribution()[:3]), rules.time_annual_percent) if template else (100,)
+    weights = (
+        rules.time_distribution()
+        if template and rules.optimize
+        else (
+            (sum(rules.time_distribution()[:3]), rules.time_annual_percent) if template else (100,)
+        )
     )
     try:
         for stage, objective in enumerate(objectives):

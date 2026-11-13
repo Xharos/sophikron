@@ -32,8 +32,8 @@ def profile_service() -> ProfileService:
 @pytest.mark.parametrize(
     "field,value",
     [
-        ("first_name", "Alice"),
-        ("last_name", "Martin"),
+        ("first_name", "Alpha"),
+        ("last_name", "Specimen"),
         ("email", "new@example.org"),
         ("orientation_project", "Engineering"),
         ("previous_school", "School"),

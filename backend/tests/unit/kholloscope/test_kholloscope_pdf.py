@@ -22,14 +22,14 @@ def test_two_promotions_export_eight_subject_pages_and_two_rosters() -> None:
             "name": f"Promotion {c} 2026/2027",
             "weeks": [{"start": "2026-09-07"}, {"start": "2026-09-14"}],
             "groups": [
-                {"number": c, "students": [{"last_name": f"Élève {c}", "first_name": "Zoé"}]}
+                {"number": c, "students": [{"last_name": f"Élève {c}", "first_name": "Zêta"}]}
             ],
         }
         for c in (1, 2)
     ]
     catalog = {
         "subjects": [{"id": s, "name": f"Matière {s}", "color": "#244BC1"} for s in range(1, 5)],
-        "teachers": [{"id": 7, "name": "Émilie Dupont"}],
+        "teachers": [{"id": 7, "name": "Échantillon Temoin"}],
         "rooms": [{"id": 8, "name": "B208"}],
     }
     sessions = [
@@ -50,28 +50,28 @@ def test_two_promotions_export_eight_subject_pages_and_two_rosters() -> None:
         calendars,
         sessions,
         catalog,
-        "Compte Élodie",
+        "Compte Échantillon",
         datetime(2026, 11, 5, 13, 45, tzinfo=timezone.utc),
     )
     reader = PdfReader(BytesIO(pdf))
     assert len(reader.pages) == 10
-    assert reader.metadata.author == "Compte Élodie"
+    assert reader.metadata.author == "Compte Échantillon"
     for page in reader.pages:
         assert page.mediabox.width > page.mediabox.height
         text = page.extract_text()
         assert all(
             value in text
             for value in (
-                "Compte Élodie",
+                "Compte Échantillon",
                 "05/11/2026",
                 "14:45",
             )
         )
         if "COMPOSITION DES GROUPES" in text:
-            assert "ÉLÈVE" in text and "Zoé" in text and "Groupe" in text
+            assert "ÉLÈVE" in text and "Zêta" in text and "Groupe" in text
         else:
-            assert all(v in text for v in ("Émilie Dupont", "B208", "07/09", "Matière", "*"))
-            assert "Zoé" not in text
+            assert all(v in text for v in ("Échantillon Temoin", "B208", "07/09", "Matière", "*"))
+            assert "Zêta" not in text
     assert "10 / 10" in reader.pages[-1].extract_text()
     # A painted group rectangle reaches the full table cell bounds, not an inset badge.
     subject = reader.pages[1]
@@ -199,7 +199,7 @@ async def test_export_reads_pupil_names_in_separate_explicit_transactions() -> N
         repo=SimpleNamespace(permissions=permissions),
         cipher=SimpleNamespace(
             decrypt=Mock(
-                side_effect=lambda _uid, field, _data: {"last_name": "Élève", "first_name": "Zoé"}[
+                side_effect=lambda _uid, field, _data: {"last_name": "Élève", "first_name": "Zêta"}[
                     field
                 ]
             )
@@ -236,7 +236,7 @@ async def test_export_reads_pupil_names_in_separate_explicit_transactions() -> N
     exported = await service.pdf(SimpleNamespace(id=9), 2026)
     pages = PdfReader(BytesIO(exported)).pages
     assert len(pages) == 2
-    assert "ÉLÈVE Zoé" in pages[0].extract_text()
+    assert "ÉLÈVE Zêta" in pages[0].extract_text()
     assert "Compte Test" in pages[0].extract_text()
     assert "Mathématiques" in pages[1].extract_text()
     assert not active
