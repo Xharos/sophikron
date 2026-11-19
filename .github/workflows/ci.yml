@@ -130,3 +130,6 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      - name: Test quiz browser flows
+        run: node --test tests/quiz-browser.mjs tests/lesson-quiz-browser.mjs

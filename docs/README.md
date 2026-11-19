@@ -19,6 +19,7 @@ Use synthetic data locally; the [demo guide](../script/README.md) describes API-
 | [Timetables](timetable.md) | Audiences, annual settings, publication, diagnostics and ICS |
 | [Kholloscope generation](kholloscope-generation.md) | Preparation, private jobs, group assignment and dated publication revisions |
 | [Curricula](curricula.md) | Competency graphs, permissions, JSON exchange and undo |
+| [Quiz](quiz.md) | Subject question bank, course quizzes and student results |
 | [Statistics](statistics.md) | Pedagogical indicators, storage and API monitoring |
 | [Architecture decisions](decisions/README.md) | Why schema and deployment boundaries were chosen |
 

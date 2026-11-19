@@ -16,10 +16,12 @@ export async function courseBrowserJourney({
 		channel: process.env.BFF_BROWSER_CHANNEL || 'msedge',
 		headless: true
 	});
+	let context;
 	try {
-		const context = await browser.newContext({
+		context = await browser.newContext({
 			viewport: { width: 1440, height: 1000 },
-			locale: 'fr-FR'
+			locale: 'fr-FR',
+			reducedMotion: 'reduce'
 		});
 		await context.route(`${origin}/**`, async (route) => {
 			const url = new URL(route.request().url());
@@ -49,9 +51,12 @@ export async function courseBrowserJourney({
 		assert.equal(await page.getByRole('search').count(), 0);
 		assert.equal(await courseCard.locator('.course-team .role-teacher').count(), 1);
 		assert.equal(await courseCard.locator('.course-team a').count(), 0);
-		await courseCard
-			.getByRole('link', { name: 'Sciences et découvertes', exact: true })
-			.click();
+		assert.match(
+			new URL(await courseCard.getAttribute('href'), page.url()).pathname,
+			/^\/lessons\/\d+$/
+		);
+		assert.equal(await courseCard.locator('.course-open').count(), 0);
+		await courseCard.locator('.course-team .role-teacher').click();
 		await page.getByText('Mode lecture', { exact: true }).waitFor();
 		await page.getByRole('button', { name: 'Statistiques du cours', exact: true }).click();
 		await page.locator('.statistics-panel[aria-busy="false"]').waitFor();
@@ -211,9 +216,7 @@ export async function courseBrowserJourney({
 		await courseCard.waitFor();
 		assert.equal(await courseCard.locator('.course-team .role-teacher').count(), 2);
 		assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
-		await courseCard
-			.getByRole('link', { name: 'Sciences et découvertes', exact: true })
-			.click();
+		await courseCard.click();
 		await revokeCreator();
 		await page.getByRole('button', { name: 'Modifier le cours', exact: true }).click();
 		await page
@@ -254,11 +257,11 @@ export async function courseBrowserJourney({
 				fullPage: true
 			});
 		assert.deepEqual(errors, []);
-		await context.close();
 		console.log(
 			'Course browser journey passed: editing, combined formatting, collaborators, mobile layout, filtered reading and live role revocation.'
 		);
 	} finally {
+		await context?.unrouteAll({ behavior: 'wait' });
 		await browser.close();
 	}
 }
@@ -277,10 +280,12 @@ export async function browserJourney({
 		headless: true
 	});
 	const errors = [];
+	let context;
 	try {
-		const context = await browser.newContext({
+		context = await browser.newContext({
 			viewport: { width: 1440, height: 1000 },
-			locale: 'fr-FR'
+			locale: 'fr-FR',
+			reducedMotion: 'reduce'
 		});
 		// Publish disposable ports through the configured public origin, just like a host proxy.
 		await context.route(`${origin}/**`, async (route) => {
@@ -320,7 +325,8 @@ export async function browserJourney({
 		await page.goto(`${origin}/dashboard`);
 		await page.getByText('Les comptes', { exact: true }).waitFor();
 		await page.getByText('Promotions et matières', { exact: true }).waitFor();
-		assert.equal(await page.locator('.statistics-grid .stat-card').count(), 6);
+		await page.getByRole('heading', { name: 'Abonnements calendrier', exact: true }).waitFor();
+		assert.equal(await page.locator('.statistics-grid .stat-card').count(), 7);
 		const connections = page
 			.locator('.stat-card')
 			.filter({ has: page.getByRole('heading', { name: 'Connexions', exact: true }) });
@@ -350,16 +356,26 @@ export async function browserJourney({
 			.click();
 		await page.locator('.statistics-panel[aria-busy="false"]').waitFor();
 		await page.locator('.event-row').first().waitFor();
-		assert.ok((await page.locator('.event-row').count()) <= 15);
+		assert.ok((await page.locator('.event-row').count()) <= 5);
 		const journal = page.locator('.event-panel');
-		const eventType = page.getByLabel('Type d’événement', { exact: true });
-		const eventOrder = page.getByLabel('Ordre chronologique', { exact: true });
-		await eventType
-			.locator('option[value="user.profile_updated"]')
-			.waitFor({ state: 'attached' });
-		assert.equal(await eventType.inputValue(), '');
-		assert.equal(await eventOrder.inputValue(), 'desc');
-		await eventType.selectOption('user.profile_updated');
+		await journal.getByLabel('Événements par page').selectOption('15');
+		const eventType = journal.locator('.event-trigger');
+		const eventOrder = journal.getByRole('group', { name: 'Ordre chronologique' });
+		const selectEventType = async (category, label) => {
+			await eventType.click();
+			const option = journal.getByRole('button', { name: label, exact: true });
+			if (!(await option.isVisible())) {
+				await journal
+					.locator('.event-family summary')
+					.getByText(category, { exact: true })
+					.click();
+			}
+			await option.click();
+		};
+		assert.match(await eventType.innerText(), /Tous les événements/);
+		const latest = eventOrder.getByRole('button', { name: 'Plus récents', pressed: true });
+		await latest.waitFor();
+		await selectEventType('Comptes', 'Modifications de fiches');
 		await journal.locator('.event-list[aria-busy="false"]').waitFor();
 		assert.equal(await journal.locator('.event-row').count(), 15);
 		const firstIds = await journal
@@ -379,14 +395,14 @@ export async function browserJourney({
 		);
 		await journal.getByRole('button', { name: 'Page précédente du journal' }).click();
 		await journal.getByRole('status').filter({ hasText: 'Page 2' }).waitFor();
-		await eventOrder.selectOption('asc');
+		await eventOrder.getByRole('button', { name: 'Plus anciens' }).click();
 		await journal.locator('.event-list[aria-busy="false"]').waitFor();
 		await journal.getByRole('status').filter({ hasText: 'Page 1' }).waitFor();
 		const times = await journal
 			.locator('time')
 			.evaluateAll((items) => items.map((item) => Date.parse(item.dateTime)));
 		assert.ok(times.every((time, index) => index === 0 || times[index - 1] <= time));
-		await eventType.selectOption('user.created');
+		await selectEventType('Comptes', 'Créations de comptes');
 		await journal.locator('.event-list[aria-busy="false"]').waitFor();
 		assert.ok(
 			await journal.getByRole('button', { name: 'Page suivante du journal' }).isDisabled()
@@ -395,8 +411,7 @@ export async function browserJourney({
 		await page.locator('.profile-page-hero').waitFor();
 		assert.ok(new URL(page.url()).searchParams.has('id'));
 		await page.goto(`${origin}/dashboard`);
-		await eventType.locator('option[value="promotion.created"]').waitFor({ state: 'attached' });
-		await eventType.selectOption('promotion.created');
+		await selectEventType('Promos et groupes', 'Créations de promotions');
 		await journal.locator('.event-list[aria-busy="false"]').waitFor();
 		await journal.locator('a.promotion-tag').first().click();
 		await page
@@ -497,10 +512,12 @@ export async function browserJourney({
 		await page.getByRole('button', { name: 'Confirmer', exact: true }).click();
 		await page.getByRole('button', { name: 'Archiver', exact: true }).waitFor();
 
-		await page
+		const accountsTab = page
 			.getByRole('navigation', { name: 'Navigation de l’espace de gestion' })
-			.getByRole('button', { name: 'Comptes', exact: true })
-			.click();
+			.getByRole('button', { name: 'Comptes', exact: true });
+		await accountsTab.click();
+		await page.waitForURL((url) => url.searchParams.get('tab') === 'accounts');
+		await accountsTab.and(page.locator('[aria-current="page"]')).waitFor();
 		await page.getByRole('button', { name: 'Créer un compte', exact: true }).click();
 		const creationRoles = dialog.getByRole('group', { name: 'Rôles du compte', exact: true });
 		await creationRoles.getByRole('checkbox', { name: 'Élève', exact: true }).uncheck();
@@ -633,10 +650,7 @@ export async function browserJourney({
 			await roleSelector.getByRole('checkbox', { name: 'Élève', exact: true }).isChecked()
 		);
 		await page.goto(`${origin}/dashboard`);
-		await eventType
-			.locator('option[value="user.roles_updated"]')
-			.waitFor({ state: 'attached' });
-		await eventType.selectOption('user.roles_updated');
+		await selectEventType('Comptes', 'Changements de rôles');
 		await journal.locator('.event-list[aria-busy="false"]').waitFor();
 		assert.equal(await journal.locator('.role-transition').count(), 4);
 		assert.ok(await journal.locator('.role-transition .role-student').first().isVisible());
@@ -722,9 +736,7 @@ export async function browserJourney({
 		await dialog.waitFor({ state: 'hidden' });
 		await page.getByText('Fiche enregistrée.', { exact: true }).waitFor();
 		await page.goto(origin + '/dashboard?tab=overview');
-		await page
-			.getByLabel('Type d’événement', { exact: true })
-			.selectOption('user.subjects_updated');
+		await selectEventType('Comptes', 'Affectations des matières');
 		const assignments = page.locator('.event-row[data-event-type="user.subjects_updated"]');
 		await assignments.filter({ hasText: 'Matières attribuées' }).waitFor();
 		await assignments.filter({ hasText: 'Matières retirées' }).waitFor();
@@ -850,11 +862,11 @@ export async function browserJourney({
 			.waitFor();
 		await page.keyboard.press('Escape');
 		assert.deepEqual(errors, []);
-		await context.close();
 		console.log(
 			'Browser journey passed: desktop/mobile dashboard, modals, repeated creation, invitations and restricted teacher profiles.'
 		);
 	} finally {
+		await context?.unrouteAll({ behavior: 'wait' });
 		await browser.close();
 	}
 }

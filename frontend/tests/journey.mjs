@@ -87,7 +87,7 @@ const setup = await request('/setup', {
 });
 assert.equal(setup.status, 200);
 const setupHtml = await setup.text();
-const owner = setupHtml.match(/amart\d{3}/)?.[0];
+const owner = setupHtml.match(/\baspec\d{3}\b/)?.[0];
 assert.ok(owner, 'Setup must display the generated permanent username');
 assert.equal(jar.size, 0);
 expectRedirect(await login('owner@example.org'), '/');
@@ -414,7 +414,9 @@ assert.equal(
 jar.set('sophikron_session_dev', adminSession);
 const courseEvents = await data('events', { event_type: 'lesson.element_created' });
 const adminCatalogueHtml = await (await request('/lessons')).text();
-assert.ok(adminCatalogueHtml.includes(`/dashboard/user?id=${teacher.id}`));
+assert.ok(adminCatalogueHtml.includes('Sciences et découvertes'));
+assert.ok(adminCatalogueHtml.includes('Modele Temoin'));
+assert.ok(!adminCatalogueHtml.includes(`/dashboard/user?id=${teacher.id}`));
 assert.ok(
 	courseEvents.items.some(
 		(item) => item.resource_id === courseId && item.resource_label === 'Sciences et découvertes'

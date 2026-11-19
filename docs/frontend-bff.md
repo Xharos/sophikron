@@ -83,6 +83,14 @@ The file modal reuses the course document dropzone. No uploaded file or teaching
 See [curriculum behavior and limits](curricula.md) and
 [ADR 0011](decisions/0011-curricula-and-competency-graphs.md).
 
+### Quiz workspace
+
+`/quiz` is available to permanent teachers and administrators. `POST /quiz/data`
+relays the supported bank commands, including illustrated question writes within
+the 2 MiB body limit. Course quiz commands use the course BFF. Backend services
+enforce subject permissions, course access and quiz availability, and keep
+correction rules on the server during student practice. See [Quiz](quiz.md).
+
 ### Administration workspace
 
 The administrator overview shows a half-doughnut of active, pending-activation and archived accounts,

@@ -1,4 +1,4 @@
-"""Create demo calendars and PTSI/PT kholle requirements; --dry-run never writes."""
+"""Seed demo calendars, curricula and SI quiz sheets. Dry runs never write."""
 
 import argparse
 import os
@@ -7,13 +7,14 @@ from copy import deepcopy
 from getpass import getpass
 
 from demo_data.client import Client
-from demo_data.configuration import SeedError, Settings
+from demo_data.configuration import SUBJECTS, SeedError, Settings
 from demo_data.runner import describe, seed
 
 # Edit these values to build a different scenario. Namespace changes isolate repeated experiments.
 CONFIG = Settings(
     namespace="demo",  # Use another name to keep multiple independent scenarios.
     school_year=2026,
+    curriculum_subjects=("computer_science", "maths", "physics", "si"),
     class_count=1,
     pupils_per_class=30,
     german_pupils=10,
@@ -59,6 +60,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--email", default=os.getenv("SOPHIKRON_SEED_EMAIL", ""))
     parser.add_argument("--base-url", default=BASE_URL)
     parser.add_argument("--origin", default=ORIGIN)
+    parser.add_argument(
+        "--curriculum-subjects",
+        nargs="+",
+        choices=tuple(SUBJECTS),
+        help="Subjects in the demo curriculum (default: computer_science maths physics si).",
+    )
     arguments = parser.parse_args(argv)
     settings = deepcopy(CONFIG)
     if arguments.classes is not None:
@@ -67,6 +74,8 @@ def main(argv: list[str] | None = None) -> int:
         settings.pupils_per_class = arguments.students
     if arguments.namespace is not None:
         settings.namespace = arguments.namespace
+    if arguments.curriculum_subjects is not None:
+        settings.curriculum_subjects = tuple(arguments.curriculum_subjects)
     client = None
     authenticated = False
     try:
@@ -87,6 +96,8 @@ def main(argv: list[str] | None = None) -> int:
             "promotions.manage",
             "profiles.manage",
         }
+        if settings.curriculum_subjects:
+            required.update({"curricula.read", "curricula.manage"})
         if (
             profile.get("is_bootstrap")
             or "admin" not in profile.get("roles", [])

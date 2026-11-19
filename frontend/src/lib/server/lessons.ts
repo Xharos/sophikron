@@ -19,8 +19,7 @@ export function requireLessonSession(event: RequestEvent): void {
 
 export async function commandLesson(event: RequestEvent): Promise<unknown> {
 	requireLessonSession(event);
-	if (!canAccess(event.locals.user, 'staff'))
-		throw new BackendError(403, 'Accès réservé aux enseignants.');
+
 	let raw: unknown;
 	try {
 		raw = await event.request.json();
@@ -30,6 +29,25 @@ export async function commandLesson(event: RequestEvent): Promise<unknown> {
 	if (!raw || typeof raw !== 'object' || Array.isArray(raw))
 		throw new BackendError(422, 'Demande invalide.');
 	const input = raw as Record<string, unknown>;
+	switch (input.command) {
+		case 'quizStart':
+		case 'quizAnswer':
+		case 'quizReplay': {
+			const action = { quizStart: 'start', quizAnswer: 'answer', quizReplay: 'replay' }[
+				input.command
+			];
+			const lesson = lessonIdentifier(input.lessonId);
+			const element = lessonIdentifier(input.elementId);
+			return api(
+				event,
+				'/lessons/' + lesson + '/quizzes/' + element + '/' + action,
+				'POST',
+				input.data
+			);
+		}
+	}
+	if (!canAccess(event.locals.user, 'staff'))
+		throw new BackendError(403, 'Accès réservé aux enseignants.');
 	if (input.command === 'create') return api(event, '/lessons', 'POST', input.data);
 	const path = `/lessons/${lessonIdentifier(input.lessonId)}`;
 	switch (input.command) {
@@ -117,6 +135,14 @@ export async function readLessonOptions(event: RequestEvent): Promise<unknown> {
 	const path = `/lessons/${lessonIdentifier(event.url.searchParams.get('lessonId'))}`;
 	const query = new URLSearchParams();
 	switch (event.url.searchParams.get('resource')) {
+		case 'quizOptions':
+			query.set('q', event.url.searchParams.get('q') || '');
+			return api(event, path + '/quiz-options?' + query);
+		case 'quizResults':
+			return api(
+				event,
+				path + '/quizzes/' + lessonIdentifier(event.url.searchParams.get('elementId')) + '/results'
+			);
 		case 'responsible':
 			query.set('q', event.url.searchParams.get('q') || '');
 			query.set('subject_id', String(lessonIdentifier(event.url.searchParams.get('subjectId'))));

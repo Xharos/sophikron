@@ -3,12 +3,13 @@
 import re
 import unicodedata
 from datetime import date, datetime
-from typing import Literal, Self
+from typing import Annotated, Literal, Self
 from urllib.parse import parse_qs, urlsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.auth import InputModel
+from app.schemas.lesson_quizzes import QuizProgress, QuizReference
 
 LessonIcon = Literal[
     "book",
@@ -34,7 +35,7 @@ LessonIcon = Literal[
     "art",
     "music",
 ]
-ElementKind = Literal["section", "subsection", "text", "youtube", "file", "table"]
+ElementKind = Literal["section", "subsection", "text", "youtube", "file", "table", "quiz"]
 ScheduleMode = Literal["inherit", "from", "range"]
 
 
@@ -113,6 +114,9 @@ class ElementFields(InputModel):
     starts_on: date | None = None
     ends_on: date | None = None
     audience: Literal["students", "staff"] = "students"
+    quiz_question_ids: list[Annotated[int, Field(gt=0, le=2**63 - 1)]] | None = Field(
+        default=None, min_length=1, max_length=50
+    )
 
     @field_validator("title", mode="before")
     @classmethod
@@ -270,6 +274,8 @@ class ElementResponse(BaseModel):
     row_index: int | None = None
     column_index: int | None = None
     file: FileResponse | None = None
+    quiz_questions: list[QuizReference] | None = None
+    quiz_progress: QuizProgress | None = None
 
 
 class LessonAccess(BaseModel):

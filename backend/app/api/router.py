@@ -10,8 +10,10 @@ from app.api.v1 import (
     groups,
     kholloscope,
     lesson_documents,
+    lesson_quizzes,
     lessons,
     profiles,
+    quiz,
     site,
     statistics,
     teaching,
@@ -22,6 +24,7 @@ router = APIRouter()
 v1 = APIRouter(prefix="/api/v1")
 v1.include_router(auth.router)
 v1.include_router(curricula.router)
+v1.include_router(quiz.router)
 v1.include_router(admin.router)
 v1.include_router(dashboard.router)
 v1.include_router(groups.router)
@@ -32,6 +35,7 @@ v1.include_router(teaching.router)
 v1.include_router(profiles.router)
 v1.include_router(site.router)
 v1.include_router(lesson_documents.router)
+v1.include_router(lesson_quizzes.router)
 v1.include_router(lessons.router)
 
 

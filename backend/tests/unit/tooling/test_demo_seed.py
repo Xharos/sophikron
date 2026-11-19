@@ -27,6 +27,8 @@ def demo_seed(monkeypatch: pytest.MonkeyPatch) -> ModuleType:
             "promotions.read",
             "promotions.manage",
             "profiles.manage",
+            "curricula.read",
+            "curricula.manage",
         ],
     }
     monkeypatch.setattr(module, "Client", Mock(return_value=client))
@@ -268,3 +270,110 @@ def test_demo_failures_revoke_only_authenticated_sessions(
         client.request.assert_called_with("POST", "/auth/logout")
     if failure != "seed":
         demo_seed.seed.assert_not_called()
+
+
+def test_demo_curriculum_override(demo_seed: ModuleType) -> None:
+    """Allow a CLI subject selection without changing the configured default."""
+    assert demo_seed.main(["--dry-run", "--curriculum-subjects", "si", "english"]) == 0
+    assert demo_seed.describe.call_args.args[0].curriculum_subjects == ("si", "english")
+    assert demo_seed.CONFIG.curriculum_subjects == ("computer_science", "maths", "physics", "si")
+
+
+def test_demo_curriculum_import_and_rerun(demo_seed: ModuleType) -> None:
+    """Validate the portable graph and preserve it on a second run."""
+    from demo_data.curricula import seed_curriculum
+
+    from app.schemas.curricula import CompetencyImport
+    from app.services.competency_codes import competency_codes
+
+    client = Mock()
+    curriculum = {
+        "id": 5,
+        "title": "Référentiel PTSI/PT · demo",
+        "subject_ids": [1, 2, 3, 4],
+        "is_active": True,
+    }
+    graph_path = "/curricula/5/subjects/4"
+    client.request.side_effect = [
+        {"curricula": []},
+        curriculum,
+        {"version": 0, "nodes": []},
+        {},
+        {"curricula": [curriculum]},
+        {"version": 1, "nodes": [{"id": 9}]},
+    ]
+    keys = demo_seed.CONFIG.curriculum_subjects
+    subjects = {key: {"id": index, "name": key} for index, key in enumerate(keys, 1)}
+    seed_curriculum(client, demo_seed.CONFIG, subjects)
+    seed_curriculum(client, demo_seed.CONFIG, subjects)
+
+    calls = [call.args for call in client.request.call_args_list]
+    assert [(method, path) for method, path, *_ in calls] == [
+        ("GET", "/curricula/catalog"),
+        ("POST", "/curricula"),
+        ("GET", graph_path),
+        ("POST", graph_path + "/import"),
+        ("GET", "/curricula/catalog"),
+        ("GET", graph_path),
+    ]
+    assert calls[1][2]["subject_ids"] == [1, 2, 3, 4]
+    nodes = CompetencyImport.model_validate(calls[3][2]).document.nodes
+    codes, ordered = competency_codes(
+        nodes, [(parent, node.id) for node in nodes for parent in node.parent_ids]
+    )
+    assert len(nodes) == 28
+    assert [codes[key] for key in ordered] == [
+        code
+        for root, count in zip("ABCDEFG", (5, 3, 3, 3, 2, 3, 2), strict=True)
+        for code in [root, *(f"{root}.{index}" for index in range(1, count + 1))]
+    ]
+
+
+def test_demo_quiz_seeds_linked_questions_once(demo_seed: ModuleType) -> None:
+    """Exercise all 20 payloads using the real Quiz schema and a resumable API read."""
+    from collections import Counter
+
+    from demo_data.curricula import si_document
+    from demo_data.quiz import seed_si_quiz
+
+    from app.schemas.quiz import QuestionFields
+
+    client = Mock()
+    client.request.return_value = {"questions": []}
+    graph = si_document("SI")
+    seed_si_quiz(client, "demo", 4, graph)
+    calls = [call.args for call in client.request.call_args_list]
+    assert calls[0] == ("GET", "/quiz/subjects/4")
+    assert all(call[:2] == ("POST", "/quiz/subjects/4/questions") for call in calls[1:])
+    questions = [QuestionFields.model_validate(call[2]) for call in calls[1:]]
+    assert Counter(question.rule.kind for question in questions) == {
+        "number": 8,
+        "choice": 8,
+        "text": 4,
+    }
+    assert len({question.title for question in questions}) == 20
+    child_ids = {node["id"] for node in graph["nodes"] if node["parent_ids"]}
+    assert all(
+        question.statement
+        and question.prompt
+        and not question.image
+        and question.competency_ids
+        and set(question.competency_ids) <= child_ids
+        for question in questions
+    )
+
+    client.reset_mock()
+    client.request.return_value = {"questions": [{"title": item.title} for item in questions]}
+    seed_si_quiz(client, "demo", 4, graph)
+    client.request.assert_called_once_with("GET", "/quiz/subjects/4")
+
+
+def test_demo_quiz_missing_competency_stops_before_creating(demo_seed: ModuleType) -> None:
+    """Prevent partial fallback imports when a required competency was removed."""
+    from demo_data.quiz import seed_si_quiz
+
+    client = Mock()
+    client.request.return_value = {"questions": []}
+    with pytest.raises(demo_seed.SeedError, match=r"Compétence SI B\.2"):
+        seed_si_quiz(client, "demo", 4, {"nodes": []})
+    client.request.assert_called_once_with("GET", "/quiz/subjects/4")

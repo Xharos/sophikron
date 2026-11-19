@@ -15,6 +15,7 @@ from app.models.lessons import (
     LessonPromotion,
 )
 from app.models.site import Subject, TeacherSubject
+from app.repositories.lesson_quizzes import LessonQuizRepository
 from app.repositories.lessons import LessonRepository
 from app.schemas.administration import PromotionBadge
 from app.schemas.lessons import (
@@ -59,7 +60,7 @@ def effective_period(
     inherited: tuple[date | None, date | None, str | None],
 ) -> tuple[date | None, date | None, str | None]:
     """Apply dates only to a document or video, independently of structural ancestors."""
-    if element.kind not in {"file", "youtube"} or element.schedule_mode == "inherit":
+    if element.kind not in {"file", "youtube", "quiz"} or element.schedule_mode == "inherit":
         return None, None, None
     return element.starts_on, element.ends_on, element.title or "Élément parent"
 
@@ -71,6 +72,7 @@ class LessonService:
         """Reuse request-owned authentication, encryption and database resources."""
         self.auth, self.db = auth, auth.db
         self.repo = LessonRepository(self.db)
+        self.quiz_repo = LessonQuizRepository(self.db)
 
     def today(self) -> date:
         """Evaluate inclusive date rules consistently at the Paris calendar boundary."""
@@ -235,21 +237,26 @@ class LessonService:
                 ),
             }
 
+    async def staff_view(
+        self, actor: UserContext, lesson: Lesson, teacher: bool, admin: bool
+    ) -> bool:
+        """Use the same staff visibility for resources and interactive quizzes."""
+        return (
+            teacher
+            or admin
+            or (
+                "kholleur.access" in await self.auth.repo.permissions(actor.id)
+                and await self.repo.collaborator(lesson.id, actor.id)
+            )
+        )
+
     async def _detail(self, actor: UserContext, lesson: Lesson) -> LessonDetail:
         """Exclude private subtrees and redact unavailable video bodies for student previews."""
         teacher, admin = await self._principal(actor)
         today = self.today()
         accessible = set((await self.db.scalars(self.repo.accessible(actor.id, today))).all())
         card = await self._card(actor, lesson, teacher, admin, accessible)
-        permissions = await self.auth.repo.permissions(actor.id)
-        staff_view = (
-            teacher
-            or admin
-            or (
-                "kholleur.access" in permissions
-                and await self.repo.collaborator(lesson.id, actor.id)
-            )
-        )
+        staff_view = await self.staff_view(actor, lesson, teacher, admin)
         if not card.can_open:
             raise AuthError(403, "Votre promotion ne dispose pas d’un accès actif à ce cours.")
         _, manage = await self._edit_rights(actor, lesson, teacher, admin)
@@ -260,6 +267,11 @@ class LessonService:
                 await self.db.scalars(select(LessonFile).where(LessonFile.lesson_id == lesson.id))
             ).all()
         }
+        from app.services.lesson_quizzes import recorded_progress
+
+        quiz_ids = [item.id for item in elements if item.kind == "quiz"]
+        quiz_versions = await self.quiz_repo.latest(quiz_ids) if quiz_ids else {}
+        quiz_passages = await self.quiz_repo.for_user(quiz_ids, actor.id) if quiz_ids else {}
         children: dict[int | None, list[LessonElement]] = {}
         for element in elements:
             children.setdefault(element.parent_id, []).append(element)
@@ -290,6 +302,7 @@ class LessonService:
                     else ("expired" if end and today > end else "available")
                 )
                 available = status == "available"
+                quiz_version = quiz_versions.get(item.id)
                 output.append(
                     ElementResponse(
                         id=item.id,
@@ -299,7 +312,7 @@ class LessonService:
                         title=item.title,
                         body=item.body if available or staff_view else "",
                         schedule_mode=item.schedule_mode
-                        if item.kind in {"file", "youtube"} and not restricted
+                        if item.kind in {"file", "youtube", "quiz"} and not restricted
                         else "inherit",
                         starts_on=start,
                         ends_on=end,
@@ -314,6 +327,12 @@ class LessonService:
                         table_columns=item.table_columns,
                         row_index=item.row_index,
                         column_index=item.column_index,
+                        quiz_questions=quiz_version.refs
+                        if quiz_version and card.can_edit
+                        else None,
+                        quiz_progress=recorded_progress(quiz_passages.get(item.id), quiz_version)
+                        if quiz_version
+                        else None,
                         file=FileResponse.model_validate(files[item.id], from_attributes=True)
                         if item.id in files
                         else None,
@@ -483,11 +502,13 @@ class LessonService:
         values = data.model_dump(
             include={"title", "body", "schedule_mode", "starts_on", "ends_on", "audience"}
         )
+        if kind != "quiz" and data.quiz_question_ids is not None:
+            raise AuthError(422, "Les fiches sont réservées aux blocs Quiz.")
         if kind != "section" and data.audience != "students":
             raise AuthError(422, "La visibilité se règle uniquement sur la section.")
-        if kind not in {"file", "youtube"} or staff_only:
+        if kind not in {"file", "youtube", "quiz"} or staff_only:
             values.update(schedule_mode="inherit", starts_on=None, ends_on=None)
-        if kind in {"section", "subsection", "table", "file"}:
+        if kind in {"section", "subsection", "table", "file", "quiz"}:
             if not data.title or data.body:
                 raise AuthError(422, "Une section nécessite un titre et aucun contenu libre.")
         elif not data.body.strip():
@@ -521,7 +542,7 @@ class LessonService:
                 if data.kind == "subsection":
                     valid = valid and parent.kind == "section"
                 if parent is not None and parent.kind == "table":
-                    valid = valid and data.kind in {"text", "youtube"}
+                    valid = valid and data.kind in {"text", "youtube", "quiz"}
             self.validate_cell(parent, data.row_index, data.column_index)
             if (
                 parent is not None
@@ -556,6 +577,12 @@ class LessonService:
             )
             self.db.add(element)
             await self.db.flush()
+            if data.kind == "quiz":
+                from app.services.lesson_quizzes import save_quiz_version
+
+                await save_quiz_version(
+                    self.quiz_repo, element.id, lesson.subject_id, data.quiz_question_ids
+                )
             await self._changed(lesson)
             await self._event(
                 actor,
@@ -598,7 +625,11 @@ class LessonService:
                         if child.audience != "students":
                             child.audience = "students"
                             descendants_changed = True
-                        if data.audience == "staff" or child.kind not in {"file", "youtube"}:
+                        if data.audience == "staff" or child.kind not in {
+                            "file",
+                            "youtube",
+                            "quiz",
+                        }:
                             if child.schedule_mode != "inherit" or child.starts_on or child.ends_on:
                                 child.schedule_mode, child.starts_on, child.ends_on = (
                                     "inherit",
@@ -606,8 +637,15 @@ class LessonService:
                                     None,
                                 )
                                 descendants_changed = True
+            quiz_changed = False
+            if element.kind == "quiz":
+                from app.services.lesson_quizzes import save_quiz_version
+
+                quiz_changed = await save_quiz_version(
+                    self.quiz_repo, element.id, lesson.subject_id, data.quiz_question_ids
+                )
             previous_period = self._period_data(element)
-            if changes or descendants_changed:
+            if changes or descendants_changed or quiz_changed:
                 for key, value in changes.items():
                     setattr(element, key, value)
                 await self._changed(lesson)
@@ -618,7 +656,9 @@ class LessonService:
                     element_id=element.id,
                     element_kind=element.kind,
                     element_title=element.title,
-                    changed_fields=sorted(changes),
+                    changed_fields=sorted(
+                        [*changes, *(["quiz_question_ids"] if quiz_changed else [])]
+                    ),
                     previous_period=previous_period,
                     period=self._period_data(element),
                 )
@@ -1024,6 +1064,12 @@ class LessonService:
                     "Le responsable doit être un enseignant actif possédant la matière choisie.",
                 )
             previous_subject = lesson.subject_id
+            if previous_subject != data.subject_id and any(
+                item.kind == "quiz" for item in await self.repo.elements(lesson.id)
+            ):
+                raise AuthError(
+                    409, "La matière ne peut pas changer tant que le cours contient un quiz."
+                )
             previous_responsible = lesson.responsible_id
             if (previous_subject, previous_responsible) == (data.subject_id, data.responsible_id):
                 return await self._detail(actor, lesson)

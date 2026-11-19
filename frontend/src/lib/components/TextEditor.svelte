@@ -6,13 +6,17 @@
 		color,
 		id,
 		disabled = false,
-		required = false
+		required = false,
+		showPreview = true,
+		maxLength = 3000
 	}: {
 		value: string;
 		color: string;
 		id: string;
 		disabled?: boolean;
 		required?: boolean;
+		showPreview?: boolean;
+		maxLength?: number;
 	} = $props();
 	let input = $state<HTMLTextAreaElement>();
 	async function format(marker: string, heading = false): Promise<void> {
@@ -43,16 +47,16 @@
 	bind:this={input}
 	bind:value
 	rows="8"
-	maxlength="3000"
+	maxlength={maxLength}
 	{disabled}
 	{required}></textarea>
 <p class="help">
-	*italique*, **gras**, ==coloré==, # Section, ## Sous-section. {value.length}/3000 caractères.
+	*italique*, **gras**, ==coloré==, # Section, ## Sous-section. {value.length}/{maxLength} caractères.
 </p>
-<div class="text-preview">
-	<p class="mini-label mb-2">Aperçu</p>
-	<FormattedText text={value || 'Votre texte apparaîtra ici.'} {color} />
-</div>
+{#if showPreview}<div class="text-preview">
+		<p class="mini-label mb-2">Aperçu</p>
+		<FormattedText text={value || 'Votre texte apparaîtra ici.'} {color} />
+	</div>{/if}
 
 <style>
 	.format-toolbar {

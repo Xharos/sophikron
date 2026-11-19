@@ -57,6 +57,7 @@ npm run check
 npm run lint
 npm run build
 node --test tests/timetable-browser.mjs
+node --test tests/quiz-browser.mjs tests/lesson-quiz-browser.mjs
 ```
 
 On Windows PowerShell, use `npm.cmd` when the execution policy blocks `npm.ps1`.
@@ -65,6 +66,9 @@ The timetable browser scenario uses the built frontend and a synthetic HTTP back
 calendar management, event editing, recurrence confirmations, staff availability and mobile access.
 It complements the PostgreSQL authorization tests. Playwright needs an installed browser; no browser
 is downloaded automatically.
+The quiz browser scenarios use the built frontend and a synthetic backend to
+check question editing and the course quiz journey. Install their Chromium
+runtime with `npx playwright install chromium`.
 
 For the real BFF journey, set `BFF_INTEGRATION=1` before running `python run_tests.py`.
 Add `BFF_BROWSER_INTEGRATION=1` for desktop/mobile UI checks. The default channel is installed Edge;

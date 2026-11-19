@@ -39,7 +39,7 @@
 			>
 		</div>
 	</fieldset>
-{:else if (kind === 'file' || kind === 'youtube') && parent?.effective_audience !== 'staff'}
+{:else if (kind === 'file' || kind === 'youtube' || kind === 'quiz') && parent?.effective_audience !== 'staff'}
 	<fieldset {disabled} class="policy-fields">
 		<legend class="label">Disponibilité</legend>
 		<div class="field">

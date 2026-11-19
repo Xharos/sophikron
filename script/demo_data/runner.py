@@ -3,9 +3,11 @@
 from .catalog import preflight, seed_catalog
 from .client import Client
 from .configuration import SUBJECTS, SeedError, Settings
+from .curricula import seed_curriculum
 from .groups import seed_groups
 from .identities import build_people
 from .planning import build_plan
+from .quiz import SI_QUESTIONS, seed_si_quiz
 from .timetables import seed_timetables
 
 
@@ -25,6 +27,11 @@ def describe(settings: Settings) -> None:
         f"{sum(person.role == 'teacher' for person in staff)} professeurs ; "
         f"{sum(person.role == 'kholleur' for person in staff)} khôlleurs."
     )
+    if settings.curriculum_subjects:
+        labels = ", ".join(SUBJECTS[key][0] for key in settings.curriculum_subjects)
+        print(f"Référentiel PTSI/PT : {labels}.")
+    if "si" in settings.curriculum_subjects:
+        print(f"{len(SI_QUESTIONS)} fiches Quiz de SI avec compétences associées.")
     dates = settings.calendar_settings()
     print(
         f"Année {settings.school_year}/{settings.school_year + 1} : "
@@ -51,6 +58,10 @@ def seed(client: Client, settings: Settings) -> dict:
     pupils, staff, plan = prepare(settings)
     state = preflight(client, settings, pupils, staff)
     catalogue = seed_catalog(client, settings, pupils, staff, state)
+    subjects = catalogue["subjects"]
+    si_graph = seed_curriculum(client, settings, subjects)
+    if si_graph is not None:
+        seed_si_quiz(client, settings.namespace, subjects["si"]["id"], si_graph)
     groups = seed_groups(client, settings, catalogue)
     calendars = seed_timetables(client, settings, catalogue, groups, plan)
     validate_volumes(client, settings.school_year)
@@ -76,6 +87,4 @@ def validate_volumes(client: Client, school_year: int) -> None:
     if state["errors"]:
         raise SeedError("Volumes non validés : " + " ; ".join(state["errors"]))
     if not state["validated"]["volumes"]:
-        client.request(
-            "PUT", path, {"step": "volumes", "expected_revision": state["revision"]}
-        )
+        client.request("PUT", path, {"step": "volumes", "expected_revision": state["revision"]})

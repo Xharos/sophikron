@@ -137,7 +137,7 @@ async def test_curriculum_baseline_upgrade_and_downgrade(migrated_database: None
             async with database.sessions.begin() as session:
                 assert (
                     await session.scalar(text("SELECT version_num FROM sophikron.alembic_version"))
-                    == "0009_curricula"
+                    == "0010_quiz_bank"
                 )
                 assert await session.scalar(text("SELECT to_regclass('sophikron.tracks')")) is None
                 assert (

@@ -17,8 +17,9 @@ This directory contains Architecture Decision Records (ADRs) documenting signifi
 | [0009](0009-compose-and-bff-trust-boundary.md) | Two Compose files and proxy trust |
 | [0010](0010-kholloscope-drafts-and-revisions.md) | Private kholloscope jobs, publication and dated revisions |
 | [0011](0011-curricula-and-competency-graphs.md) | Shared curricula, competency graphs and portable subject files |
+| [0012](0012-quiz-bank-and-course-quizzes.md) | Private question bank, course quiz snapshots and consolidated migration |
 
-ADR numbers identify decisions, not migrations. The migration head is `0009_curricula`.
+ADR numbers identify decisions, not migrations. The migration head is `0010_quiz_bank`.
 See [the migration inventory](../database.md#migrations).
 
 ## What is an ADR?

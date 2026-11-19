@@ -1,7 +1,8 @@
-﻿<script lang="ts">
+<script lang="ts">
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { canAccess, hasPermission } from '#lib/access';
+	import { canAccessQuiz } from '#lib/quiz';
 	import type { User } from '#lib/types';
 	import Icon from './Icon.svelte';
 	import RoleBadges from './RoleBadges.svelte';
@@ -78,6 +79,17 @@
 					onclick={closeMenus}
 					><span class="nav-emblem"><Icon name="book" size={17} /></span><span>Cours</span></a
 				>
+				{#if canAccessQuiz(user)}
+					<a
+						class="header-link"
+						href={resolve('/quiz')}
+						aria-current={page.url.pathname === '/quiz' || page.url.pathname.startsWith('/quiz/')
+							? 'page'
+							: undefined}
+						onclick={closeMenus}
+						><span class="nav-emblem"><Icon name="book" size={17} /></span><span>Quiz</span></a
+					>
+				{/if}
 				{#if canAccess(user, 'staff')}
 					{#if hasPermission(user, 'curricula.read')}
 						<a

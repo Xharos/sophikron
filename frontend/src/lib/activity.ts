@@ -76,6 +76,7 @@ const fieldLabels: Record<string, string> = {
 	text_color: 'Couleur du texte',
 	kind: 'Type',
 	responsible_id: 'Responsable principal',
+	quiz_question_ids: 'Fiches du quiz',
 	subject_id: 'Matière'
 };
 
@@ -108,6 +109,12 @@ export function eventSubjects(value: unknown): ActivitySubject[] {
 /** Explain recorded facts without copying private profile values or invitation secrets. */
 export function eventDetails(event: ActivityEvent): string[] {
 	const data = event.data;
+	if (event.event_type.startsWith('quiz.')) {
+		return [
+			typeof data.title === 'string' ? 'Fiche : ' + data.title : '',
+			typeof data.subject_name === 'string' ? 'Matière : ' + data.subject_name : ''
+		].filter(Boolean);
+	}
 	if (event.event_type === 'curriculum.changed') {
 		const labels: Record<string, string> = {
 			referential_created: 'Référentiel créé',
@@ -278,6 +285,7 @@ export function eventDetails(event: ActivityEvent): string[] {
 							text: 'Texte',
 							youtube: 'Vidéo YouTube',
 							file: 'Document',
+							quiz: 'Quiz',
 							table: 'Tableau de ressources'
 						} as Record<string, string>
 					)[data.element_kind]

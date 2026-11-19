@@ -167,3 +167,17 @@ node tests/curricula-browser.mjs (set PLAYWRIGHT_CHANNEL=chrome to use installed
 expansion, zoom/pan, editing, text hierarchy, responsive mobile-only/no-WebGL behavior, fullscreen,
 roles, color synchronization, JSON download filename, drag/drop, import and undo against synthetic
 HTTP fixtures. Real API/database guarantees are covered separately by PostgreSQL tests.
+
+## Données de démonstration
+
+Le script seed_demo_data.py crée un référentiel PTSI/PT par scénario, avec
+informatique, mathématiques, physique-chimie et sciences industrielles par
+défaut. L’option --curriculum-subjects permet de choisir les matières, par
+exemple --curriculum-subjects si maths. Le mode --dry-run affiche la sélection
+sans se connecter. Une relance ajoute les matières manquantes et conserve les
+compétences déjà enregistrées. Seule la SI reçoit une arborescence initiale.
+
+Quand la sélection inclut la SI, le seed crée aussi vingt fiches Quiz sans
+image, associées aux compétences du référentiel du scénario. Il conserve les
+fiches portant déjà le même titre de scénario. Si une compétence nécessaire
+est absente ou ambiguë, il s’arrête avant de créer les fiches manquantes.

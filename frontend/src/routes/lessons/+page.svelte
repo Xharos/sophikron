@@ -9,7 +9,6 @@
 	import type { PageProps } from './$types';
 	let { data }: PageProps = $props();
 	let creating = $state(false);
-	const linkStaffProfiles = $derived(hasPermission(data.user, 'users.manage'));
 	function saved(lesson: LessonDetail): void {
 		creating = false;
 		void goto(resolve('/lessons/[id]', { id: String(lesson.id) }));
@@ -48,10 +47,7 @@
 	</p>
 	{#if data.catalogue.items.length}
 		<div class="course-grid">
-			{#each data.catalogue.items as lesson (lesson.id)}<CourseCard
-					{lesson}
-					{linkStaffProfiles}
-				/>{/each}
+			{#each data.catalogue.items as lesson (lesson.id)}<CourseCard {lesson} />{/each}
 		</div>
 	{:else}<div class="workspace-panel course-empty">
 			<Icon name="book" size={36} />

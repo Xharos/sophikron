@@ -1,8 +1,12 @@
 <script lang="ts">
 	import { formattedBlocks, type TextPart } from '#lib/lessons';
 	import { readableColor } from '#lib/colors';
-	let { text, color }: { text: string; color: string } = $props();
-	const lines = $derived(formattedBlocks(text));
+	let {
+		text,
+		color,
+		headings = true
+	}: { text: string; color: string; headings?: boolean } = $props();
+	const lines = $derived(formattedBlocks(text, headings));
 </script>
 
 <div
