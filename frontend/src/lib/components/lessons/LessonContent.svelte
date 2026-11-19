@@ -8,6 +8,7 @@
 	} from '#lib/lessons';
 	import Icon from '../Icon.svelte';
 	import ResourceBody from './ResourceBody.svelte';
+	import LessonQuizBlock from './LessonQuizBlock.svelte';
 	import ResourceTable from './ResourceTable.svelte';
 	let {
 		lesson,
@@ -116,7 +117,7 @@
 {/snippet}
 {#snippet additions(parent: LessonElement)}
 	{#if editing}<div class="element-additions">
-			{#each [{ kind: 'subsection', label: 'Sous-section', icon: 'plus' }, { kind: 'text', label: 'Texte', icon: 'edit' }, { kind: 'youtube', label: 'Vidéo', icon: 'video' }, { kind: 'file', label: 'Document', icon: 'upload' }, { kind: 'table', label: 'Tableau', icon: 'table' }] as choice (choice.kind)}
+			{#each [{ kind: 'subsection', label: 'Sous-section', icon: 'plus' }, { kind: 'text', label: 'Texte', icon: 'edit' }, { kind: 'youtube', label: 'Vidéo', icon: 'video' }, { kind: 'file', label: 'Document', icon: 'upload' }, { kind: 'table', label: 'Tableau', icon: 'table' }, { kind: 'quiz', label: 'Quiz', icon: 'quiz' }] as choice (choice.kind)}
 				{#if choice.kind !== 'subsection' || parent.kind === 'section'}<button
 						class="button is-light is-small"
 						disabled={busy}
@@ -128,17 +129,19 @@
 {/snippet}
 {#snippet leaf(item: LessonElement)}
 	<article id={`element-${item.id}`} class="lesson-leaf">
-		{#if editing || (item.title && item.kind !== 'file' && item.kind !== 'youtube')}<div
+		{#if editing || (item.title && item.kind !== 'file' && item.kind !== 'youtube' && item.kind !== 'quiz')}<div
 				class="element-heading"
 			>
-				{#if item.title && item.kind !== 'file' && item.kind !== 'youtube'}<h4
+				{#if item.title && item.kind !== 'file' && item.kind !== 'youtube' && item.kind !== 'quiz'}<h4
 						class="title is-6 mb-0"
 					>
 						{item.title}
 					</h4>{/if}{@render controls(item)}
 			</div>{/if}
 		{@render availability(item)}
-		{#if item.kind === 'table'}<ResourceTable
+		{#if item.kind === 'quiz'}
+			<LessonQuizBlock {item} {lesson} {editing} />
+		{:else if item.kind === 'table'}<ResourceTable
 				table={item}
 				{lesson}
 				{editing}

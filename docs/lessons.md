@@ -129,7 +129,9 @@ such as student answer/teacher correction are encoded in SQL. Empty cells have n
 Each populated cell has its own title, dates and audience; dates inherit through the table unless
 explicitly replaced. Removing rows/columns requires UI confirmation, removes their resources and
 shifts remaining coordinates. Staff restrictions always propagate even when a child overrides dates.
-The page does not implement personal student submissions.
+Quiz blocks can be placed in a section, subsection or table cell. The first
+passage records progress and attempt counts for authorized course editors.
+See [quizzes in courses](quiz.md#quizzes-in-courses).
 Tables keep their columns on desktop and mobile, with a Bulma scroll container when they exceed
 the available width. The container can be focused to scroll with the keyboard.
 

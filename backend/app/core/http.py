@@ -58,6 +58,11 @@ class AuthRequestMiddleware:
             r"/api/v1/curricula/[1-9]\d*/subjects/[1-9]\d*/import", scope["path"]
         ):
             limit = 8 * 1024 * 1024 + 4096
+        quiz_save = scope.get("method") in {"POST", "PUT"} and re.fullmatch(
+            r"/api/v1/quiz/subjects/[1-9]\d*/questions(?:/[1-9]\d*)?", scope["path"]
+        )
+        if quiz_save:
+            limit = 2 * 1024 * 1024
         binary = is_document_upload(scope["path"], scope.get("method", ""))
         if binary:
             limit = scope["app"].state.document_settings.max_bytes
@@ -93,8 +98,13 @@ class AuthRequestMiddleware:
             except TimeoutError:
                 status = 408
         if status is not None:
+            detail = (
+                "La fiche et son image dépassent la limite de 2 Mio."
+                if quiz_save and status == 413
+                else "La demande n’a pas pu être acceptée."
+            )
             response = JSONResponse(
-                {"detail": "La demande n’a pas pu être acceptée."},
+                {"detail": detail},
                 status_code=status,
                 headers={"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"},
             )

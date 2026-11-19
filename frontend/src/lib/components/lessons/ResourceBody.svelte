@@ -7,8 +7,22 @@
 		item,
 		lessonId,
 		color,
-		staffView = false
-	}: { item: LessonElement; lessonId: number; color: string; staffView?: boolean } = $props();
+		staffView = false,
+		onquiz,
+		quizAction = 'Commencer',
+		quizProgress,
+		disabled = false
+	}: {
+		item: LessonElement;
+		lessonId: number;
+		color: string;
+		staffView?: boolean;
+		onquiz?: () => void;
+		quizAction?: string;
+		quizProgress?: { completed: number; total: number };
+		disabled?: boolean;
+	} = $props();
+	const progressId = $props.id();
 	let loaded = $state(false);
 	const videoId = $derived(
 		item.kind === 'youtube' && item.body ? (new URL(item.body).searchParams.get('v') ?? '') : ''
@@ -17,6 +31,7 @@
 		item.file ? documentLabel(item.title || item.file.original_name, item.file.extension) : ''
 	);
 	const usable = $derived(item.available || staffView);
+	const compact = $derived(item.row_index != null);
 	$effect(() => {
 		void item.id;
 		void item.body;
@@ -25,25 +40,62 @@
 	});
 </script>
 
+{#snippet progress()}
+	{#if quizProgress}
+		{@const finished = quizProgress.completed === quizProgress.total}
+		<span
+			id={progressId}
+			class="tag is-light quiz-progress"
+			class:is-warning={!finished}
+			class:is-success={finished}
+		>
+			<span class="is-sr-only"
+				>Fiches résolues :
+			</span>{quizProgress.completed}/{quizProgress.total}
+		</span>
+	{/if}
+{/snippet}
+
 {#if item.kind === 'text'}
 	<FormattedText text={item.body} {color} />
 {:else if !usable}
-	<div class="resource-card unavailable" aria-disabled="true">
+	<div
+		class="resource-card unavailable"
+		class:compact
+		aria-disabled="true"
+		title={item.kind === 'file' ? fileName : item.title}
+	>
 		<span class="resource-icon"
 			><Icon
-				name={item.kind === 'file' ? (item.file?.extension ?? 'book') : 'video'}
+				name={item.kind === 'file'
+					? (item.file?.extension ?? 'book')
+					: item.kind === 'quiz'
+						? 'quiz'
+						: 'video'}
 				size={26}
 			/></span
 		>
 		<span class="resource-label"
-			><strong>{item.kind === 'file' ? fileName : item.title || 'Vidéo'}</strong><small
-				>{item.kind === 'file' ? item.file?.extension.toUpperCase() : 'YOUTUBE'}</small
+			><strong
+				>{item.kind === 'file'
+					? fileName
+					: item.title || (item.kind === 'quiz' ? 'Quiz' : 'Vidéo')}</strong
+			><small
+				>{item.kind === 'file'
+					? item.file?.extension.toUpperCase()
+					: item.kind === 'quiz'
+						? item.status === 'expired'
+							? 'Accès au quiz fermé'
+							: 'Quiz à venir'
+						: 'YOUTUBE'}</small
 			></span
 		>
+		{@render progress()}
 	</div>
 {:else if item.kind === 'file' && item.file}
 	<a
 		class="resource-card"
+		class:compact
 		title={fileName}
 		aria-label={`Télécharger ${fileName}`}
 		href={resolve(`/lessons/download?lessonId=${lessonId}&fileId=${item.file.id}`)}
@@ -53,10 +105,27 @@
 			><Icon name={item.file.extension} size={26} /></span
 		>
 		<span class="resource-label"
-			><strong>{fileName}</strong><small>{item.file.extension.toUpperCase()}</small></span
+			><strong>{fileName}</strong>{#if !compact}<small>{item.file.extension.toUpperCase()}</small
+				>{/if}</span
 		>
-		<Icon name="download" size={16} />
+		{#if !compact}<Icon name="download" size={16} />{/if}
 	</a>
+{:else if item.kind === 'quiz' && onquiz}
+	<button
+		type="button"
+		class="resource-card"
+		class:compact
+		{disabled}
+		title={item.title}
+		aria-label={quizAction + ' · ' + item.title}
+		aria-describedby={quizProgress ? progressId : undefined}
+		onclick={onquiz}
+	>
+		<span class="resource-icon"><Icon name="quiz" size={24} /></span>
+		<span class="resource-label"><strong>{item.title}</strong></span>
+		{@render progress()}
+		{#if !compact}<Icon name="arrow" size={16} />{/if}
+	</button>
 {:else if item.kind === 'youtube'}
 	{#if loaded && videoId}<iframe
 			class="video-player"
@@ -69,12 +138,14 @@
 	{:else}<button
 			type="button"
 			class="resource-card"
-			title="Lire la vidéo YouTube"
+			class:compact
+			title={compact && item.title ? item.title : 'Lire la vidéo YouTube'}
 			aria-label={`Lire ${item.title || 'la vidéo'}`}
 			onclick={() => (loaded = true)}
 			><span class="resource-icon"><Icon name="video" size={26} /></span><span
-				class="resource-label"><strong>{item.title || 'Vidéo'}</strong><small>YOUTUBE</small></span
-			><Icon name="arrow" size={16} /></button
+				class="resource-label"
+				><strong>{item.title || 'Vidéo'}</strong>{#if !compact}<small>YOUTUBE</small>{/if}</span
+			>{#if !compact}<Icon name="arrow" size={16} />{/if}</button
 		>{/if}
 {/if}
 
@@ -142,6 +213,31 @@
 		filter: grayscale(1);
 		background: var(--color-paper);
 		color: var(--color-muted);
+	}
+	.quiz-progress {
+		flex-shrink: 0;
+		font-variant-numeric: tabular-nums;
+	}
+	.resource-card.compact {
+		gap: 0.45rem;
+		padding: 0.45rem 0.55rem;
+	}
+	.compact .resource-icon {
+		width: 1.65rem;
+		height: 1.65rem;
+	}
+	.compact .resource-icon :global(svg) {
+		width: 1rem;
+		height: 1rem;
+	}
+	.compact .resource-label :is(strong, small) {
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.compact .quiz-progress {
+		padding-inline: 0.35rem;
+		font-size: 0.7rem;
 	}
 	.video-player {
 		display: block;

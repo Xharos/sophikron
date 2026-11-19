@@ -7,6 +7,7 @@
 		type LessonElement
 	} from '#lib/lessons';
 	import Icon from '../Icon.svelte';
+	import LessonQuizBlock from './LessonQuizBlock.svelte';
 	import ResourceBody from './ResourceBody.svelte';
 	let {
 		table,
@@ -40,7 +41,7 @@
 	async function change(action: string, index = 0, label = ''): Promise<void> {
 		if (
 			action.startsWith('remove') &&
-			!window.confirm('Supprimer cette ligne ou colonne et les documents qu’elle contient ?')
+			!window.confirm('Supprimer cette ligne ou colonne et les ressources qu’elle contient ?')
 		)
 			return;
 		saving = true;
@@ -108,7 +109,7 @@
 							data-column={label}
 						>
 							{#if item}
-								{#if item.title && item.kind !== 'file' && item.kind !== 'youtube'}<h4
+								{#if item.title && item.kind !== 'file' && item.kind !== 'youtube' && item.kind !== 'quiz'}<h4
 										class="title is-6"
 									>
 										{item.title}
@@ -121,12 +122,16 @@
 											item.effective_ends_on
 										)}{item.effective_audience === 'staff' ? ' · Professeurs uniquement' : ''}
 									</p>{/if}
-								<ResourceBody
-									{item}
-									lessonId={lesson.id}
-									color={lesson.color}
-									staffView={lesson.staff_view}
-								/>
+								{#if item.kind === 'quiz'}<LessonQuizBlock
+										{item}
+										{lesson}
+										{editing}
+									/>{:else}<ResourceBody
+										{item}
+										lessonId={lesson.id}
+										color={lesson.color}
+										staffView={lesson.staff_view}
+									/>{/if}
 								{#if editing}<div class="cell-actions">
 										<button class="button is-small is-light" {disabled} onclick={() => onedit(item)}
 											><Icon name="edit" size={13} />Modifier</button
@@ -149,6 +154,11 @@
 										class="button is-small is-light"
 										{disabled}
 										onclick={() => onadd('youtube', table, row, column)}>YouTube</button
+									><button
+										class="button is-small is-light"
+										{disabled}
+										onclick={() => onadd('quiz', table, row, column)}
+										><Icon name="quiz" size={13} />Quiz</button
 									>
 								</div>{:else}<span aria-label="Cellule vide">—</span>{/if}
 						</td>{/each}

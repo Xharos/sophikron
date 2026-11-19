@@ -200,7 +200,7 @@ at 250,000 candidate combinations; narrow rooms or availability when these limit
 
 ## Durable jobs and live logs
 
-Migration `0013_kholloscope_runs` creates a private PostgreSQL queue with one active job per
+Migration `0008_kholloscope` creates a private PostgreSQL queue with one active job per
 academic year, immutable source snapshots, revisioned drafts and bounded progress logs. It does
 not alter any existing calendar, membership, wish or persistent volume. Downgrade removes jobs
 and their drafts; already applied timetable series remain in their original tables.

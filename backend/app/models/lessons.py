@@ -61,12 +61,13 @@ class LessonElement(Base):
             ondelete="CASCADE",
         ),
         CheckConstraint(
-            "kind IN ('section', 'subsection', 'text', 'youtube', 'file', 'table')", name="kind"
+            "kind IN ('section', 'subsection', 'text', 'youtube', 'file', 'table', 'quiz')",
+            name="kind",
         ),
         CheckConstraint("audience IN ('students', 'staff')", name="audience"),
         CheckConstraint("kind = 'section' OR audience = 'students'", name="section_audience"),
         CheckConstraint(
-            "kind IN ('file', 'youtube') OR "
+            "kind IN ('file', 'youtube', 'quiz') OR "
             "(schedule_mode = 'inherit' AND starts_on IS NULL AND ends_on IS NULL)",
             name="resource_dates",
         ),
@@ -91,7 +92,7 @@ class LessonElement(Base):
             name="schedule",
         ),
         CheckConstraint(
-            "(kind IN ('section', 'subsection', 'table', 'file') "
+            "(kind IN ('section', 'subsection', 'table', 'file', 'quiz') "
             "AND length(btrim(title)) > 0 AND body = '') OR "
             "(kind IN ('text', 'youtube') AND length(btrim(body)) > 0)",
             name="content",

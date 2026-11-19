@@ -256,7 +256,7 @@ Connections use `search_path=pg_catalog`; qualify application tables explicitly 
 Alembic inspects only the application schema and uses a dedicated connection with `NullPool`.
 Most autonomous IDs are bigint identities; singleton and token-keyed tables have dedicated keys; associations use composite keys.
 
-The release baseline contains nine feature migrations:
+The release baseline contains thirteen feature migrations:
 
 | Revision | Schema responsibility |
 | --- | --- |
@@ -269,10 +269,11 @@ The release baseline contains nine feature migrations:
 | `0007_timetable` | Annual calendars, rooms, availability, compact series, custom audiences, archive policy, encrypted revocable ICS links and lifetime ICS usage totals |
 | `0008_kholloscope` | Kholle requirements, academic label creation order, subject commitments, preparation workflow, room capacity, durable generation/revision jobs and explicit read/write capabilities |
 | `0009_curricula` | Current multi-subject curricula, subject-scoped competency DAGs, optional promotion association, bounded revision-protected undo and staff read/edit/manage grants |
+| `0010_quiz_bank` | Subject question bank, competency links, course quiz blocks, card versions and first passages |
 
 The release-check cache belongs to `0002_configuration`.
 The kholloscope revision `0008_kholloscope` follows `0007_timetable` and adds preparation and
-durable generation jobs. The final head is `0009_curricula`. It creates `curricula`, `curriculum_subjects`,
+durable generation jobs. The curricula revision `0009_curricula` creates `curricula`, `curriculum_subjects`,
 `competencies`, `competency_links` and `curriculum_undo`, plus nullable `promotions.curriculum_id`.
 `curricula.version` is the optimistic concurrency counter checked by
 metadata edits, competency mutations, imports and undo; `after_version` protects inverse operations.
@@ -287,6 +288,18 @@ Do not apply a blind stamp or destructive downgrade to resolve the mismatch. A d
 preserving older promotions, subjects and calendars. Tests round-trip this on a disposable database.
 See [curriculum contracts and migration compatibility](curricula.md) and
 [ADR 0011](decisions/0011-curricula-and-competency-graphs.md).
+
+Revision `0010_quiz_bank` consolidates the four original quiz development revisions
+(`0010` through `0013`). It can be applied from `0009_curricula`. If a database has
+already applied any of the original quiz revisions, inspect its schema and data
+before planning its transition. In particular, the original `0010_quiz_bank` stamp
+can mask an incomplete schema, while the old `0011` through `0013` IDs are absent
+from the new chain. Do not stamp an unverified schema.
+
+A downgrade requires a database with zero course quiz blocks. It restores the
+previous lesson checks and parent trigger, and removes the quiz bank, competency
+links, snapshots and passages. See [Quiz](quiz.md) and
+[ADR 0012](decisions/0012-quiz-bank-and-course-quizzes.md).
 
 The kholloscope schema uses the following integrity rules:
 

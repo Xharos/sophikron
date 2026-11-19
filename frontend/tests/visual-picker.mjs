@@ -11,6 +11,7 @@ import { contrastRatio } from '../src/lib/colors.ts';
 function pickerServer() {
 	return createServer({
 		configFile: false,
+		cacheDir: 'node_modules/.vite-visual-picker',
 		resolve: { alias: { '#lib': resolve('src/lib') } },
 		plugins: [
 			svelte(),
@@ -22,7 +23,11 @@ function pickerServer() {
 					if (id === '$app/state') return '\0test-state';
 				},
 				load(id) {
-					if (id === '\0test-paths') return 'export const resolve = (path) => path;';
+					if (id === '\0test-paths') {
+						return `export const resolve = (path, params = {}) =>
+							path.replace(/\\[([^\\]]+)\\]/g, (placeholder, key) =>
+								key in params ? encodeURIComponent(params[key]) : placeholder);`;
+					}
 					if (id === '\0test-navigation')
 						return 'export const beforeNavigate = () => {}; export const goto = async () => {}; export const invalidateAll = async () => {};';
 					if (id === '\0test-state')
@@ -60,7 +65,7 @@ function pickerServer() {
 							await vite.transformIndexHtml(
 								'/__picker',
 								themedHtml(
-									`<html lang="fr" data-theme="system"><title>Visual picker test</title><body><div id="app"></div><script type="module">
+									`<!doctype html><html lang="fr" data-theme="system"><title>Visual picker test</title><body><div id="app"></div><script type="module">
 					import { mount } from 'svelte';
 					import Harness from '/tests/fixtures/${fixture}.svelte';
 					mount(Harness, {target: document.getElementById('app')});
@@ -723,19 +728,21 @@ test('journal menus and account pickers stay compact, styled and usable on mobil
 				assert.equal(await dialog.locator('.role-kholleur').count(), 1);
 				assert.equal(await dialog.locator('.promotion-tag').count(), 1);
 				await dialog.getByLabel('Rechercher un compte', { exact: true }).fill('Alpha');
-				await dialog.getByLabel('Rôle du compte', { exact: true }).selectOption('teacher');
-				await page.waitForResponse(
+				const teacherSearch = page.waitForResponse(
 					(response) =>
 						response.url().includes('resource=search') &&
 						response.url().includes('role=teacher')
 				);
-				await dialog.getByRole('radio').check();
-				await dialog.getByRole('button', { name: 'Appliquer', exact: true }).click();
-				await page.waitForResponse(
+				await dialog.getByLabel('Rôle du compte', { exact: true }).selectOption('teacher');
+				await teacherSearch;
+				await dialog.getByRole('checkbox').check();
+				const filteredEvents = page.waitForResponse(
 					(response) =>
 						response.url().includes('resource=events') &&
-						response.url().includes('user_id=9')
+						new URL(response.url()).searchParams.get('user_ids') === '9'
 				);
+				await dialog.getByRole('button', { name: 'Appliquer', exact: true }).click();
+				await filteredEvents;
 				await page.getByRole('button', { name: 'Alpha Specimen', exact: true }).click();
 				await dialog
 					.getByRole('button', { name: 'Effacer la sélection', exact: true })
@@ -1922,8 +1929,12 @@ test('course cards, folded sections, locked resources and file drop forms stay u
 			['Compte Specimen Alpha Fictice', 'Zêta Temoin']
 		);
 		assert.ok((await page.locator('.course-card').boundingBox()).height < 300);
-		const arrow = await page.locator('.course-open').boundingBox();
-		assert.equal(arrow.width, arrow.height);
+		const courseLink = page.locator('a.course-card');
+		assert.match(
+			new URL(await courseLink.getAttribute('href'), page.url()).pathname,
+			/^\/lessons\/\d+$/
+		);
+		assert.equal(await courseLink.locator('.course-team a, .course-open').count(), 0);
 		const section = page.getByRole('button', { name: 'Chapitre un', exact: true });
 		assert.equal(await section.getAttribute('aria-expanded'), 'false');
 		await section.click();

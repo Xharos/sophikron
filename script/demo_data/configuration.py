@@ -54,6 +54,7 @@ class Settings:
     namespace: str = "demo"
     email_domain: str = "example.org"
     subject_prefix: str = ""
+    curriculum_subjects: tuple[str, ...] = ("computer_science", "maths", "physics", "si")
     filled_calendar_indexes: tuple[int, ...] | None = None
     broadcast: bool = False
     include_summer_holidays: bool = True
@@ -162,6 +163,11 @@ class Settings:
             raise SeedError("Indice d’agenda à remplir invalide.")
         if len(set(self.calendar_indexes())) != len(self.calendar_indexes()):
             raise SeedError("Les agendas à remplir doivent être distincts.")
+        if (
+            set(self.curriculum_subjects) - SUBJECTS.keys()
+            or len(set(self.curriculum_subjects)) != len(self.curriculum_subjects)
+        ):
+            raise SeedError("Choisissez des matières de référentiel connues et distinctes.")
         for counts in (self.teacher_counts, self.kholleur_counts):
             if any(
                 key not in SUBJECTS or type(count) is not int or not 0 <= count <= 100

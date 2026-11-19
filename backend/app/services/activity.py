@@ -14,7 +14,15 @@ from app.models import ActivityEvent, Promotion, Role, UserRole
 from app.models.site import Subject
 from app.schemas.administration import PromotionCreate, PromotionSnapshot
 from app.schemas.auth import InputModel, RoleCodes
+from app.schemas.lessons import ElementKind
 from app.schemas.site import SubjectFields
+
+
+class QuizActivity(InputModel):
+    """Snapshot the title and subject of a question bank action."""
+
+    title: str = Field(max_length=160)
+    subject_name: str = Field(max_length=100)
 
 
 class CurriculumActivity(InputModel):
@@ -200,7 +208,7 @@ class LessonActivity(InputModel):
 
     lesson_title: str = Field(max_length=160)
     element_id: int | None = Field(default=None, gt=0)
-    element_kind: Literal["section", "subsection", "text", "youtube", "table", "file"] | None = None
+    element_kind: ElementKind | None = None
     element_title: str | None = Field(default=None, max_length=200)
     changed_fields: list[
         Literal[
@@ -216,6 +224,7 @@ class LessonActivity(InputModel):
             "responsible_id",
             "audience",
             "table_structure",
+            "quiz_question_ids",
         ]
     ] = Field(default_factory=list, max_length=10)
     previous_responsible_id: int | None = None
@@ -592,6 +601,26 @@ EVENTS["curriculum.changed"] = EventDefinition(
 )
 
 
+for _code, _verb, _label in (
+    ("created", "créé", "Fiche créée"),
+    ("updated", "modifié", "Fiche modifiée"),
+    ("archived", "archivé", "Fiche archivée"),
+    ("restored", "rendu visible", "Fiche rendue visible"),
+    ("deleted", "supprimé", "Fiche supprimée"),
+):
+    EVENTS[f"quiz.{_code}"] = EventDefinition(
+        resource="quiz_question",
+        payload=QuizActivity,
+        label=f"Quiz : {_label}",
+        icon="book",
+        message=(
+            "{actor} a rendu une fiche Quiz visible."
+            if _code == "restored"
+            else f"{{actor}} a {_verb} une fiche Quiz."
+        ),
+    )
+
+
 def event_family(code: str) -> str:
     """Return the journal family for a registered event code.
 
@@ -610,7 +639,7 @@ def event_family(code: str) -> str:
         return "accounts"
     if prefix == "promotion":
         return "promotions"
-    if prefix == "lesson":
+    if prefix in {"lesson", "quiz"}:
         return "lessons"
     return "administration"
 

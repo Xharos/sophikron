@@ -4,11 +4,15 @@
 		file,
 		accept,
 		disabled = false,
+		label = 'Dépôt de document',
+		placeholder = 'Déposez votre document ici',
 		onselect
 	}: {
 		file: File | null;
 		accept: string;
 		disabled?: boolean;
+		label?: string;
+		placeholder?: string;
 		onselect: (file: File) => void;
 	} = $props();
 	let input: HTMLInputElement;
@@ -26,7 +30,7 @@
 	class:dragging
 	class:disabled
 	role="group"
-	aria-label="Dépôt de document"
+	aria-label={label}
 	ondragover={(event) => {
 		event.preventDefault();
 		if (!disabled) dragging = true;
@@ -47,11 +51,14 @@
 		{accept}
 		{disabled}
 		aria-label="Choisir un fichier"
-		onchange={(event) => choose(event.currentTarget.files)}
+		onchange={(event) => {
+			choose(event.currentTarget.files);
+			event.currentTarget.value = '';
+		}}
 	/>
 	<button type="button" {disabled} onclick={() => input.click()}>
 		<Icon name={file ? 'check' : 'upload'} size={30} />
-		<strong>{file?.name ?? 'Déposez votre document ici'}</strong>
+		<strong>{file?.name ?? placeholder}</strong>
 		<span>{file ? 'Cliquer pour remplacer' : 'ou cliquez pour choisir un fichier'}</span>
 	</button>
 </div>

@@ -12,6 +12,7 @@
 	import Modal from '../Modal.svelte';
 	import Icon from '../Icon.svelte';
 	import TextEditor from '../TextEditor.svelte';
+	import QuizPicker from './QuizPicker.svelte';
 	import ResourcePolicy from './ResourcePolicy.svelte';
 	let {
 		lesson,
@@ -42,17 +43,22 @@
 	let audience = $state<'students' | 'staff'>(snapshot.element?.audience ?? 'students');
 	let rows = $state(1);
 	let columns = $state(['']);
+	let selected = $state([...(snapshot.element?.quiz_questions ?? [])]);
 	let busy = $state(false);
 	let message = $state('');
 	const initialVersion = snapshot.version;
 
-	const structural = $derived(kind === 'section' || kind === 'subsection' || kind === 'table');
-	const scheduled = $derived(kind === 'youtube' && parent?.effective_audience !== 'staff');
+	const structural = $derived(
+		kind === 'section' || kind === 'subsection' || kind === 'table' || kind === 'quiz'
+	);
+	const scheduled = $derived(
+		(kind === 'youtube' || kind === 'quiz') && parent?.effective_audience !== 'staff'
+	);
 	const initial = untrack(() =>
-		JSON.stringify({ title, body, mode, start, end, audience, rows, columns })
+		JSON.stringify({ title, body, mode, start, end, audience, rows, columns, selected })
 	);
 	const dirty = $derived(
-		JSON.stringify({ title, body, mode, start, end, audience, rows, columns }) !== initial
+		JSON.stringify({ title, body, mode, start, end, audience, rows, columns, selected }) !== initial
 	);
 	function close(): void {
 		if (!dirty || window.confirm('Abandonner les modifications de cet élément ?')) onclose();
@@ -74,6 +80,7 @@
 				starts_on: scheduled && mode !== 'inherit' ? start : null,
 				ends_on: scheduled && mode === 'range' ? end : null,
 				expected_version: initialVersion,
+				...(kind === 'quiz' ? { quiz_question_ids: selected.map((item) => item.id) } : {}),
 				...(!element
 					? {
 							kind,
@@ -152,6 +159,9 @@
 					</p>{/if}
 			</div>
 		{/if}
+		{#if kind === 'quiz'}
+			<QuizPicker lessonId={lesson.id} bind:selected disabled={busy} />
+		{/if}
 		{#if kind === 'table' && !element}
 			<div class="field">
 				<label class="label" for="table-rows">Nombre de lignes</label><input
@@ -188,8 +198,9 @@
 				class="button is-primary"
 				type="submit"
 				class:is-loading={busy}
-				disabled={busy || (scheduled && mode === 'range' && end < start)}
-				><Icon name="save" />Enregistrer</button
+				disabled={busy ||
+					(kind === 'quiz' && !selected.length) ||
+					(scheduled && mode === 'range' && end < start)}><Icon name="save" />Enregistrer</button
 			>
 		</div>
 	</form>

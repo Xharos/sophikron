@@ -149,7 +149,7 @@
 	box-shadow: none;
 }
 /* Colored identity is concentrated in emblems and swatches, not full-card fills. */
-:root body button.promotion-card {
+:root body :is(button, a).promotion-card {
 	--action-bg: linear-gradient(
 		135deg,
 		color-mix(in srgb, var(--promotion-color) 5%, var(--color-surface)),
@@ -163,10 +163,10 @@
 		var(--color-surface) 75%
 	);
 }
-:root body button.promotion-card strong {
+:root body :is(button, a).promotion-card strong {
 	color: var(--color-ink);
 }
-:root body button.promotion-card :is(.muted, .promotion-card-top) {
+:root body :is(button, a).promotion-card :is(.muted, .promotion-card-top) {
 	color: var(--color-muted);
 }
 .card-emblem {

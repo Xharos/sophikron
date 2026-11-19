@@ -20,6 +20,7 @@ from app.models.groups import (
     PromotionGroupMember,
     PromotionPartition,
 )
+from app.models.lesson_quiz import LessonQuizPassage, LessonQuizVersion
 from app.models.lessons import (
     Lesson,
     LessonCollaborator,
@@ -31,6 +32,7 @@ from app.models.lessons import (
 )
 from app.models.permissions import Permission, RolePermission
 from app.models.promotions import Promotion, PromotionAccountBlock, UserPromotion
+from app.models.quiz import QuizQuestion, QuizQuestionCompetency
 from app.models.releases import ReleaseCheck
 from app.models.site import (
     SiteSettings,
@@ -53,6 +55,8 @@ from app.models.timetable import (
 )
 
 __all__ = [
+    "QuizQuestion",
+    "QuizQuestionCompetency",
     "CurriculumUndo",
     "Competency",
     "CompetencyLink",
@@ -89,6 +93,8 @@ __all__ = [
     "LessonFileDeletion",
     "LessonCollaborator",
     "LessonElement",
+    "LessonQuizPassage",
+    "LessonQuizVersion",
     "LessonPromotion",
     "Permission",
     "Promotion",

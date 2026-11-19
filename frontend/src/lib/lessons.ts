@@ -24,7 +24,7 @@ export type LessonIcon =
 	| 'ancient'
 	| 'art'
 	| 'music';
-export type ElementKind = 'section' | 'subsection' | 'text' | 'youtube' | 'file' | 'table';
+export type ElementKind = 'section' | 'subsection' | 'text' | 'youtube' | 'file' | 'table' | 'quiz';
 export interface LessonFile {
 	id: number;
 	original_name: string;
@@ -108,6 +108,8 @@ export interface LessonElement {
 	row_index: number | null;
 	column_index: number | null;
 	file: LessonFile | null;
+	quiz_questions?: { id: number; title: string }[] | null;
+	quiz_progress?: { completed: number; total: number; started: boolean } | null;
 }
 export interface LessonAccess {
 	promotion_id: number;
@@ -170,6 +172,7 @@ export const elementLabels: Record<ElementKind, string> = {
 	text: 'Texte',
 	youtube: 'Vidéo YouTube',
 	file: 'Document',
+	quiz: 'Quiz',
 	table: 'Tableau de ressources'
 };
 
@@ -220,7 +223,7 @@ export interface TextBlock {
 }
 
 /** Preserve formatting across lines while recognizing escaped-text section headings. */
-export function formattedBlocks(value: string): TextBlock[] {
+export function formattedBlocks(value: string, headings = true): TextBlock[] {
 	const blocks: TextBlock[] = [{ level: 0, parts: [] }];
 	for (const part of formattedText(value)) {
 		for (const [index, text] of part.text.split('\n').entries()) {
@@ -228,6 +231,7 @@ export function formattedBlocks(value: string): TextBlock[] {
 			if (text) blocks.at(-1)!.parts.push({ ...part, text });
 		}
 	}
+	if (!headings) return blocks;
 	for (const block of blocks) {
 		const heading = /^(#{1,2})\s+(.+)$/.exec(block.parts.map((part) => part.text).join(''));
 		if (!heading) continue;
